@@ -51,7 +51,13 @@ def test_disable_user_invalidates_session(admin, client):
 
 def test_intent_list_counts(admin):
     b = admin.get("/api/admin/spaces/cs/intents?page_size=500").json()
-    assert b["total"] == 123 and b["all_count"] == 123 and len(b["l1_counts"]) == 12
+    assert b["total"] == 123 and b["all_count"] == 123
+    tax = admin.get("/api/admin/spaces/cs/taxonomy").json()
+    assert tax["levels"] == ["大类", "问题桶", "意图"] and len(tax["tree"]) == 12
+    assert sum(len(a["children"]) for a in tax["tree"]) == 46 and sum(a["count"] for a in tax["tree"]) == 123
+    stock = next(a for a in tax["tree"] if a["code"] == "STOCK")
+    f = admin.get(f"/api/admin/spaces/cs/intents?category={stock['id']}&page_size=500").json()
+    assert f["total"] == stock["count"] and all(i["category_path"][0]["code"] == "STOCK" for i in f["items"])
     assert b["status_counts"] == {"草稿": 108, "启用": 15}
     row = next(i for i in b["items"] if i["code"] == "B.STOCK.AVAIL")
     assert row["kb_count"] >= 2 and row["tool_count"] >= 1
@@ -61,8 +67,9 @@ def test_intent_list_counts(admin):
 
 def test_create_edit_enable(admin):
     r = admin.post("/api/admin/spaces/cs/intents", json={"code": "B.STOCK.PREORDER", "name": "预售/订货",
-                                                         "l1": "STOCK", "l2": "现货"})
+                                                         "category_path": ["STOCK", "现货"]})
     assert r.status_code == 201 and r.json()["status"] == "草稿"
+    assert r.json()["category_path"] == [{"code": "STOCK", "name": "库存与货期"}, {"code": None, "name": "现货"}]
     r = admin.post("/api/admin/spaces/cs/intents", json={"code": "M.STOCK.X", "name": "x", "l1": "STOCK", "l2": "现货"})
     assert r.status_code == 422
     r = admin.post("/api/admin/spaces/cs/intents", json={"code": "B.STOCK.PREORDER", "name": "y", "l1": "STOCK", "l2": "现货"})
@@ -107,7 +114,7 @@ def test_single_sentence(admin):
 
 def test_import_preview_apply(admin):
     data = {"source": "运营 AI 助手", "intents": [
-        {"code": "B.STOCK.PREORDER", "name": "预售/订货", "l1": "STOCK", "l2": "不存在的桶",
+        {"code": "B.STOCK.PREORDER", "name": "预售/订货", "category_path": ["库存与货期", "不存在的桶"],
          "description": "商品缺货时买家询问能否先下单预订", "examples": ["没货能先拍吗", "可以预定吗"],
          "slots": [{"name": "sku", "required": True, "ask": "请问是哪一款？"}, {"name": "color", "required": False}],
          "fallback": "转人工"},
@@ -120,19 +127,30 @@ def test_import_preview_apply(admin):
     p = r.json()
     types = [x["type"] for x in p["rows"]]
     assert types[0] == "新增" and types[2] == "冲突"
-    assert p["rows"][0]["l2_invalid"] and "color" in p["rows"][0]["new_slots"]
-    choices = {"0": {"action": "导入", "l2": p["rows"][0]["l2_options"][0]}, "1": {"action": "合并"}}
+    assert p["rows"][0]["path_invalid"] and "color" in p["rows"][0]["new_slots"]
+    opt = p["rows"][0]["path_options"][1]
+    assert opt["label"].startswith("库存与货期 / ")
+    choices = {"0": {"action": "导入", "category_id": opt["id"]}, "1": {"action": "合并"}}
     r = admin.post("/api/admin/spaces/cs/imports/apply", json={"file": p["file"], "source": p["source"],
                                                                "items": p["items"], "choices": choices})
     res = r.json()
     assert res["counts"]["新增"] == 1 and res["new_slots"] == ["color"]
+    assert admin.get("/api/admin/intents/B.STOCK.PREORDER").json()["category_id"] == opt["id"]
     recs = admin.get("/api/admin/spaces/cs/imports").json()
     assert recs[0]["id"] == res["import_id"] and recs[0]["source"] == "AI 工具产出"
     assert int(res["import_id"].split("-")[1]) > 1002
     # CSV
-    csv = "编码,名称,L1,L2,意图描述,例句,槽位\nB.STOCK.CSV1,CSV 导入,STOCK,现货,描述,一｜二｜三,sku(必填:哪款？)\n"
+    csv = "编码,名称,分类路径,意图描述,例句,槽位\nB.STOCK.CSV1,CSV 导入,STOCK/现货,描述,一｜二｜三,sku(必填:哪款？)\n"
     r = admin.post("/api/admin/spaces/cs/imports/preview", files={"files": ("t.csv", csv.encode(), "text/csv")})
-    assert r.json()["rows"][0]["data"]["examples"] == ["一", "二", "三"]
+    row = r.json()["rows"][0]
+    assert row["data"]["examples"] == ["一", "二", "三"] and row["type"] == "新增" and row["data"]["category_id"]
+    # 0.5 版 L1/L2 两列模板继续兼容
+    csv = "编码,名称,L1,L2,意图描述,例句,槽位\nB.STOCK.CSV1,CSV 导入,STOCK,现货,描述,一｜二｜三,\n"
+    r = admin.post("/api/admin/spaces/cs/imports/preview", files={"files": ("t.csv", csv.encode(), "text/csv")})
+    assert r.json()["rows"][0]["type"] == "新增"
+    md = "## B.STOCK.MD1 MD 导入\n- 归属：库存与货期 / 现货\n- 意图描述：从 Markdown 导入的测试意图描述文字\n- 例句：一｜二｜三\n"
+    r = admin.post("/api/admin/spaces/cs/imports/preview", files={"files": ("t.md", md.encode(), "text/markdown")})
+    assert r.json()["rows"][0]["type"] == "新增" and r.json()["rows"][0]["data"]["category_path"] == ["库存与货期", "现货"]
     r = admin.post("/api/admin/spaces/cs/imports/preview", files={"files": ("t.pdf", b"x", "application/pdf")})
     assert r.status_code == 400
 
@@ -149,19 +167,39 @@ def test_slots_admin(admin):
 
 
 def test_taxonomy_admin(admin):
-    r = admin.post("/api/admin/spaces/cs/taxonomy/l1", json={"code": "TEST", "name": "测试大类"})
+    v0 = admin.get("/api/admin/spaces/cs/recognition").json()["version"]
+    r = admin.post("/api/admin/spaces/cs/categories", json={"code": "TEST", "name": "测试大类"})
     assert r.status_code == 201
-    r = admin.post("/api/admin/spaces/cs/taxonomy/l1/TEST/l2", json={"name": "桶一"})
-    assert any(a["code"] == "TEST" and a["l2"][0]["name"] == "桶一" for a in r.json()["l1"])
-    r = admin.delete("/api/admin/spaces/cs/taxonomy/l1/STOCK")
-    assert r.status_code == 409
-    assert admin.delete("/api/admin/spaces/cs/taxonomy/l1/TEST").status_code == 200
+    tid = r.json()["id"]
+    r = admin.post("/api/admin/spaces/cs/categories", json={"parent_id": tid, "name": "桶一"})
+    bid = r.json()["id"]
+    assert any(a["code"] == "TEST" and a["children"][0]["name"] == "桶一" for a in r.json()["tree"])
+    r = admin.post("/api/admin/spaces/cs/categories", json={"parent_id": bid, "name": "太深"})
+    assert r.status_code == 422 and r.json()["code"] == "CATEGORY_TOO_DEEP"
+    assert admin.post("/api/admin/spaces/cs/categories", json={"parent_id": tid, "name": "桶一"}).status_code == 409
+    assert admin.post("/api/admin/spaces/cs/categories", json={"code": "STOCK", "name": "重复编码"}).status_code == 409
+    r = admin.patch(f"/api/admin/spaces/cs/categories/{bid}", json={"name": "桶二"})
+    assert r.status_code == 200
+    stock = next(a for a in r.json()["tree"] if a["code"] == "STOCK")
+    r = admin.delete(f"/api/admin/spaces/cs/categories/{stock['id']}")
+    assert r.status_code == 409 and r.json()["code"] == "CATEGORY_NOT_EMPTY"
+    r = admin.delete(f"/api/admin/spaces/cs/categories/{stock['children'][0]['id']}")
+    assert r.status_code == 409 and r.json()["code"] == "CATEGORY_IN_USE"
+    assert admin.patch(f"/api/admin/spaces/cs/categories/{stock['id']}", json={"code": "STK"}).status_code == 409
+    # 意图只能挂在叶子上
+    r = admin.post("/api/admin/spaces/cs/intents", json={"code": "B.TEST.X", "name": "挂非叶子", "category_id": tid})
+    assert r.status_code == 422
+    assert admin.delete(f"/api/admin/spaces/cs/categories/{bid}").status_code == 200
+    assert admin.delete(f"/api/admin/spaces/cs/categories/{tid}").status_code == 200
+    assert admin.get("/api/admin/spaces/cs/recognition").json()["version"] == v0 + 5
 
 
 def test_new_space(admin):
     r = admin.post("/api/admin/spaces", json={"id": "ops", "name": "运营助手", "bot": "运营 Bot", "code_prefix": "O"})
     assert r.status_code == 201 and r.json()["version"] == 1
-    assert admin.get("/api/admin/spaces/ops/taxonomy").json()["l1"][0]["code"] == "GEN"
+    t = admin.get("/api/admin/spaces/ops/taxonomy").json()
+    assert t["levels"] == ["大类", "问题桶", "意图"] and t["tree"][0]["code"] == "GEN"
+    assert t["tree"][0]["children"][0]["name"] == "默认"
     assert admin.post("/api/admin/spaces", json={"id": "ops2", "name": "x", "bot": "b", "code_prefix": "B"}).status_code == 409
 
 

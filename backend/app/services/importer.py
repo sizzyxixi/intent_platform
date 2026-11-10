@@ -13,11 +13,12 @@ from ..models import ImportRecord, Intent, Space
 from . import intents as intent_svc
 from . import slots as slot_svc
 from . import spaces as space_svc
+from . import taxonomy as tax_svc
 from .common import INTENT_CODE_RE, Actor, utcnow
 from .validation import RefIndex, validate
 
 IGNORED_KEYS = ("fallback", "human", "handoff", "兜底", "兜底条件", "转人工", "转人工条件")
-CSV_HEADERS = ["编码", "名称", "L1", "L2", "意图描述", "例句", "槽位"]
+CSV_HEADERS = ["编码", "名称", "分类路径", "意图描述", "例句", "槽位"]
 SLOT_STR_RE = re.compile(r"^([^\s(（]+)\s*(?:[(（](必填)?(?:[:：])?(.*?)[)）])?$")
 
 
@@ -62,13 +63,12 @@ def normalize_item(o: dict) -> dict:
     return {
         "code": str(o.get("code") or "").strip(),
         "name": str(o.get("name") or "").strip(),
-        "l1": str(o.get("l1") or "").strip().upper(),
-        "l2": str(o.get("l2") or "").strip(),
+        "category_path": tax_svc.path_segments(o),
         "description": str(o.get("description") or o.get("definition") or o.get("def") or "").strip(),
         "examples": [str(x).strip() for x in (ex or []) if str(x).strip()],
         "slots": [x for x in (_slot_from(s) for s in slots) if x],
         "ignored_fields": ignored,
-        "_present": {k for k in ("code", "name", "l1", "l2", "description", "examples") if o.get(k) not in (None, "")},
+        "_present": {k for k in ("code", "name", "description", "examples") if o.get(k) not in (None, "")},
     }
 
 
@@ -78,8 +78,10 @@ def _rows_to_items(rows: list[list[str]]) -> list[dict]:
     hd = [str(h or "").strip().lstrip("\ufeff") for h in rows[0]]
     if "意图描述" not in hd and "定义" in hd:
         hd[hd.index("定义")] = "意图描述"
-    need = ["编码", "名称", "L1", "L2", "意图描述", "例句"]
+    need = ["编码", "名称", "意图描述", "例句"]
     miss = [x for x in need if x not in hd]
+    if "分类路径" not in hd and "L1" not in hd:  # L1/L2 两列是 0.5 版模板，继续兼容
+        miss.insert(2, "分类路径")
     if miss:
         raise bad_request("表头缺少：" + "、".join(miss) + "。模板表头：" + ",".join(CSV_HEADERS), "HEADER_MISMATCH",
                           expected=CSV_HEADERS, actual=hd)
@@ -89,7 +91,8 @@ def _rows_to_items(rows: list[list[str]]) -> list[dict]:
             continue
         g = lambda n: (str(r[hd.index(n)] or "").strip() if n in hd and hd.index(n) < len(r) else "")
         fb = g("兜底条件") or (("转人工：" + g("转人工条件")) if g("转人工条件") else "")
-        out.append(normalize_item({"code": g("编码"), "name": g("名称"), "l1": g("L1"), "l2": g("L2"),
+        out.append(normalize_item({"code": g("编码"), "name": g("名称"), "category_path": g("分类路径"),
+                                   "l1": g("L1"), "l2": g("L2"),
                                    "description": g("意图描述"), "examples": g("例句"), "slots": g("槽位"),
                                    "fallback": fb}))
     return out
@@ -144,8 +147,7 @@ def parse_markdown(text: str) -> list[dict]:
                 continue
             k, v = x.group(1), x.group(2).strip()
             if k == "归属":
-                p = re.split(r"\s*/\s*", v)
-                o["l1"], o["l2"] = p[0], (p[1] if len(p) > 1 else "")
+                o["category_path"] = [x for x in re.split(r"\s*[/／]\s*", v) if x.strip()]
             elif k in ("意图描述", "定义"):
                 o["description"] = v
             elif k == "例句":
@@ -176,7 +178,7 @@ def _slot_map(item_slots: list[dict], defs: dict) -> tuple[list[dict], list[str]
 
 def judge(db: Session, sp: Space, items: list[dict], api: bool = False) -> list[dict]:
     """返回每行判定：type 新增/更新/重复/冲突，reasons（API 冲突码），notes，diff。"""
-    l1s = space_svc.l1_map(db, sp.id)
+    t = tax_svc.Tax(db, sp)
     defs = slot_svc.list_slots(db, sp.id)
     defs = {s.name: s for s in defs}
     codes = [i["code"] for i in items if i["code"]]
@@ -188,7 +190,7 @@ def judge(db: Session, sp: Space, items: list[dict], api: bool = False) -> list[
     rows, seen = [], set()
     for i, x in enumerate(items):
         r = {"index": i, "data": x, "type": "新增", "action": "导入", "issues": [], "reasons": [], "notes": [],
-             "diff": [], "l2_invalid": False, "l2_options": [], "new_slots": []}
+             "diff": [], "path_invalid": False, "path_options": [], "new_slots": []}
 
         def issue(code, msg):
             r["issues"].append(msg)
@@ -196,15 +198,19 @@ def judge(db: Session, sp: Space, items: list[dict], api: bool = False) -> list[
 
         ex = existing.get(x["code"])
         if api:
-            missing = [k for k in ("code", "name", "l1", "l2", "description", "examples") if not x.get(k)]
+            missing = [k for k in ("code", "name", "description", "examples") if not x.get(k)]
+            if t.n and not x["category_path"]:
+                missing.insert(2, "category_path")
             if missing:
                 issue("MISSING_FIELD", "缺少字段：" + "、".join(missing))
+        segs = x["category_path"]
+        root = t.match_child(None, segs[0]) if (t.n and segs) else None
         if not INTENT_CODE_RE.match(x["code"]):
-            issue("INVALID_CODE", "编码格式无效（应为 前缀.大类.意图）")
+            issue("INVALID_CODE", "编码格式无效（应为 前缀.分类编码.意图，大写）")
         elif not x["code"].startswith(sp.code_prefix + "."):
             issue("INVALID_CODE", f"编码前缀应为本空间的 {sp.code_prefix}")
-        elif x["l1"] and x["code"].split(".")[1] != x["l1"]:
-            issue("INVALID_CODE", f"编码中的大类应与 L1（{x['l1']}）一致")
+        elif root is not None and root.code and not x["code"].startswith(f"{sp.code_prefix}.{root.code}."):
+            issue("INVALID_CODE", f"编码应以 {sp.code_prefix}.{root.code}. 开头（与第一层分类「{root.name}」一致）")
         if ex and ex.space_id != sp.id:
             issue("CODE_IN_OTHER_SPACE", f"编码已被其他空间（{ex.space_id}）使用")
             ex = None
@@ -218,9 +224,24 @@ def judge(db: Session, sp: Space, items: list[dict], api: bool = False) -> list[
             issue("MISSING_FIELD", "缺少名称")
         if len(x["name"]) > 30:
             issue("MISSING_FIELD", "名称最多 30 个字")
-        a = l1s.get(x["l1"])
-        if not a:
-            issue("UNKNOWN_L1", f"L1「{x['l1']}」不存在")
+        x["category_id"] = None
+        if t.n:
+            node, _ = t.resolve(segs) if segs else (None, 0)
+            if node:
+                x["category_id"] = node.id
+            elif root is None and "MISSING_FIELD" not in r["reasons"]:
+                issue("UNKNOWN_CATEGORY", f"分类「{segs[0] if segs else ''}」不存在（第一层：{t.levels[0]}）")
+            elif root is not None:
+                opts = [o for o in t.leaf_options() if o["path"][0]["name"] == root.name]
+                if api or not opts:
+                    issue("UNKNOWN_CATEGORY", f"分类路径「{' / '.join(segs)}」不存在"
+                                              f"（需要 {t.n} 层：{' / '.join(t.levels[:-1])}）")
+                else:
+                    r["path_invalid"] = True
+                    r["path_options"] = [{"id": o["id"], "label": o["label"]} for o in opts]
+                    r["path_original"] = " / ".join(segs)
+                    r["notes"].append(f"分类路径「{' / '.join(segs)}」不存在，请选择")
+                    x["category_id"] = opts[0]["id"]
         if x["code"] in seen:
             issue("DUPLICATE_IN_BATCH", "文件内编码重复")
         seen.add(x["code"])
@@ -236,17 +257,6 @@ def judge(db: Session, sp: Space, items: list[dict], api: bool = False) -> list[
                 d = defs.get(s["name"])
                 if s["required"] and not (s["ask"] or (d.default_ask if d else f"请补充{s['name']}")):
                     issue("SLOT_ASK_MISSING", f"必填槽位 {s['name']} 缺少追问话术")
-        if a:
-            l2names = [b.name for b in a.l2s]
-            r["l2_options"] = l2names
-            if x["l2"] not in l2names:
-                if api:
-                    issue("UNKNOWN_L2", f"L2「{x['l2']}」不存在于 {x['l1']}")
-                else:
-                    r["l2_invalid"] = True
-                    r["notes"].append(f"L2「{x['l2']}」不存在，请选择问题桶")
-                    r["l2_original"] = x["l2"]
-                    x["l2"] = l2names[0] if l2names else ""
         if r["issues"]:
             r["type"], r["action"] = "冲突", "跳过"
         elif ex:
@@ -279,7 +289,7 @@ def _apply_one(db: Session, sp: Space, x: dict, action: str, by: str, file: str,
     ex = db.get(Intent, x["code"])
     if not ex:
         pos = (db.scalar(select(func.max(Intent.position)).where(Intent.space_id == sp.id)) or 0) + 1
-        it = Intent(code=x["code"], space_id=sp.id, name=x["name"], l1=x["l1"], l2=x["l2"],
+        it = Intent(code=x["code"], space_id=sp.id, name=x["name"], category_id=x.get("category_id"),
                     description=x["description"], examples=x["examples"], slots=x["slots_mapped"], kb_refs=[],
                     tools=[], status="草稿", owner=by, position=pos, updated_at=utcnow())
         intent_svc.add_log(it, by, f"通过导入新建（{file}）")
@@ -343,7 +353,7 @@ def result_text(c: dict) -> str:
 
 def apply_file_import(db: Session, sp: Space, items: list[dict], choices: dict, file: str, source: str,
                       actor: Actor) -> dict:
-    """控制台导入：choices = {index: {action, l2}}，服务端重新判定后只执行允许的动作。"""
+    """控制台导入：choices = {index: {action, category_id}}，服务端重新判定后只执行允许的动作。"""
     rows = judge(db, sp, items)
     todo = []
     for r in rows:
@@ -351,8 +361,8 @@ def apply_file_import(db: Session, sp: Space, items: list[dict], choices: dict, 
         act = ch.get("action") or r["action"]
         if act not in r["actions"]:
             act = r["action"]
-        if r["l2_invalid"] and ch.get("l2") in r["l2_options"]:
-            r["data"]["l2"] = ch["l2"]
+        if r["path_invalid"] and ch.get("category_id") in [o["id"] for o in r["path_options"]]:
+            r["data"]["category_id"] = ch["category_id"]
         r["final"] = act
         if act != "跳过":
             todo.append(r)

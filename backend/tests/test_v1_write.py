@@ -1,7 +1,7 @@
 """开放接口写操作：幂等、槽位、batchUpsert、PATCH、空间设置。"""
 from contract import check
 
-NEW = {"code": "B.STOCK.PREORDER", "name": "预售/订货", "l1": "STOCK", "l2": "现货",
+NEW = {"code": "B.STOCK.PREORDER", "name": "预售/订货", "category_path": ["STOCK", "现货"],
        "description": "用户想在缺货时先下单预订；问能否预定、先拍后发算；问何时补货不算",
        "examples": ["没货能先拍吗", "可以预定吗", "先下单等补货可以吗"],
        "slots": [{"name": "sku", "required": True, "ask": "请问是哪一款？"}]}
@@ -50,8 +50,10 @@ def test_batch_upsert_create_merge_conflicts(linxia):
     bad = [
         {**NEW, "code": "B.STOCK.X1", "name": "短描述", "description": "太短"},
         {**NEW, "code": "M.STOCK.X2", "name": "错前缀"},
-        {**NEW, "code": "B.NOPE.X3", "name": "未知大类", "l1": "NOPE"},
-        {**NEW, "code": "B.STOCK.X4", "name": "未知桶", "l2": "不存在"},
+        {**NEW, "code": "B.NOPE.X3", "name": "未知大类", "category_path": ["NOPE", "现货"]},
+        {**NEW, "code": "B.STOCK.X4", "name": "未知桶", "category_path": ["STOCK", "不存在"]},
+        {**NEW, "code": "B.STOCK.X7", "name": "路径太短", "category_path": ["STOCK"]},
+        {**NEW, "code": "B.PRICE.X8", "name": "编码与大类不符"},
         {**NEW, "code": "B.STOCK.X5", "name": "例句少", "examples": ["a"]},
         {**NEW, "code": "B.STOCK.X6", "name": "新槽位继承默认话术", "slots": [{"name": "new_slot_x", "required": True}]},
         {**NEW, "code": "B.STOCK.PREORDER"},
@@ -62,8 +64,10 @@ def test_batch_upsert_create_merge_conflicts(linxia):
     reasons = {c["code"]: c["reason"] for c in b["conflicts"]}
     assert reasons["B.STOCK.X1"] == "DESCRIPTION_TOO_SHORT"
     assert reasons["M.STOCK.X2"] in ("INVALID_CODE", "CODE_IN_OTHER_SPACE")
-    assert reasons["B.NOPE.X3"] == "UNKNOWN_L1"
-    assert reasons["B.STOCK.X4"] == "UNKNOWN_L2"
+    assert reasons["B.NOPE.X3"] == "UNKNOWN_CATEGORY"
+    assert reasons["B.STOCK.X4"] == "UNKNOWN_CATEGORY"
+    assert reasons["B.STOCK.X7"] == "UNKNOWN_CATEGORY"
+    assert reasons["B.PRICE.X8"] == "INVALID_CODE"
     assert reasons["B.STOCK.X5"] == "TOO_FEW_EXAMPLES"
     assert "B.STOCK.X6" not in reasons  # 自动新建的槽位默认追问「请补充{name}」
     assert reasons["B.STOCK.PREORDER"] == "DUPLICATE_IN_BATCH"
@@ -93,7 +97,7 @@ def test_batch_upsert_new_slot_autocreated(linxia):
 
 def test_batch_upsert_overwrite_enabled_protected(linxia):
     cur = linxia.get("/api/v1/intents/B.REL.ESCALATE").json()
-    it = {"code": cur["code"], "name": cur["name"], "l1": cur["l1"], "l2": cur["l2"],
+    it = {"code": cur["code"], "name": cur["name"], "category_path": [p["name"] for p in cur["category_path"]],
           "description": cur["description"] + "（覆盖）", "examples": cur["examples"]}
     b = check(linxia.post("/api/v1/intents:batchUpsert", json={"mode": "overwrite", "intents": [it]}))
     assert b["conflicts"][0]["reason"] == "ENABLED_PROTECTED"
@@ -109,8 +113,8 @@ def test_batch_upsert_limits(linxia):
 def test_batch_upsert_bumps_version_on_enabled_merge(linxia):
     v0 = linxia.get("/api/v1/recognition").json()["version"]
     cur = linxia.get("/api/v1/intents/B.REL.ESCALATE").json()
-    it = {"code": cur["code"], "name": cur["name"], "l1": cur["l1"], "l2": cur["l2"],
-          "description": cur["description"], "examples": cur["examples"] + ["我要举报你们"]}
+    it = {"code": cur["code"], "name": cur["name"], "l1": cur["category_path"][0]["code"],  # 0.5 版字段兼容
+          "l2": cur["category_path"][1]["name"], "description": cur["description"], "examples": cur["examples"] + ["我要举报你们"]}
     b = check(linxia.post("/api/v1/intents:batchUpsert", json={"mode": "merge", "intents": [it]}))
     assert b["updated"] == 1
     assert linxia.get("/api/v1/recognition").json()["version"] == v0 + 1

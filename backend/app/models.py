@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text,
-    UniqueConstraint, func,
+    UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -34,31 +34,29 @@ class Space(Base):
     final_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     recognition_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     recognition_updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # 分类层级名称（含最末层「意图」），如 ["大类", "问题桶", "意图"]；分类层数 = len - 1（0～5）
+    levels: Mapped[list] = mapped_column(JSONB, default=lambda: ["大类", "问题桶", "意图"])
     position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now(), onupdate=_now())
 
 
-class TaxonomyL1(Base):
-    __tablename__ = "taxonomy_l1"
-    __table_args__ = (UniqueConstraint("space_id", "code"), UniqueConstraint("space_id", "name"))
+class Category(Base):
+    """分类节点（邻接表）。depth 从 1 开始；意图挂在 depth == 分类层数 的叶子节点上。"""
+    __tablename__ = "categories"
+    __table_args__ = (
+        Index("ix_categories_space_parent", "space_id", "parent_id"),
+        Index("uq_categories_code", "space_id", "code", unique=True, postgresql_where=text("code IS NOT NULL")),
+        Index("uq_categories_sibling_name", "space_id", text("coalesce(parent_id, 0)"), "name", unique=True),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    space_id: Mapped[str] = mapped_column(ForeignKey("spaces.id", ondelete="CASCADE"), index=True)
-    code: Mapped[str] = mapped_column(String(32))
+    space_id: Mapped[str] = mapped_column(ForeignKey("spaces.id", ondelete="CASCADE"))
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id", ondelete="CASCADE"), nullable=True)
+    depth: Mapped[int] = mapped_column(Integer)
+    code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     name: Mapped[str] = mapped_column(String(100))
     position: Mapped[int] = mapped_column(Integer, default=0)
-    l2s: Mapped[list["TaxonomyL2"]] = relationship(
-        back_populates="l1", cascade="all, delete-orphan", order_by="TaxonomyL2.position")
-
-
-class TaxonomyL2(Base):
-    __tablename__ = "taxonomy_l2"
-    __table_args__ = (UniqueConstraint("l1_id", "name"),)
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    l1_id: Mapped[int] = mapped_column(ForeignKey("taxonomy_l1.id", ondelete="CASCADE"), index=True)
-    name: Mapped[str] = mapped_column(String(100))
-    position: Mapped[int] = mapped_column(Integer, default=0)
-    l1: Mapped[TaxonomyL1] = relationship(back_populates="l2s")
+    parent: Mapped["Category | None"] = relationship(remote_side=[id])
 
 
 class SlotDef(Base):
@@ -79,7 +77,7 @@ class SlotDef(Base):
 class Intent(Base):
     __tablename__ = "intents"
     __table_args__ = (
-        Index("ix_intents_space_l1", "space_id", "l1"),
+        Index("ix_intents_space_category", "space_id", "category_id"),
         Index("ix_intents_slots", "slots", postgresql_using="gin", postgresql_ops={"slots": "jsonb_path_ops"}),
         Index("ix_intents_kb_refs", "kb_refs", postgresql_using="gin", postgresql_ops={"kb_refs": "jsonb_path_ops"}),
         Index("ix_intents_tools", "tools", postgresql_using="gin", postgresql_ops={"tools": "jsonb_path_ops"}),
@@ -87,8 +85,8 @@ class Intent(Base):
     code: Mapped[str] = mapped_column(String(80), primary_key=True)
     space_id: Mapped[str] = mapped_column(ForeignKey("spaces.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(100))
-    l1: Mapped[str] = mapped_column(String(32))
-    l2: Mapped[str] = mapped_column(String(100))
+    # 所在分类叶子节点；空间分类层数为 0 时为空
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), nullable=True)
     description: Mapped[str] = mapped_column(Text, default="")
     examples: Mapped[list] = mapped_column(JSONB, default=list)
     # [{name, required, ask}]
@@ -102,6 +100,7 @@ class Intent(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())
+    category: Mapped[Category | None] = relationship()
     logs: Mapped[list["IntentLog"]] = relationship(
         back_populates="intent", cascade="all, delete-orphan", order_by="IntentLog.id")
 

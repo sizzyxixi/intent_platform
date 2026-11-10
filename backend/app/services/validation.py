@@ -2,7 +2,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Chunk, Document, SlotDef, Tool
+from ..models import Category, Chunk, Document, SlotDef, Space, Tool
 from .common import INTENT_CODE_RE
 
 
@@ -14,6 +14,7 @@ class RefIndex:
         self._docs: dict[str, dict[str, set[str]]] = {}
         self._tools: dict[str, Tool] | None = None
         self._slots: dict[str, dict[str, SlotDef]] = {}
+        self._cats: dict[str, tuple[int, dict[int, int]]] = {}
 
     def kb_docs(self, kb_id: str) -> dict[str, set[str]]:
         if kb_id not in self._docs:
@@ -46,7 +47,17 @@ class RefIndex:
                 select(SlotDef).where(SlotDef.space_id == space_id))}
         return self._slots[space_id]
 
+    def categories(self, space_id: str) -> tuple[int, dict[int, int]]:
+        """(分类层数, {分类 id: depth})"""
+        if space_id not in self._cats:
+            sp = self.db.get(Space, space_id)
+            n = len(sp.levels or [""]) - 1 if sp else 0
+            self._cats[space_id] = (n, dict(self.db.execute(
+                select(Category.id, Category.depth).where(Category.space_id == space_id)).all()))
+        return self._cats[space_id]
+
     def invalidate(self):
+        self._cats.clear()
         self._docs.clear()
         self._tools = None
         self._slots.clear()
@@ -63,7 +74,12 @@ def validate(it: dict, idx: RefIndex) -> list[str]:
     if not (it.get("name") or "").strip():
         e.append("名称不能为空")
     if not INTENT_CODE_RE.match(it.get("code") or ""):
-        e.append("编码格式应为 前缀.大类.意图（大写，如 B.STOCK.AVAIL / M.DESIGN.MAIN）")
+        e.append("编码格式应为 前缀.分类编码.意图（大写，如 B.STOCK.AVAIL / M.DESIGN.MAIN）")
+    if "category_id" in it:
+        n, depth = idx.categories(it["space_id"])
+        cid = it.get("category_id")
+        if n and (cid is None or depth.get(cid) != n):
+            e.append("未放到最末一层分类下，请在「所属分类」里选择")
     desc = (it.get("description") or "").strip()
     if not desc:
         e.append("意图描述不能为空")

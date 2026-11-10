@@ -34,7 +34,9 @@ def test_list_views(full_key):
     err, b = call(full_key, "list_intents", {"space": "mc", "status": "启用"})
     assert not err and b["total"] == 38
     err, b = call(full_key, "list_intents", {"view": "taxonomy"}, space="cs")
-    assert len(b["l1"]) == 12
+    assert len(b["levels"]) == 2 and len(b["categories"]) == 12
+    err, b = call(full_key, "list_intents", {"space": "cs", "category": "STOCK/现货"})
+    assert b["total"] > 0 and all(i["category_path"][1]["name"] == "现货" for i in b["items"])
     err, b = call(full_key, "list_intents", {"view": "slots", "space": "mc"})
     assert len(b["slots"]) == 24
     err, b = call(full_key, "list_intents", {"view": "recognition", "space": "cs"})
@@ -60,7 +62,7 @@ def test_space_forbidden_and_scope(bot, linxia):
 
 def test_upsert_idempotent(linxia):
     args = {"mode": "merge", "idempotency_key": "mcp-1", "intents": [
-        {"code": "B.STOCK.MCP_NEW", "name": "MCP 新建", "l1": "STOCK", "l2": "现货",
+        {"code": "B.STOCK.MCP_NEW", "name": "MCP 新建", "category_path": ["STOCK", "现货"],
          "description": "通过 MCP 新建的测试意图，用于验证幂等", "examples": ["一", "二", "三"]}]}
     err, b1 = call(linxia, "upsert_intents", args)
     assert not err and b1["created"] == 1

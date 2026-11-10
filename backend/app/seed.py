@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import SessionLocal
 from .models import (ApiKey, Chunk, Document, ImportRecord, Intent, IntentLog, KnowledgeBase, Setting, SlotDef, Space,
-                     TaxonomyL1, TaxonomyL2, Tool, User)
+                     Tool, User, Category)
 from .security import hash_password, new_api_token, token_hash, token_hint
 from .services.common import TZ_CN, parse_local, utcnow
 from .services.parsers import content_hash
@@ -29,7 +29,7 @@ FINAL = {"转人工": "handoff_human", "交给通用助手": "general_assistant"
 TOOL_TYPE = {"API 接口": "http", "MCP 工具": "mcp", "CLI 命令": "cli", "技能/工作流": "skill"}
 KB_TYPE = {"表格": "表格知识库", "图文": "图文知识库-富文本"}
 USAGE = {"参考": "reference", "校验": "validate"}
-TABLES = ["intent_logs", "intents", "slots", "taxonomy_l2", "taxonomy_l1", "chunks", "documents", "knowledge_bases",
+TABLES = ["intent_logs", "intents", "slots", "categories", "chunks", "documents", "knowledge_bases",
           "tools", "import_records", "api_keys", "audit_logs", "idempotency_records", "rate_counters", "settings",
           "spaces", "users"]
 
@@ -52,6 +52,7 @@ def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
     st = data["state"]
     base = get_settings().public_base_url.rstrip("/")
     trees = {"cs": data["TREE"], "mc": data["MC_TREE"]}
+    leaf: dict[tuple[str, str, str], int] = {}
     # 空间 + 设置
     for pos, sp in enumerate(st["spaces"]):
         rc = st["recog"][sp["id"]]
@@ -61,13 +62,18 @@ def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
                      threshold=rc["threshold"], max_candidates=3, max_clarify=rc["max_clarify"],
                      max_slot_ask=rc["max_slot_ask"], tool_retry=rc["tool_retry"], final_action=fa,
                      clarify_prompt=rc["clarify_prompt"],
-                     final_message=rc.get("final_msg") if fa == "decline" else None, position=pos))
+                     final_message=rc.get("final_msg") if fa == "decline" else None, position=pos,
+                     levels=["大类", "问题桶", "意图"]))
         db.flush()
         for i, l1 in enumerate(trees.get(sp["id"]) or data["GEN_TREE"]):
-            a = TaxonomyL1(space_id=sp["id"], code=l1["c"], name=l1["n"], position=i)
-            for j, l2 in enumerate(l1["k"]):
-                a.l2s.append(TaxonomyL2(name=l2["n"], position=j))
+            a = Category(space_id=sp["id"], parent_id=None, depth=1, code=l1["c"], name=l1["n"], position=i)
             db.add(a)
+            db.flush()
+            for j, l2 in enumerate(l1["k"]):
+                b = Category(space_id=sp["id"], parent_id=a.id, depth=2, code=None, name=l2["n"], position=j)
+                db.add(b)
+                db.flush()
+                leaf[(sp["id"], l1["c"], l2["n"])] = b.id
         for i, s in enumerate(st["slots"].get(sp["id"], [])):
             db.add(SlotDef(space_id=sp["id"], name=s["n"], display_name=s.get("disp") or s["n"], type=s["type"],
                            options=[x.strip() for x in (s.get("opts") or "").split(",") if x.strip()],
@@ -124,7 +130,8 @@ def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
     for pos, it in enumerate(st["intents"].values()):
         logs = [(_t(x["at"]), x["by"], x["msg"]) for x in it.get("log") or []]
         upd = max((a for a, _, _ in logs), default=utcnow())
-        i = Intent(code=it["code"], space_id=it["space"], name=it["name"], l1=it["l1"], l2=it["l2"],
+        i = Intent(code=it["code"], space_id=it["space"], name=it["name"],
+                   category_id=leaf[(it["space"], it["l1"], it["l2"])],
                    description=it.get("def") or "", examples=list(it.get("ex") or []),
                    slots=[{"name": s["n"], "required": s.get("req") == "必填", "ask": s.get("ask") or ""}
                           for s in it.get("slots") or []],
@@ -162,9 +169,9 @@ def counts(db: Session) -> dict:
     out = {}
     for sid in ("cs", "mc"):
         out[sid] = {
-            "L1": db.scalar(select(func.count()).select_from(TaxonomyL1).where(TaxonomyL1.space_id == sid)),
-            "L2": db.scalar(select(func.count()).select_from(TaxonomyL2).join(TaxonomyL1).where(TaxonomyL1.space_id == sid)),
-            "L3": db.scalar(select(func.count()).select_from(Intent).where(Intent.space_id == sid)),
+            "大类": db.scalar(select(func.count()).select_from(Category).where(Category.space_id == sid, Category.depth == 1)),
+            "问题桶": db.scalar(select(func.count()).select_from(Category).where(Category.space_id == sid, Category.depth == 2)),
+            "意图": db.scalar(select(func.count()).select_from(Intent).where(Intent.space_id == sid)),
             "slots": db.scalar(select(func.count()).select_from(SlotDef).where(SlotDef.space_id == sid)),
         }
     out["kbs"] = db.scalar(select(func.count()).select_from(KnowledgeBase))

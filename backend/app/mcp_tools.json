@@ -1,7 +1,7 @@
 [
  {
   "name": "list_intents",
-  "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读合法的 L1/L2，view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
+  "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories），view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -20,13 +20,9 @@
      ],
      "default": "intents"
     },
-    "l1": {
+    "category": {
      "type": "string",
-     "description": "L1 编码，如 STOCK、DESIGN"
-    },
-    "l2": {
-     "type": "string",
-     "description": "L2 名称"
+     "description": "分类路径筛选，每段填编码或名称，用 / 分隔，可只写前几层，如 STOCK 或 STOCK/现货"
     },
     "status": {
      "type": "string",
@@ -105,25 +101,34 @@
       "required": [
        "code",
        "name",
-       "l1",
-       "l2",
        "description",
        "examples"
       ],
       "properties": {
        "code": {
         "type": "string",
-        "pattern": "^[A-Z]{1,4}\\.[A-Z]+\\.[A-Z0-9_]+$"
+        "pattern": "^[A-Z]{1,4}(\\.[A-Z0-9_]+){1,6}$"
        },
        "name": {
         "type": "string",
         "maxLength": 30
        },
+       "category_path": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        },
+        "minItems": 0,
+        "maxItems": 5,
+        "description": "从第 1 层到最末层分类的完整路径，每段填编码或名称（先用 list_intents view=taxonomy 读取），如 [\"STOCK\", \"现货\"]。空间有分类层时必填；0.5 版的 l1 / l2 仍兼容"
+       },
        "l1": {
-        "type": "string"
+        "type": "string",
+        "description": "已废弃（兼容）：等价于 category_path 第 1 段"
        },
        "l2": {
-        "type": "string"
+        "type": "string",
+        "description": "已废弃（兼容）：等价于 category_path 第 2 段"
        },
        "description": {
         "type": "string",

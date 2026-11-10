@@ -6,6 +6,7 @@ from ..models import Intent, Space, Tool
 from . import knowledge as kb_svc
 from . import slots as slot_svc
 from . import spaces as space_svc
+from . import taxonomy as tax_svc
 from . import tools as tool_svc
 from .common import iso, norm_tags, utcnow
 from .validation import RefIndex
@@ -13,6 +14,7 @@ from .validation import RefIndex
 
 def build(db: Session, sp: Space) -> dict:
     idx = RefIndex(db)
+    tax = tax_svc.Tax(db, sp)
     enabled = list(db.scalars(select(Intent).where(Intent.space_id == sp.id, Intent.status == "启用")
                               .order_by(Intent.position, Intent.code)))
     from .intents import effective_slots
@@ -26,7 +28,7 @@ def build(db: Session, sp: Space) -> dict:
             tools.append({"tool": t.name, "type": t.type, "param_map": b.get("param_map") or {}})
             if t.name not in tool_names:
                 tool_names.append(t.name)
-        intents_out.append({"code": it.code, "name": it.name, "l1": it.l1, "l2": it.l2,
+        intents_out.append({"code": it.code, "name": it.name, "category_path": tax.path(it.category_id),
                             "description": it.description, "examples": list(it.examples or []),
                             "slots": effective_slots(it, idx), "knowledge": list(it.kb_refs or []), "tools": tools})
         for r in it.kb_refs or []:
@@ -61,6 +63,7 @@ def build(db: Session, sp: Space) -> dict:
         "version": sp.version,
         "generated_at": iso(utcnow()),
         "recognition": space_svc.recognition(sp),
+        "taxonomy": {**tax_svc.levels_def(sp), "categories": tax.tree(with_counts=False, with_ids=False)},
         "slots": [{k: v for k, v in slot_svc.to_dict(s).items() if k != "options" or v}
                   for s in slot_svc.list_slots(db, sp.id)],
         "intents": intents_out,

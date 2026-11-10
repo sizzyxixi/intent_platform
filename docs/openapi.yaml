@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
-  version: 0.5.0
+  version: 0.6.0
   description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
 
     给 AI 的总规则：
@@ -16,9 +16,9 @@ info:
 
     - 写意图只用 POST /api/v1/intents:batchUpsert 且 mode=merge；写回的意图一律是「草稿」，不要尝试启用。
 
-    - 不自建 L1/L2，不删除任何数据，不覆盖已启用意图。
+    - 不自建分类，不删除任何数据，不覆盖已启用意图。
 
-    - 层级固定为 L1 大类 → L2 问题桶 → L3 意图，L2 必填。
+    - v0.6 起分类层级由各空间自行配置（0～5 层分类 + 最末层意图，如 1688 = 大类 / 问题桶 / 意图）：先读 GET /api/v1/taxonomy 的 levels 与 categories，写入时用 category_path 给出从第 1 层到最末层的完整路径（每段填编码或名称）。0.5 版的 l1 / l2 字段在写入与筛选时仍兼容，输出中已移除。
 
     - v0.5 起意图上不再有 fallback（兜底条件）；兜底由空间设置（GET/PUT /api/v1/recognition，运行时配置中的 recognition）统一处理，写入时带 fallback 会被忽略。
 
@@ -220,42 +220,43 @@ paths:
       tags:
       - 分类
       operationId: getTaxonomy
-      summary: 读取意图分类（L1 大类 / L2 问题桶）
-      description: '何时用：每次整理或写入意图之前先调用，拿到合法的 l1 编码与 l2 名称。
+      summary: 读取意图分类（层级定义 + 分类树）
+      description: '何时用：每次整理或写入意图之前先调用，拿到本空间的分类层级定义（levels）和分类树（categories）；写入意图时 category_path 必须是树上从第 1 层到最末层的一条完整路径。
+
 
         何时不用：不要用它来查具体意图，查意图用 GET /api/v1/intents。
 
-        分类由平台维护，AI 不能新增；找不到合适的 L2 时，选最接近的并在 description（意图描述）中说明。
+
+        分类与层级由平台维护，AI 不能新增；找不到合适的分类时，选最接近的并在 description（意图描述）中说明。
 
         '
       responses:
         '200':
-          description: 分类树
+          description: 分类层级与分类树
           content:
             application/json:
               schema:
-                type: object
-                required:
-                - l1
-                properties:
-                  l1:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/TaxonomyL1'
+                $ref: '#/components/schemas/Taxonomy'
               example:
-                l1:
+                levels:
+                - depth: 1
+                  name: 大类
+                - depth: 2
+                  name: 问题桶
+                intent_level_name: 意图
+                categories:
                 - code: STOCK
                   name: 库存与货期
-                  l2:
-                  - 现货
-                  - 货期
-                  - 批次日期
-                - code: PRICE
-                  name: 价格与议价
-                  l2:
-                  - 询价
-                  - 议价
-                  - 费用
+                  depth: 1
+                  children:
+                  - code: null
+                    name: 现货
+                    depth: 2
+                    children: []
+                  - code: null
+                    name: 货期
+                    depth: 2
+                    children: []
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -269,7 +270,7 @@ paths:
       - 意图
       operationId: listIntents
       summary: 查询意图列表
-      description: '何时用：写入前查重（按 q 搜名称/例句，或按 l1、l2 列出同类意图）；增量同步时用 updated_after。
+      description: '何时用：写入前查重（按 q 搜名称/例句，或按 category 列出同类意图）；增量同步时用 updated_after。
 
         何时不用：已知编码时直接用 GET /api/v1/intents/{code} 读详情。
 
@@ -277,18 +278,26 @@ paths:
 
         '
       parameters:
+      - name: category
+        in: query
+        schema:
+          type: string
+          example: STOCK/现货
+        description: 分类路径，每段填编码或名称，用 / 分隔；可以只写前几层（返回该分类及其下级的全部意图）；路径不存在时返回空列表
       - name: l1
         in: query
         schema:
           type: string
           example: STOCK
-        description: L1 大类编码
+        description: 0.5 版参数（兼容）：等价于 category 第 1 段
+        deprecated: true
       - name: l2
         in: query
         schema:
           type: string
           example: 现货
-        description: L2 问题桶名称
+        description: 0.5 版参数（兼容）：与 l1 一起使用，等价于 category 第 2 段
+        deprecated: true
       - name: status
         in: query
         schema:
@@ -441,7 +450,7 @@ paths:
 
         - 单次最多 100 条，超出返回 413；按结果中的 conflicts 逐条修正后重试，不要整批重复提交。
 
-        何时不用：不要用它删除意图或修改状态；不要用它新建 L1/L2。
+        何时不用：不要用它删除意图或修改状态；不要用它新建分类。
 
         - fallback（兜底条件）字段已取消：传入不会报错，但会被忽略，并在结果 ignored_fields 中列出。
 
@@ -459,8 +468,9 @@ paths:
               intents:
               - code: B.STOCK.PREORDER
                 name: 预售/订货
-                l1: STOCK
-                l2: 现货
+                category_path:
+                - STOCK
+                - 现货
                 description: 用户想在缺货时先下单预订；问能否预定、先拍后发算；问何时补货不算（→ B.STOCK.RESTOCK_ETA）
                 examples:
                 - 没货能先拍吗
@@ -945,6 +955,22 @@ paths:
                   final_action_label: 交给通用助手
                   clarify_prompt: 我想确认一下，您是想要以下哪一项？
                   final_message: null
+                taxonomy:
+                  levels:
+                  - depth: 1
+                    name: 大类
+                  - depth: 2
+                    name: 问题桶
+                  intent_level_name: 意图
+                  categories:
+                  - code: DESIGN
+                    name: 电商设计
+                    depth: 1
+                    children:
+                    - code: null
+                      name: 主图与白底图
+                      depth: 2
+                      children: []
                 slots:
                 - name: product_image
                   display_name: 商品图
@@ -963,8 +989,11 @@ paths:
                 intents:
                 - code: M.DESIGN.MAIN
                   name: 产品主图
-                  l1: DESIGN
-                  l2: 主图与白底图
+                  category_path:
+                  - code: DESIGN
+                    name: 电商设计
+                  - code: null
+                    name: 主图与白底图
                   description: 用户想为商品生成符合目标平台规范的电商主图（Listing 首图）；"做主图""首图"算；只要换白底不算（→ 白底图），已有主图改尺寸不算（→ 多平台主图适配）
                   examples:
                   - 帮我给这款蓝牙耳机做一张亚马逊美国站主图
@@ -1277,7 +1306,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Unprocessable:
-      description: 内容校验不通过（例句不足 3 条、必填槽位缺追问话术、L1/L2 不存在等）
+      description: 内容校验不通过（例句不足 3 条、必填槽位缺追问话术、分类路径不存在等）
       content:
         application/json:
           schema:
@@ -1296,36 +1325,15 @@ components:
   schemas:
     IntentCode:
       type: string
-      pattern: ^[A-Z]{1,4}\.[A-Z]+\.[A-Z0-9_]+$
+      pattern: ^[A-Z]{1,4}(\.[A-Z0-9_]+){1,6}$
       example: M.DESIGN.MAIN
-      description: 编码规则 {空间前缀}.{L1 编码}.{意图英文}，全大写，下划线分隔，全局唯一，创建后不可改。1688 智能客服前缀 B，Moonclaw 前缀 M。
+      description: 编码规则 {空间前缀}.{第一层分类编码}.{意图英文}，全大写，下划线分隔，全局唯一，创建后不可改；第一层分类没有编码（或空间没有分类层）时为 {空间前缀}.{意图英文…}。1688 智能客服前缀 B，Moonclaw 前缀 M。
     IntentStatus:
       type: string
       enum:
       - 草稿
       - 启用
       - 停用
-    TaxonomyL1:
-      type: object
-      required:
-      - code
-      - name
-      - l2
-      properties:
-        code:
-          type: string
-          example: STOCK
-        name:
-          type: string
-          example: 库存与货期
-        l2:
-          type: array
-          items:
-            type: string
-          example:
-          - 现货
-          - 货期
-          - 批次日期
     Slot:
       type: object
       required:
@@ -1399,8 +1407,7 @@ components:
       required:
       - code
       - name
-      - l1
-      - l2
+      - category_path
       - status
       - updated_at
       properties:
@@ -1409,12 +1416,8 @@ components:
         name:
           type: string
           example: 现货/有货确认
-        l1:
-          type: string
-          example: STOCK
-        l2:
-          type: string
-          example: 现货
+        category_path:
+          $ref: '#/components/schemas/CategoryPath'
         description:
           type: string
           description: 意图描述
@@ -1455,8 +1458,6 @@ components:
       required:
       - code
       - name
-      - l1
-      - l2
       - description
       - examples
       properties:
@@ -1465,12 +1466,22 @@ components:
         name:
           type: string
           maxLength: 30
+        category_path:
+          type: array
+          items:
+            type: string
+          description: 从第 1 层到最末层分类的完整路径，每段填该层的编码或名称（如 ["STOCK", "现货"]）；层数必须等于 taxonomy.levels 的长度。空间有分类层时必填（或用兼容字段 l1/l2）
+          example:
+          - STOCK
+          - 现货
         l1:
           type: string
-          description: 必须是 taxonomy 中已有的 L1 编码
+          deprecated: true
+          description: 0.5 版字段（兼容）：等价于 category_path 第 1 段
         l2:
           type: string
-          description: 必须是该 L1 下已有的 L2 名称
+          deprecated: true
+          description: 0.5 版字段（兼容）：等价于 category_path 第 2 段
         description:
           type: string
           minLength: 15
@@ -1580,8 +1591,7 @@ components:
                 - INVALID_CODE
                 - MISSING_FIELD
                 - DESCRIPTION_TOO_SHORT
-                - UNKNOWN_L1
-                - UNKNOWN_L2
+                - UNKNOWN_CATEGORY
                 - DUPLICATE_IN_BATCH
                 - DUPLICATE_NAME
                 - TOO_FEW_EXAMPLES
@@ -1959,6 +1969,7 @@ components:
       - version
       - generated_at
       - recognition
+      - taxonomy
       - slots
       - intents
       - validation_sets
@@ -1973,6 +1984,8 @@ components:
           format: date-time
         recognition:
           $ref: '#/components/schemas/Recognition'
+        taxonomy:
+          $ref: '#/components/schemas/Taxonomy'
         intents:
           type: array
           items:
@@ -1980,8 +1993,7 @@ components:
             required:
             - code
             - name
-            - l1
-            - l2
+            - category_path
             - description
             - examples
             - slots
@@ -1992,10 +2004,8 @@ components:
                 $ref: '#/components/schemas/IntentCode'
               name:
                 type: string
-              l1:
-                type: string
-              l2:
-                type: string
+              category_path:
+                $ref: '#/components/schemas/CategoryPath'
               description:
                 type: string
               examples:
@@ -2348,3 +2358,86 @@ components:
           type: string
           nullable: true
           description: final_action=decline 时回复的话术，其余为 null
+    CategoryRef:
+      type: object
+      required:
+      - code
+      - name
+      properties:
+        code:
+          type: string
+          nullable: true
+          description: 分类编码；只有部分层级（通常是第一层）有编码
+          example: STOCK
+        name:
+          type: string
+          example: 库存与货期
+    CategoryPath:
+      type: array
+      description: 从第 1 层到最末层分类的路径；空间没有分类层时为空数组
+      items:
+        $ref: '#/components/schemas/CategoryRef'
+      example:
+      - code: STOCK
+        name: 库存与货期
+      - code: null
+        name: 现货
+    CategoryNode:
+      type: object
+      required:
+      - code
+      - name
+      - depth
+      - children
+      properties:
+        code:
+          type: string
+          nullable: true
+        name:
+          type: string
+        depth:
+          type: integer
+          minimum: 1
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategoryNode'
+    TaxonomyLevels:
+      type: object
+      required:
+      - levels
+      - intent_level_name
+      properties:
+        levels:
+          type: array
+          description: 分类层级定义（不含意图层），按 depth 排序；0～5 个
+          items:
+            type: object
+            required:
+            - depth
+            - name
+            properties:
+              depth:
+                type: integer
+              name:
+                type: string
+          example:
+          - depth: 1
+            name: 大类
+          - depth: 2
+            name: 问题桶
+        intent_level_name:
+          type: string
+          example: 意图
+          description: 最末层（意图层）的显示名称
+    Taxonomy:
+      allOf:
+      - $ref: '#/components/schemas/TaxonomyLevels'
+      - type: object
+        required:
+        - categories
+        properties:
+          categories:
+            type: array
+            items:
+              $ref: '#/components/schemas/CategoryNode'

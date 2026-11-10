@@ -15,7 +15,7 @@ from ...deps import KeyCtx, api_key, cleanup_idempotency, resolve_space
 from ...errors import ApiError, bad_request, forbidden, unprocessable
 from ...models import IdempotencyRecord, ImportRecord, Space
 from ...services import importer, intents as intent_svc, knowledge as kb_svc, runtime, slots as slot_svc
-from ...services import spaces as space_svc, tools as tool_svc
+from ...services import spaces as space_svc, taxonomy as tax_svc, tools as tool_svc
 from ...services.common import STATUSES, utcnow
 from ...services.validation import RefIndex
 
@@ -80,7 +80,7 @@ def list_spaces(ctx: KeyCtx = Depends(api_key(R_INT)), db: Session = Depends(get
 @router.get("/taxonomy")
 def get_taxonomy(request: Request, ctx: KeyCtx = Depends(api_key(R_INT)), db: Session = Depends(get_db)):
     sp = resolve_space(request, db, ctx)
-    return space_svc.taxonomy_dict(db, sp.id)
+    return tax_svc.public_taxonomy(db, sp)
 
 
 @router.get("/recognition")
@@ -168,16 +168,21 @@ def delete_slot(name: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT
 
 # ---------------- 意图 ----------------
 @router.get("/intents")
-def list_intents(request: Request, l1: str | None = None, l2: str | None = None, status: str | None = None,
+def list_intents(request: Request, category: str | None = None, l1: str | None = None, l2: str | None = None,
+                 status: str | None = None,
                  q: str | None = None, updated_after: datetime | None = None,
                  page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100),
                  ctx: KeyCtx = Depends(api_key(R_INT)), db: Session = Depends(get_db)):
     if status and status not in STATUSES:
         raise bad_request("status 应为 草稿 / 启用 / 停用")
     sp = resolve_space(request, db, ctx)
-    total, rows = intent_svc.list_page(db, sp.id, page, page_size, l1=l1, l2=l2, status=status, q=q,
-                                       updated_after=updated_after)
-    return {"total": total, "items": [intent_svc.api_summary(i) for i in rows]}
+    keep = intent_svc.preload_categories(db, sp.id)
+    total, rows = intent_svc.list_page(db, sp.id, page, page_size,
+                                       category_ids=intent_svc.path_filter(db, sp, category, l1, l2), status=status,
+                                       q=q, updated_after=updated_after)
+    out = {"total": total, "items": [intent_svc.api_summary(i) for i in rows]}
+    del keep
+    return out
 
 
 @router.get("/intents/{code}")

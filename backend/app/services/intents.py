@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 from sqlalchemy import String, cast, func, or_, select
@@ -5,17 +6,18 @@ from sqlalchemy.orm import Session
 
 from .. import audit
 from ..errors import conflict, not_found, unprocessable
-from ..models import Intent, IntentLog, Space, Tool
+from ..models import Category, Intent, IntentLog, Space, Tool
 from . import spaces as space_svc
+from . import taxonomy as tax_svc
 from .common import INTENT_CODE_RE, STATUSES, Actor, iso, utcnow
 from .validation import RefIndex, effective_ask, validate
 
-FIELD_LABEL = {"name": "名称", "l2": "L2", "description": "意图描述", "examples": "例句", "slots": "槽位",
+FIELD_LABEL = {"name": "名称", "category_id": "分类", "description": "意图描述", "examples": "例句", "slots": "槽位",
                "kb_refs": "关联知识", "tools": "关联工具", "status": "状态"}
 
 
 def as_dict(it: Intent) -> dict:
-    return {"code": it.code, "name": it.name, "l1": it.l1, "l2": it.l2, "description": it.description,
+    return {"code": it.code, "name": it.name, "category_id": it.category_id, "description": it.description,
             "examples": list(it.examples or []), "slots": list(it.slots or []), "kb_refs": list(it.kb_refs or []),
             "tools": list(it.tools or []), "space_id": it.space_id, "status": it.status}
 
@@ -31,12 +33,41 @@ def get(db: Session, code: str, space_id: str | None = None) -> Intent:
     return it
 
 
-def query(db: Session, space_id: str, l1=None, l2=None, status=None, q=None, updated_after=None):
+def category_path(it: Intent) -> list[dict]:
+    """[{code, name}, ...]，从第 1 层到叶子。父节点走 identity map，列表场景先 preload_categories。"""
+    out, c = [], it.category
+    while c is not None:
+        out.append({"code": c.code, "name": c.name})
+        c = c.parent
+    return out[::-1]
+
+
+def preload_categories(db: Session, space_id: str) -> list[Category]:
+    """一次查出空间全部分类，放进 identity map；调用方持有返回值直到序列化结束。"""
+    return list(db.scalars(select(Category).where(Category.space_id == space_id)))
+
+
+def path_filter(db: Session, sp: Space, category: str | None = None, l1: str | None = None,
+                l2: str | None = None) -> list[int] | None:
+    """开放接口的分类筛选：category 为路径（编码或名称，用 / 分隔，可只写前几层）；l1/l2 为 0.5 版参数（兼容）。
+    返回该节点及子孙节点的 id；不传返回 None；路径不存在返回 []。"""
+    segs = [x for x in re.split(r"\s*/\s*", category or "") if x] if category else [x for x in (l1, l2) if x]
+    if not segs:
+        return None
+    t = tax_svc.Tax(db, sp)
+    pid, node = None, None
+    for sgm in segs:
+        node = t.match_child(pid, sgm)
+        if not node:
+            return []
+        pid = node.id
+    return t.descendants(node.id)
+
+
+def query(db: Session, space_id: str, category_ids=None, status=None, q=None, updated_after=None):
     stmt = select(Intent).where(Intent.space_id == space_id)
-    if l1:
-        stmt = stmt.where(Intent.l1 == l1)
-    if l2:
-        stmt = stmt.where(Intent.l2 == l2)
+    if category_ids is not None:
+        stmt = stmt.where(Intent.category_id.in_(list(category_ids)))
     if status:
         stmt = stmt.where(Intent.status == status)
     if q:
@@ -55,13 +86,8 @@ def list_page(db: Session, space_id: str, page: int = 1, page_size: int = 50, **
     return total, rows
 
 
-def l1_counts(db: Session, space_id: str) -> dict[str, int]:
-    rows = db.execute(select(Intent.l1, func.count()).where(Intent.space_id == space_id).group_by(Intent.l1))
-    return {a: n for a, n in rows}
-
-
 def api_summary(it: Intent) -> dict:
-    return {"code": it.code, "name": it.name, "l1": it.l1, "l2": it.l2, "description": it.description,
+    return {"code": it.code, "name": it.name, "category_path": category_path(it), "description": it.description,
             "status": it.status, "example_count": len(it.examples or []), "updated_at": iso(it.updated_at),
             "space": it.space_id}
 
@@ -83,6 +109,7 @@ def admin_detail(it: Intent, idx: RefIndex) -> dict:
         sd = defs.get(s["name"])
         s["default_ask"] = sd.default_ask if sd else ""
         s["display_name"] = sd.display_name if sd else s["name"]
+    d["category_id"] = it.category_id
     d["owner"] = it.owner
     d["created_at"] = iso(it.created_at)
     d["logs"] = [{"at": iso(x.at), "by": x.by, "message": x.message}
@@ -159,19 +186,18 @@ def check_structure(db: Session, it_data: dict, idx: RefIndex) -> list[str]:
 def create(db: Session, sp: Space, data: dict, actor: Actor) -> Intent:
     code = (data.get("code") or "").strip()
     name = (data.get("name") or "").strip()
-    l1, l2 = (data.get("l1") or "").strip(), (data.get("l2") or "").strip()
+    t = tax_svc.Tax(db, sp)
+    cid, cerr = tax_svc.category_input(t, data)
     errs = []
+    if cerr:
+        errs.append(cerr)
+    rule = tax_svc.code_rule(t, cid)
     if not INTENT_CODE_RE.match(code):
-        errs.append("编码格式应为 前缀.大类.意图（大写，如 B.STOCK.AVAIL）")
-    elif not code.startswith(f"{sp.code_prefix}.{l1}."):
-        errs.append(f"编码应以 {sp.code_prefix}.{l1}. 开头")
+        errs.append(f"编码格式应为 {rule}XXX（大写字母 / 数字 / 下划线，用点分隔，如 B.STOCK.AVAIL）")
+    elif not cerr and not code.startswith(rule):
+        errs.append(f"编码应以 {rule} 开头")
     if not name:
         errs.append("名称不能为空")
-    m = space_svc.l1_map(db, sp.id)
-    if l1 not in m:
-        errs.append(f"L1「{l1}」不存在")
-    elif l2 not in [b.name for b in m[l1].l2s]:
-        errs.append(f"L2「{l2}」不存在")
     if errs:
         raise unprocessable("新建意图校验不通过", problems=errs)
     ex = db.get(Intent, code)
@@ -180,7 +206,7 @@ def create(db: Session, sp: Space, data: dict, actor: Actor) -> Intent:
     if db.scalar(select(Intent).where(Intent.space_id == sp.id, Intent.name == name)):
         raise conflict(f"本空间已有同名意图「{name}」", "DUPLICATE_NAME")
     pos = (db.scalar(select(func.max(Intent.position)).where(Intent.space_id == sp.id)) or 0) + 1
-    it = Intent(code=code, space_id=sp.id, name=name, l1=l1, l2=l2, description="", examples=[], slots=[],
+    it = Intent(code=code, space_id=sp.id, name=name, category_id=cid, description="", examples=[], slots=[],
                 kb_refs=[], tools=[], status="草稿", owner=actor.name, position=pos, updated_at=utcnow())
     add_log(it, actor.name, "新建意图（草稿）")
     db.add(it)
@@ -192,18 +218,22 @@ def update(db: Session, it: Intent, data: dict, actor: Actor) -> tuple[Intent, l
     """控制台保存（编辑抽屉）。返回 (intent, warnings)。启用时不通过校验抛 422。"""
     if "code" in data and data["code"] != it.code:
         raise unprocessable("编码创建后不可修改")
-    if "l1" in data and data["l1"] != it.l1:
-        raise unprocessable("L1 不可修改")
     idx = RefIndex(db)
     before = as_dict(it)
     new = dict(before)
     if "name" in data:
         new["name"] = (data.get("name") or "").strip()
-    if "l2" in data:
-        l1 = space_svc.l1_map(db, it.space_id).get(it.l1)
-        if not l1 or data["l2"] not in [b.name for b in l1.l2s]:
-            raise unprocessable(f"L2「{data['l2']}」不存在")
-        new["l2"] = data["l2"]
+    if any(k in data for k in ("category_id", "category_path")):
+        t = tax_svc.Tax(db, db.get(Space, it.space_id))
+        cid, cerr = tax_svc.category_input(t, data)
+        if cerr:
+            raise unprocessable(cerr, problems=[cerr])
+        if cid != it.category_id:
+            rule = tax_svc.code_rule(t, cid)
+            if not it.code.startswith(rule):
+                m = f"编码 {it.code} 与目标分类不匹配（应以 {rule} 开头），只能在同一个一级分类内移动"
+                raise unprocessable(m, problems=[m])
+        new["category_id"] = cid
     if "description" in data:
         new["description"] = (data.get("description") or "").strip()
     if "examples" in data:
@@ -238,7 +268,7 @@ def update(db: Session, it: Intent, data: dict, actor: Actor) -> tuple[Intent, l
     changed = [k for k in FIELD_LABEL if new.get(k) != before.get(k)]
     if not changed:
         return it, []
-    for k in ("name", "l2", "description", "examples", "slots", "kb_refs", "tools", "status"):
+    for k in ("name", "category_id", "description", "examples", "slots", "kb_refs", "tools", "status"):
         setattr(it, k, new[k])
     it.updated_at = utcnow()
     msg = "修改了 " + " / ".join(FIELD_LABEL[k] for k in changed if k != "status")

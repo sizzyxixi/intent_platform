@@ -4,7 +4,9 @@ from datetime import datetime, timezone, timedelta
 
 TZ_CN = timezone(timedelta(hours=8))
 TAG_KEYS = ("platform", "site", "language", "category")
-INTENT_CODE_RE = re.compile(r"^[A-Z]{1,4}\.[A-Z]+\.[A-Z0-9_]+$")
+INTENT_CODE_RE = re.compile(r"^[A-Z]{1,4}(\.[A-Z0-9_]+){1,6}$")
+CATEGORY_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,31}$")
+MAX_CATEGORY_LEVELS = 5
 SLOT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 STATUSES = ("草稿", "启用", "停用")

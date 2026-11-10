@@ -38,9 +38,10 @@ def test_scope_forbidden(linxia):
 
 def test_taxonomy_counts(full_key):
     cs = check(full_key.get("/api/v1/taxonomy", space="cs"))
-    assert len(cs["l1"]) == 12 and sum(len(a["l2"]) for a in cs["l1"]) == 46
+    assert [x["name"] for x in cs["levels"]] == ["大类", "问题桶"] and cs["intent_level_name"] == "意图"
+    assert len(cs["categories"]) == 12 and sum(len(a["children"]) for a in cs["categories"]) == 46
     mc = check(full_key.get("/api/v1/taxonomy", space="mc"))
-    assert len(mc["l1"]) == 6 and sum(len(a["l2"]) for a in mc["l1"]) == 14
+    assert len(mc["categories"]) == 6 and sum(len(a["children"]) for a in mc["categories"]) == 14
 
 
 def test_slots_per_space(full_key):
@@ -59,8 +60,13 @@ def test_intents_list_filters_pagination(full_key):
     assert not {i["code"] for i in b["items"]} & {i["code"] for i in b2["items"]}
     en = check(full_key.get("/api/v1/intents?status=启用", space="cs"))
     assert en["total"] == 15 and all(i["status"] == "启用" for i in en["items"])
-    st = check(full_key.get("/api/v1/intents?l1=STOCK", space="cs"))
-    assert st["total"] > 0 and all(i["l1"] == "STOCK" for i in st["items"])
+    st = check(full_key.get("/api/v1/intents?category=STOCK", space="cs"))
+    assert st["total"] > 0 and all(i["category_path"][0]["code"] == "STOCK" for i in st["items"])
+    st2 = check(full_key.get("/api/v1/intents?category=库存与货期/现货", space="cs"))
+    assert 0 < st2["total"] < st["total"] and all(i["category_path"][1]["name"] == "现货" for i in st2["items"])
+    legacy = check(full_key.get("/api/v1/intents?l1=STOCK&l2=现货", space="cs"))
+    assert legacy["total"] == st2["total"]
+    assert check(full_key.get("/api/v1/intents?category=NOPE", space="cs"))["total"] == 0
     q = check(full_key.get("/api/v1/intents?q=现货", space="cs"))
     assert q["total"] >= 1
     r = full_key.get("/api/v1/intents?status=xx", space="cs")

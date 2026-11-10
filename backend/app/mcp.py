@@ -17,7 +17,7 @@ from .deps import KeyCtx, api_key, cleanup_idempotency, resolve_space
 from .errors import ApiError, forbidden
 from .models import IdempotencyRecord
 from .services import importer, intents as intent_svc, knowledge as kb_svc, slots as slot_svc
-from .services import spaces as space_svc, tools as tool_svc
+from .services import spaces as space_svc, taxonomy as tax_svc, tools as tool_svc
 
 router = APIRouter()
 TOOLS = json.loads((Path(__file__).parent / "mcp_tools.json").read_text(encoding="utf-8"))
@@ -71,7 +71,7 @@ def call_tool(request: Request, db: Session, ctx: KeyCtx, name: str, args: dict,
         sp = resolve_space(request, db, ctx, args.get("space"))
         view = args.get("view") or "intents"
         if view == "taxonomy":
-            return space_svc.taxonomy_dict(db, sp.id)
+            return tax_svc.public_taxonomy(db, sp)
         if view == "slots":
             ub = slot_svc.used_by_map(db, sp.id)
             return {"slots": [slot_svc.to_dict(s, ub.get(s.name, [])) for s in slot_svc.list_slots(db, sp.id)]}
@@ -82,10 +82,13 @@ def call_tool(request: Request, db: Session, ctx: KeyCtx, name: str, args: dict,
             return {**space_svc.recognition(sp), "version": sp.version}
         ua = args.get("updated_after")
         ua = datetime.fromisoformat(ua.replace("Z", "+00:00")) if ua else None
-        total, rows = intent_svc.list_page(db, sp.id, 1, args.get("page_size") or 50, l1=args.get("l1"),
-                                           l2=args.get("l2"), status=args.get("status"), q=args.get("q"),
-                                           updated_after=ua)
-        return {"total": total, "items": [intent_svc.api_summary(i) for i in rows]}
+        keep = intent_svc.preload_categories(db, sp.id)
+        cats = intent_svc.path_filter(db, sp, args.get("category"), args.get("l1"), args.get("l2"))
+        total, rows = intent_svc.list_page(db, sp.id, 1, args.get("page_size") or 50, category_ids=cats,
+                                           status=args.get("status"), q=args.get("q"), updated_after=ua)
+        out = {"total": total, "items": [intent_svc.api_summary(i) for i in rows]}
+        del keep
+        return out
     if name == "get_intent":
         sp = resolve_space(request, db, ctx, args.get("space"))
         return intent_svc.api_detail(intent_svc.get(db, args["code"], sp.id))

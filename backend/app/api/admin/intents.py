@@ -11,6 +11,7 @@ from ...deps import Role, get_space_or_404, require
 from ...errors import bad_request, unprocessable
 from ...models import ImportRecord, Intent, Space
 from ...services import importer, intents as intent_svc, runtime, slots as slot_svc, spaces as space_svc
+from ...services import taxonomy as tax_svc
 from ...services.common import STATUSES, iso
 from ...services.testing import describe_ref, run_test
 from ...services.validation import RefIndex, validate
@@ -22,7 +23,7 @@ VIEW, EDIT, ADMIN = require(Role.VIEWER), require(Role.EDITOR), require(Role.ADM
 
 def _space_full(db: Session, sp: Space) -> dict:
     d = space_svc.space_dict(sp)
-    d.update(id=sp.id, version=sp.version, recognition=space_svc.recognition(sp, True),
+    d.update(id=sp.id, version=sp.version, levels=list(sp.levels or []), recognition=space_svc.recognition(sp, True),
              intent_count=db.scalar(select(func.count()).select_from(Intent).where(Intent.space_id == sp.id)),
              enabled_count=db.scalar(select(func.count()).select_from(Intent).where(
                  Intent.space_id == sp.id, Intent.status == "启用")))
@@ -44,48 +45,47 @@ async def create_space(request: Request, actor=Depends(ADMIN), db: Session = Dep
 
 @router.get("/spaces/{sid}/taxonomy")
 def get_taxonomy(sid: str, actor=Depends(VIEW), db: Session = Depends(get_db)):
-    get_space_or_404(db, sid)
-    counts = {}
-    for l1, l2, n in db.execute(select(Intent.l1, Intent.l2, func.count()).where(Intent.space_id == sid)
-                                .group_by(Intent.l1, Intent.l2)):
-        counts.setdefault(l1, {})[l2] = n
-    return {"l1": [{"code": a.code, "name": a.name, "count": sum(counts.get(a.code, {}).values()),
-                    "l2": [{"name": b.name, "count": counts.get(a.code, {}).get(b.name, 0)} for b in a.l2s]}
-                   for a in space_svc.taxonomy(db, sid)]}
+    return tax_svc.admin_taxonomy(db, get_space_or_404(db, sid))
 
 
-@router.post("/spaces/{sid}/taxonomy/l1", status_code=201)
-async def add_l1(sid: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
+@router.post("/spaces/{sid}/categories", status_code=201)
+async def add_category(sid: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
     sp = get_space_or_404(db, sid)
-    b = await json_body(request)
-    space_svc.add_l1(db, sp, b.get("code"), b.get("name"), actor)
+    c = tax_svc.add_category(db, sp, await json_body(request), actor)
     db.commit()
-    return get_taxonomy(sid, actor, db)
+    return {"id": c.id, **tax_svc.admin_taxonomy(db, sp)}
 
 
-@router.post("/spaces/{sid}/taxonomy/l1/{code}/l2", status_code=201)
-async def add_l2(sid: str, code: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
+@router.patch("/spaces/{sid}/categories/{cid}")
+async def update_category(sid: str, cid: int, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
     sp = get_space_or_404(db, sid)
-    b = await json_body(request)
-    space_svc.add_l2(db, sp, code, b.get("name"), actor)
+    tax_svc.update_category(db, sp, tax_svc.get_category(db, sp, cid), await json_body(request), actor)
     db.commit()
-    return get_taxonomy(sid, actor, db)
+    return tax_svc.admin_taxonomy(db, sp)
 
 
-@router.delete("/spaces/{sid}/taxonomy/l1/{code}")
-def delete_l1(sid: str, code: str, actor=Depends(EDIT), db: Session = Depends(get_db)):
+@router.delete("/spaces/{sid}/categories/{cid}")
+def delete_category(sid: str, cid: int, actor=Depends(EDIT), db: Session = Depends(get_db)):
     sp = get_space_or_404(db, sid)
-    space_svc.delete_l1(db, sp, code, actor)
+    tax_svc.delete_category(db, sp, tax_svc.get_category(db, sp, cid), actor)
     db.commit()
-    return get_taxonomy(sid, actor, db)
+    return tax_svc.admin_taxonomy(db, sp)
 
 
-@router.delete("/spaces/{sid}/taxonomy/l1/{code}/l2/{name}")
-def delete_l2(sid: str, code: str, name: str, actor=Depends(EDIT), db: Session = Depends(get_db)):
+@router.post("/spaces/{sid}/levels/preview")
+async def preview_levels(sid: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
     sp = get_space_or_404(db, sid)
-    space_svc.delete_l2(db, sp, code, name, actor)
+    out = tax_svc.preview_levels(db, sp, await json_body(request))
+    db.rollback()
+    return out
+
+
+@router.put("/spaces/{sid}/levels")
+async def put_levels(sid: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
+    sp = get_space_or_404(db, sid)
+    out = tax_svc.apply_levels(db, sp, await json_body(request), actor)
     db.commit()
-    return get_taxonomy(sid, actor, db)
+    return {**out, "taxonomy": tax_svc.admin_taxonomy(db, sp)}
 
 
 @router.get("/spaces/{sid}/recognition")
@@ -119,17 +119,25 @@ def _row(it: Intent, idx: RefIndex) -> dict:
 
 
 @router.get("/spaces/{sid}/intents")
-def list_intents(sid: str, l1: str | None = None, l2: str | None = None, status: str | None = None,
+def list_intents(sid: str, category: int | None = None, status: str | None = None,
                  q: str | None = None, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500),
                  actor=Depends(VIEW), db: Session = Depends(get_db)):
-    get_space_or_404(db, sid)
+    sp = get_space_or_404(db, sid)
     if status and status not in STATUSES:
         raise bad_request("status 应为 草稿 / 启用 / 停用")
-    total, rows = intent_svc.list_page(db, sid, page, page_size, l1=l1, l2=l2, status=status, q=q)
+    cats = None
+    if category is not None:
+        t = tax_svc.Tax(db, sp)
+        if category not in t.nodes:
+            raise bad_request("分类不存在", "CATEGORY_NOT_FOUND")
+        cats = t.descendants(category)
+    keep = intent_svc.preload_categories(db, sid)
+    total, rows = intent_svc.list_page(db, sid, page, page_size, category_ids=cats, status=status, q=q)
     idx = RefIndex(db)
     st = dict(db.execute(select(Intent.status, func.count()).where(Intent.space_id == sid).group_by(Intent.status)).all())
-    return {"total": total, "items": [_row(i, idx) for i in rows], "l1_counts": intent_svc.l1_counts(db, sid),
-            "all_count": sum(st.values()), "status_counts": st}
+    out = {"total": total, "items": [_row(i, idx) for i in rows], "all_count": sum(st.values()), "status_counts": st}
+    del keep
+    return out
 
 
 @router.post("/spaces/{sid}/intents", status_code=201)
@@ -177,7 +185,7 @@ async def validate_draft(code: str, request: Request, actor=Depends(VIEW), db: S
     it = intent_svc.get(db, code)
     b = await json_body(request)
     data = intent_svc.as_dict(it)
-    for k in ("name", "l2", "description", "examples", "slots", "kb_refs", "tools"):
+    for k in ("name", "category_id", "description", "examples", "slots", "kb_refs", "tools"):
         if k in b:
             data[k] = b[k]
     idx = RefIndex(db)
@@ -265,8 +273,8 @@ def _rows_public(rows: list[dict]) -> list[dict]:
     out = []
     for r in rows:
         out.append({k: r.get(k) for k in ("index", "type", "action", "actions", "issues", "reasons", "notes", "diff",
-                                          "l2_invalid", "l2_options", "new_slots")} | {"data": {
-            k: r["data"].get(k) for k in ("code", "name", "l1", "l2", "description", "examples", "slots",
+                                          "path_invalid", "path_options", "new_slots")} | {"data": {
+            k: r["data"].get(k) for k in ("code", "name", "category_path", "category_id", "description", "examples", "slots",
                                           "ignored_fields")}})
     return out
 

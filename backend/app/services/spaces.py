@@ -1,11 +1,11 @@
 import re
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from .. import audit
 from ..errors import conflict, unprocessable
-from ..models import Intent, Space, TaxonomyL1, TaxonomyL2
+from ..models import Category, Space
 from .common import FINAL_ACTIONS, Actor, iso, utcnow
 
 DEFAULT_CLARIFY = "我想确认一下，您是想要以下哪一项？"
@@ -111,19 +111,6 @@ def bump_versions(db: Session, space_ids: set[str] | list[str]) -> None:
             sp.version += 1
 
 
-def taxonomy(db: Session, space_id: str) -> list[TaxonomyL1]:
-    return list(db.scalars(select(TaxonomyL1).where(TaxonomyL1.space_id == space_id)
-                           .options(selectinload(TaxonomyL1.l2s)).order_by(TaxonomyL1.position, TaxonomyL1.id)))
-
-
-def taxonomy_dict(db: Session, space_id: str) -> dict:
-    return {"l1": [{"code": a.code, "name": a.name, "l2": [b.name for b in a.l2s]} for a in taxonomy(db, space_id)]}
-
-
-def l1_map(db: Session, space_id: str) -> dict[str, TaxonomyL1]:
-    return {a.code: a for a in taxonomy(db, space_id)}
-
-
 def space_dict(sp: Space) -> dict:
     return {"space_id": sp.id, "name": sp.name, "description": sp.description, "bot": sp.bot,
             "code_prefix": sp.code_prefix}
@@ -159,65 +146,14 @@ def create_space(db: Session, data: dict, actor: Actor) -> Space:
     sp = Space(id=sid, name=name, description=(data.get("description") or "").strip(), bot=bot,
                code_prefix=prefix, version=1, position=pos, threshold=rec["threshold"],
                max_clarify=rec["max_clarify"], max_slot_ask=rec["max_slot_ask"], tool_retry=rec["tool_retry"],
-               final_action="general_assistant", clarify_prompt=DEFAULT_CLARIFY, max_candidates=3)
+               final_action="general_assistant", clarify_prompt=DEFAULT_CLARIFY, max_candidates=3,
+               levels=["大类", "问题桶", "意图"])
     db.add(sp)
-    l1 = TaxonomyL1(space_id=sid, code="GEN", name="通用", position=0)
-    l1.l2s.append(TaxonomyL2(name="默认", position=0))
-    db.add(l1)
+    db.flush()
+    root = Category(space_id=sid, parent_id=None, depth=1, code="GEN", name="通用", position=0)
+    db.add(root)
+    db.flush()
+    db.add(Category(space_id=sid, parent_id=root.id, depth=2, code=None, name="默认", position=0))
     audit.record(db, actor, "space.create", "space", sid, f"新建空间「{name}」", sid,
                  {"bot": bot, "code_prefix": prefix})
     return sp
-
-
-def add_l1(db: Session, sp: Space, code: str, name: str, actor: Actor) -> TaxonomyL1:
-    code, name = (code or "").strip(), (name or "").strip()
-    if not re.match(r"^[A-Z]+$", code) or len(code) > 32:
-        raise unprocessable("L1 编码为大写字母", details=[{"field": "code", "message": "L1 编码为大写字母"}])
-    if not name:
-        raise unprocessable("L1 名称必填", details=[{"field": "name", "message": "L1 名称必填"}])
-    m = l1_map(db, sp.id)
-    if code in m or any(a.name == name for a in m.values()):
-        raise conflict("L1 编码或名称已存在", "L1_EXISTS")
-    a = TaxonomyL1(space_id=sp.id, code=code, name=name, position=len(m))
-    db.add(a)
-    audit.record(db, actor, "taxonomy.add_l1", "taxonomy", f"{sp.id}:{code}", f"新增 L1 {name}（{code}）", sp.id)
-    return a
-
-
-def add_l2(db: Session, sp: Space, l1_code: str, name: str, actor: Actor) -> TaxonomyL2:
-    name = (name or "").strip()
-    a = l1_map(db, sp.id).get(l1_code)
-    if not a:
-        raise unprocessable(f"L1 {l1_code} 不存在", "UNKNOWN_L1")
-    if not name:
-        raise unprocessable("L2 名称必填", details=[{"field": "name", "message": "L2 名称必填"}])
-    if any(b.name == name for b in a.l2s):
-        raise conflict("L2 已存在", "L2_EXISTS")
-    b = TaxonomyL2(name=name, position=len(a.l2s))
-    a.l2s.append(b)
-    audit.record(db, actor, "taxonomy.add_l2", "taxonomy", f"{sp.id}:{l1_code}:{name}", f"在 {a.name} 下新增 L2 {name}", sp.id)
-    return b
-
-
-def delete_l1(db: Session, sp: Space, l1_code: str, actor: Actor) -> None:
-    a = l1_map(db, sp.id).get(l1_code)
-    if not a:
-        raise unprocessable(f"L1 {l1_code} 不存在", "UNKNOWN_L1")
-    n = db.scalar(select(func.count()).select_from(Intent).where(Intent.space_id == sp.id, Intent.l1 == l1_code))
-    if n:
-        raise conflict(f"L1 {a.name} 下还有 {n} 个意图，不能删除", "L1_IN_USE", count=n)
-    db.delete(a)
-    audit.record(db, actor, "taxonomy.delete_l1", "taxonomy", f"{sp.id}:{l1_code}", f"删除 L1 {a.name}", sp.id)
-
-
-def delete_l2(db: Session, sp: Space, l1_code: str, name: str, actor: Actor) -> None:
-    a = l1_map(db, sp.id).get(l1_code)
-    b = next((x for x in (a.l2s if a else []) if x.name == name), None)
-    if not b:
-        raise unprocessable("L2 不存在", "UNKNOWN_L2")
-    n = db.scalar(select(func.count()).select_from(Intent).where(
-        Intent.space_id == sp.id, Intent.l1 == l1_code, Intent.l2 == name))
-    if n:
-        raise conflict(f"L2 {name} 下还有 {n} 个意图，不能删除", "L2_IN_USE", count=n)
-    a.l2s.remove(b)
-    audit.record(db, actor, "taxonomy.delete_l2", "taxonomy", f"{sp.id}:{l1_code}:{name}", f"删除 L2 {name}", sp.id)
