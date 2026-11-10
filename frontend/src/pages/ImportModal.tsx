@@ -12,7 +12,7 @@ export default function ImportModal({ onClose, onDone }: { onClose: () => void; 
   const [step, setStep] = useState(1)
   const [err, setErr] = useState<string[]>()
   const [pv, setPv] = useState<any>(null)
-  const [ch, setCh] = useState<Record<number, { action: string; l2?: string }>>({})
+  const [ch, setCh] = useState<Record<number, { action: string; category_id?: number }>>({})
   const [result, setResult] = useState('')
   const [busy, setBusy] = useState(false)
   const samples: Record<string, Sample> = (space.id === 'mc' ? (demo as any).SAMPLES_MC : (demo as any).SAMPLES) || {}
@@ -30,7 +30,7 @@ export default function ImportModal({ onClose, onDone }: { onClose: () => void; 
     setBusy(true)
     try {
       const choices: Record<string, any> = {}
-      pv.rows.forEach((r: any) => { const c = ch[r.index]; choices[r.index] = { action: c?.action || r.action, l2: c?.l2 || (r.l2_invalid ? r.l2_options[0] : undefined) } })
+      pv.rows.forEach((r: any) => { const c = ch[r.index]; choices[r.index] = { action: c?.action || r.action, category_id: c?.category_id || (r.path_invalid ? r.path_options[0].id : undefined) } })
       const r = await api.post(`/spaces/${space.id}/imports/apply`, { file: pv.file, source: pv.source, items: pv.items, choices })
       setResult(r.result + (r.new_slots?.length ? `；自动新建文本槽位：${r.new_slots.join('、')}` : '')); setStep(3)
       toast('导入完成：' + r.result); reloadSpaces()
@@ -41,7 +41,7 @@ export default function ImportModal({ onClose, onDone }: { onClose: () => void; 
   pv?.rows.forEach((r: any) => { cnt[r.type] = (cnt[r.type] || 0) + 1 })
   return <Modal wide testId="importModal" title="导入意图" onClose={() => { if (step === 3) onDone(); onClose() }} foot={step === 2 ? undefined : <Btn onClick={() => { if (step === 3) onDone(); onClose() }}>关闭</Btn>}>
     {step === 1 && <>
-      <div className="note">支持 <b>JSON</b>（AI 工具产出，推荐）、<b>Excel/CSV</b>（表头：编码,名称,L1,L2,意图描述,例句,槽位；例句用 ｜ 分隔，槽位用 ； 分隔，本空间没有的槽位会自动新建）、<b>Markdown</b>（每个意图一个「## 编码 名称」小节）。导入到当前空间「{space.name}」，一律为「草稿」，关联知识/工具并通过校验后再启用。</div>
+      <div className="note">支持 <b>JSON</b>（AI 工具产出，推荐）、<b>Excel/CSV</b>（表头：编码,名称,分类路径,意图描述,例句,槽位；分类路径从第一层写到最末层，用 / 分隔，每段填编码或名称；例句用 ｜ 分隔，槽位用 ； 分隔，本空间没有的槽位会自动新建）、<b>Markdown</b>（每个意图一个「## 编码 名称」小节）。导入到当前空间「{space.name}」，一律为「草稿」，关联知识/工具并通过校验后再启用。</div>
       <div className="drop"><input type="file" id="imFile" multiple accept=".json,.csv,.xlsx,.xls,.md,.txt" disabled={busy}
         onChange={e => { const fs = Array.from(e.target.files || []); if (fs.length) preview(fs, '文件上传'); e.target.value = '' }} />
         <div style={{ marginTop: 10 }}>或使用示例：{([['aiJson', 'AI 工具产出 JSON'], ['csv', 'Excel 模板'], ['md', 'Markdown']] as const).filter(x => samples[x[0]]).map(x =>
@@ -54,11 +54,12 @@ export default function ImportModal({ onClose, onDone }: { onClose: () => void; 
     {step === 2 && pv && <>
       <div className="row" style={{ marginBottom: 8 }}><b>{pv.file}</b><Badge>{pv.source}</Badge><span className="sp" /><Btn s onClick={back}>重新上传</Btn></div>
       <div className="row" style={{ marginBottom: 8 }}>{Object.keys(cnt).map(t => <Badge key={t} c={TC[t]}>{t} {cnt[t]}</Badge>)}</div>
-      <table id="imRows"><thead><tr><th>判定</th><th>编码</th><th>L3 意图</th><th>L1 / L2</th><th>意图描述</th><th>例句</th><th>说明</th><th>处理方式</th></tr></thead><tbody>
+      <table id="imRows"><thead><tr><th>判定</th><th>编码</th><th>意图</th><th>分类路径</th><th>意图描述</th><th>例句</th><th>说明</th><th>处理方式</th></tr></thead><tbody>
         {pv.rows.map((r: any) => { const x = r.data; const c = ch[r.index] || {}; return <tr key={r.index}>
           <td><Badge c={TC[r.type]}>{r.type}</Badge></td><td className="mono">{x.code}</td><td>{x.name}</td>
-          <td>{x.l1} / {r.l2_invalid && r.type !== '冲突' && r.type !== '重复' && r.l2_options.length
-            ? <select id={'imL2' + r.index} value={c.l2 || r.l2_options[0]} onChange={e => setCh({ ...ch, [r.index]: { ...c, action: c.action || r.action, l2: e.target.value } })}>{r.l2_options.map((o: string) => <option key={o}>{o}</option>)}</select> : x.l2}</td>
+          <td>{r.path_invalid && r.type !== '冲突' && r.type !== '重复' && r.path_options.length
+            ? <select id={'imCat' + r.index} value={c.category_id || r.path_options[0].id} onChange={e => setCh({ ...ch, [r.index]: { ...c, action: c.action || r.action, category_id: Number(e.target.value) } })}>{r.path_options.map((o: any) => <option key={o.id} value={o.id}>{o.label}</option>)}</select>
+            : (x.category_path || []).join(' / ')}</td>
           <td className="muted">{x.description}</td><td>{x.examples.length}</td>
           <td>{r.issues.length > 0 && <span style={{ color: '#b91c1c' }}>{r.issues.join('；')}</span>}
             {r.notes.length > 0 && <span style={{ color: '#b45309' }}>{r.notes.map((n: string, i: number) => <div key={i}>{n}</div>)}</span>}

@@ -10,7 +10,7 @@
    "GET",
    "/api/v1/taxonomy",
    "意图:读",
-   "读取当前空间 L1 大类 / L2 问题桶（写入前先读）"
+   "读取当前空间的分类层级定义与分类树（写入前先读）"
   ],
   [
    "GET",
@@ -40,7 +40,7 @@
    "GET",
    "/api/v1/intents",
    "意图:读",
-   "查询当前空间意图，支持 l1、l2、status、q、updated_after"
+   "查询当前空间意图，支持 category（分类路径）、status、q、updated_after"
   ],
   [
    "GET",
@@ -154,8 +154,8 @@
   ]
  ],
  "IM_TPL": {
-  "csv": "﻿编码,名称,L1,L2,意图描述,例句,槽位\nB.STOCK.PREORDER,预售/订货,STOCK,现货,商品缺货时用户询问能否先下单预订,没货能先拍吗｜可以预定吗｜先下单等补货可以吗,sku(必填:请问是哪一款？)；qty\n",
-  "json": "{\n  \"intents\": [\n    {\n      \"code\": \"B.STOCK.PREORDER\",\n      \"name\": \"预售/订货\",\n      \"l1\": \"STOCK\",\n      \"l2\": \"现货\",\n      \"description\": \"商品缺货时买家询问能否先下单预订\",\n      \"examples\": [\n        \"没货能先拍吗\",\n        \"可以预定吗\",\n        \"先下单等补货可以吗\"\n      ],\n      \"slots\": [\n        {\n          \"name\": \"sku\",\n          \"required\": true,\n          \"ask\": \"请问是哪一款？\"\n        },\n        {\n          \"name\": \"qty\",\n          \"required\": false,\n          \"ask\": \"\"\n        }\n      ]\n    }\n  ]\n}",
+  "csv": "﻿编码,名称,分类路径,意图描述,例句,槽位\nB.STOCK.PREORDER,预售/订货,STOCK/现货,商品缺货时用户询问能否先下单预订,没货能先拍吗｜可以预定吗｜先下单等补货可以吗,sku(必填:请问是哪一款？)；qty\n",
+  "json": "{\n  \"intents\": [\n    {\n      \"code\": \"B.STOCK.PREORDER\",\n      \"name\": \"预售/订货\",\n      \"category_path\": [\"STOCK\", \"现货\"],\n      \"description\": \"商品缺货时买家询问能否先下单预订\",\n      \"examples\": [\n        \"没货能先拍吗\",\n        \"可以预定吗\",\n        \"先下单等补货可以吗\"\n      ],\n      \"slots\": [\n        {\n          \"name\": \"sku\",\n          \"required\": true,\n          \"ask\": \"请问是哪一款？\"\n        },\n        {\n          \"name\": \"qty\",\n          \"required\": false,\n          \"ask\": \"\"\n        }\n      ]\n    }\n  ]\n}",
   "md": "## B.STOCK.PREORDER 预售/订货\n- 归属：STOCK / 现货\n- 意图描述：商品缺货时买家询问能否先下单预订\n- 例句：没货能先拍吗｜可以预定吗｜先下单等补货可以吗\n- 槽位：sku(必填:请问是哪一款？)；qty\n"
  },
  "SAMPLES": {

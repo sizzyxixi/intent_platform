@@ -90,3 +90,4 @@ pre.code{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;fo
 .modal{display:flex}
 .check-list label{display:inline-flex;gap:4px;align-items:center;margin-right:12px}
 .lk{margin-right:12px;cursor:pointer}
+.catnode{padding:2px 0}.catrow{padding:3px 0}.catops a{margin-left:6px;font-size:12px;color:#94a3b8}

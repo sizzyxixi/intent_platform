@@ -3,12 +3,13 @@ import { login, watchErrors } from './helpers'
 
 test.describe.configure({ mode: 'serial' })
 
-test('意图列表：L1 筛选、搜索、分页', async ({ page }) => {
+test('意图列表：第一层分类筛选、按层级名生成列、搜索、分页', async ({ page }) => {
   const errs = watchErrors(page)
   await login(page)
   await expect(page.locator('.tree .on, #l1Tree .on').first()).toContainText('123')
   await page.locator('#l1Tree').getByText('库存与货期', { exact: true }).click()
   await expect(page.locator('#intentTbl tbody tr')).toHaveCount(6)
+  await expect(page.locator('#intentTbl thead')).toContainText('大类问题桶意图')
   await page.fill('#fQ', '现货'); await page.click('#fApply')
   await expect(page.locator('#intentTbl tbody tr').first()).toContainText('B.STOCK.AVAIL')
   // 切换空间
@@ -20,7 +21,7 @@ test('意图列表：L1 筛选、搜索、分页', async ({ page }) => {
 test('新建意图 → 启用校验失败 → 补齐后启用', async ({ page }) => {
   await login(page)
   await page.click('#newIntent')
-  await page.selectOption('#niP', 'STOCK|现货')
+  await page.selectOption('#niP', { label: '库存与货期 / 现货' })
   await page.fill('#niC', 'B.STOCK.E2E_PREORDER')
   await page.fill('#niN', '预售测试')
   await page.click('#newIntentDo')

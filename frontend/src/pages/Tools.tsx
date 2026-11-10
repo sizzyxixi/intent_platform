@@ -168,8 +168,8 @@ function Access() {
   }, [])
   const base = meta?.public_base_url || window.location.origin
   const spName = (id: string) => spaces.find(s => s.id === id)?.name || id
-  const eg = sid === 'mc' ? { code: 'M.VIDEO.GIF', name: '商品动图 GIF', l1: 'VIDEO', l2: '商品视频', description: '用户想把商品图做成循环播放的 GIF 动图，用于详情页或社媒；"做个动图""GIF"算；要 MP4 视频不算（→ 图生视频）', examples: ['这张图做成 GIF 动图', '详情页放个循环动图', '把三张图做成轮播 GIF'], slots: [{ name: 'product_image', required: true }, { name: 'ratio', required: false, ask: '动图用什么比例？' }] }
-    : { code: 'B.STOCK.PREORDER', name: '预售/订货', l1: 'STOCK', l2: '现货', description: '用户想在缺货时先下单预订；问能否预定、先拍后发算；问何时补货不算（→ 补货/到货时间）', examples: ['没货能先拍吗', '可以预定吗', '预售什么时候发'], slots: [{ name: 'sku', required: true, ask: '请问是哪一款？' }] }
+  const eg = sid === 'mc' ? { code: 'M.VIDEO.GIF', name: '商品动图 GIF', category_path: ['VIDEO', '商品视频'], description: '用户想把商品图做成循环播放的 GIF 动图，用于详情页或社媒；"做个动图""GIF"算；要 MP4 视频不算（→ 图生视频）', examples: ['这张图做成 GIF 动图', '详情页放个循环动图', '把三张图做成轮播 GIF'], slots: [{ name: 'product_image', required: true }, { name: 'ratio', required: false, ask: '动图用什么比例？' }] }
+    : { code: 'B.STOCK.PREORDER', name: '预售/订货', category_path: ['STOCK', '现货'], description: '用户想在缺货时先下单预订；问能否预定、先拍后发算；问何时补货不算（→ 补货/到货时间）', examples: ['没货能先拍吗', '可以预定吗', '预售什么时候发'], slots: [{ name: 'sku', required: true, ask: '请问是哪一款？' }] }
   const revoke = async (k: any) => {
     if (!window.confirm('吊销后使用该 Key 的 AI 工具将无法访问，确认？')) return
     try { await api.post(`/api-keys/${k.id}/revoke`); reloadKeys(); toast('已吊销') } catch (e) { toast(errLines(e)[0]) }

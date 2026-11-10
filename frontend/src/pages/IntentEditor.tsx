@@ -4,6 +4,7 @@ import { useSession } from '../session'
 import { Badge, Btn, Drawer, ErrBox, ST_C, toast, useAsync } from '../ui'
 import KbPicker from './KbPicker'
 import { SlotForm } from './Slots'
+import { Tax, leaves } from '../taxonomy'
 
 type Slot = { name: string; required: boolean; ask: string }
 type Ref = { kb_id: string; doc_id: string; chunk_id: string; usage: string; label?: string; valid?: boolean }
@@ -20,12 +21,12 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   const [toolSel, setToolSel] = useState('')
   const body = useRef<HTMLDivElement>(null)
   const [slots, reloadSlots] = useAsync(() => api.get(`/spaces/${space.id}/slots`), [space.id])
-  const [tax] = useAsync(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
+  const [tax] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
   const [tools] = useAsync(() => api.get('/tools'), [])
   useEffect(() => {
     api.get(`/intents/${code}`).then(x => {
       setD(x)
-      setE({ name: x.name, l2: x.l2, description: x.description, ex: x.examples.join('\n'), status: x.status,
+      setE({ name: x.name, category_id: x.category_id, description: x.description, ex: x.examples.join('\n'), status: x.status,
         slots: x.slots.map((s: any) => ({ name: s.name, required: s.required, ask: s.ask })),
         kb_refs: x.kb_refs, tools: x.tools })
     }).catch(e => { toast(errLines(e)[0]); onClose() })
@@ -33,10 +34,13 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   }, [code])
   if (!d || !E || !slots || !tax || !tools) return <Drawer title="加载中…" onClose={onClose}><div className="loading">加载中…</div></Drawer>
   const set = (k: string, v: any) => setE((e: any) => ({ ...e, [k]: v }))
-  const l1 = tax.l1.find((a: any) => a.code === d.l1)
+  const opts = leaves(tax)
+  const curRoot = opts.find(o => o.id === d.category_id)?.root
+  const cur = opts.find(o => o.id === E.category_id)
+  const lvNames = tax.levels
   const toolOf = (name: string) => tools.find((t: any) => t.name === name)
   const slotDef = (name: string) => slots.find((s: any) => s.name === name)
-  const payload = () => ({ name: E.name.trim(), l2: E.l2, description: E.description.trim(),
+  const payload = () => ({ name: E.name.trim(), category_id: E.category_id, description: E.description.trim(),
     examples: E.ex.split('\n').map((x: string) => x.trim()).filter(Boolean), slots: E.slots,
     kb_refs: E.kb_refs.map((r: Ref) => ({ kb_id: r.kb_id, doc_id: r.doc_id, chunk_id: r.chunk_id, usage: r.usage })),
     tools: E.tools, status: E.status })
@@ -80,15 +84,17 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   </>
   return <>
     <Drawer testId="intentEditor" onClose={onClose} foot={foot}
-      title={<>编辑 L3 意图 · <span className="mono">{d.code}</span> <Badge c={ST_C[d.status]}>{d.status}</Badge></>}>
+      title={<>编辑意图 · <span className="mono">{d.code}</span> <Badge c={ST_C[d.status]}>{d.status}</Badge></>}>
       <div ref={body}>
         <ErrBox lines={errs} title={errs?.length ? `校验未通过（${errs.length} 项）：` : undefined} />
         <div className="sec"><h4 style={{ margin: '0 0 8px' }}>① 基本信息</h4>
-          <div className="lvpath" id="eLv">归属：<span className="lv">L1</span>{l1?.name || d.l1} <span className="muted">/</span> <span className="lv">L2</span>{E.l2} <span className="muted">/</span> <span className="lv">L3</span><b>{E.name || '（未命名）'}</b></div>
-          <div className="grid g2"><div className="f"><label>L3 意图名称 *</label><input type="text" id="eN" value={E.name} disabled={ro} onChange={e => set('name', e.target.value)} /></div>
+          <div className="lvpath" id="eLv">归属：{(cur?.names || []).map((nm, i) => <span key={i}><span className="lv">{lvNames[i]}</span>{nm} <span className="muted">/</span> </span>)}<span className="lv">{lvNames[lvNames.length - 1]}</span><b>{E.name || '（未命名）'}</b></div>
+          <div className="grid g2"><div className="f"><label>{lvNames[lvNames.length - 1]}名称 *</label><input type="text" id="eN" value={E.name} disabled={ro} onChange={e => set('name', e.target.value)} /></div>
             <div className="f"><label>编码 *</label><input type="text" id="eC" value={d.code} disabled /></div></div>
-          <div className="grid g2"><div className="f"><label>L1 大类</label><input type="text" value={l1 ? `${l1.name}（${l1.code}）` : d.l1} disabled /></div>
-            <div className="f"><label>L2 问题桶</label><select id="eL2" value={E.l2} disabled={ro} onChange={e => set('l2', e.target.value)}>{(l1?.l2 || []).map((b: any) => <option key={b.name}>{b.name}</option>)}</select></div></div>
+          {tax.category_levels > 0 && <div className="f"><label>所属分类（{lvNames.slice(0, -1).join(' / ')}）{curRoot?.code ? <span className="muted">　编码依赖第一层编码 {curRoot.code}，只能在「{curRoot.name}」内移动</span> : null}</label>
+            <select id="eCat" value={E.category_id ?? ''} disabled={ro} onChange={e => set('category_id', Number(e.target.value))}>
+              {E.category_id == null && <option value="">— 请选择 —</option>}
+              {opts.filter(o => !curRoot?.code || o.root.id === curRoot.id).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></div>}
           <div className="f"><label>意图描述 *</label><textarea id="eD" style={{ minHeight: 56 }} value={E.description} disabled={ro} onChange={e => set('description', e.target.value)} />
             <div className="muted" style={{ marginTop: 3 }}>这段描述会被大模型分类和语义匹配使用。请写清：用户想做什么；什么情况算这个意图；什么情况不算（容易和哪个意图混淆）。<br />示例：用户想为商品生成符合平台规范的主图；"做主图""首图"算；只要换白底不算（→ 白底图）。</div></div>
           <div className="f"><label>例句 *（每行一条，至少 3 条，当前 {exCount} 条）</label><textarea id="eEx" style={{ minHeight: 90 }} value={E.ex} disabled={ro} onChange={e => set('ex', e.target.value)} /></div>

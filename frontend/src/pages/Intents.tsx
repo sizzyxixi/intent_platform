@@ -5,6 +5,7 @@ import { Badge, Btn, ErrBox, Modal, Pager, ST_C, toast, useAsync } from '../ui'
 import IntentEditor from './IntentEditor'
 import ImportModal from './ImportModal'
 import { SlotForm } from './Slots'
+import { CatNode, Tax, leaves } from '../taxonomy'
 
 const TABS: [string, string][] = [['list', '意图列表'], ['slots', '槽位'], ['cfg', '空间设置'], ['log', '导入记录']]
 
@@ -29,7 +30,7 @@ export default function IntentsPage({ tab }: { tab: string }) {
 
 function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number }) {
   const { space, canEdit, reloadSpaces } = useSession()
-  const [f, setF] = useState({ l1: '', q: '', status: '' })
+  const [f, setF] = useState({ category: '', q: '', status: '' })
   const [qIn, setQIn] = useState('')
   const [stIn, setStIn] = useState('')
   const [page, setPage] = useState(1)
@@ -37,9 +38,9 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
   const [newOpen, setNewOpen] = useState(false)
   const [imOpen, setImOpen] = useState(false)
   const size = 100
-  const [tax] = useAsync(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id, ver, n])
+  const [tax] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id, ver, n])
   const [data] = useAsync(() => api.get(`/spaces/${space.id}/intents` + qs({ ...f, page, page_size: size })),
-    [space.id, f.l1, f.q, f.status, page, ver, n])
+    [space.id, f.category, f.q, f.status, page, ver, n])
   const reload = () => { setN(x => x + 1); reloadSpaces() }
   const quick = async (code: string, status: string) => {
     try {
@@ -48,12 +49,13 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
       if (e.code === 'ENABLE_CHECK_FAILED') { toast('启用前校验未通过，请补全'); onEdit(code) } else toast(errLines(e)[0])
     }
   }
-  const l1name = (c: string) => tax?.l1.find((a: any) => a.code === c)?.name || c
+  const catCols = tax ? tax.levels.slice(0, -1) : []
+  const leafName = tax ? tax.levels[tax.levels.length - 1] : '意图'
   return <div className="split">
     <div className="tree" id="l1Tree">
-      <div className={'tn l1' + (!f.l1 ? ' on' : '')} onClick={() => { setF({ ...f, l1: '' }); setPage(1) }}><span>全部</span><span className="muted">{data?.all_count ?? ''}</span></div>
-      {tax?.l1.map((a: any) => <div key={a.code} className={'tn l1' + (f.l1 === a.code ? ' on' : '')} onClick={() => { setF({ ...f, l1: a.code }); setPage(1) }}>
-        <span>{a.name}</span><span className="muted">{data?.l1_counts?.[a.code] || 0}</span></div>)}
+      <div className={'tn l1' + (!f.category ? ' on' : '')} onClick={() => { setF({ ...f, category: '' }); setPage(1) }}><span>全部</span><span className="muted">{data?.all_count ?? ''}</span></div>
+      {tax?.tree.map(a => <div key={a.id} className={'tn l1' + (f.category === String(a.id) ? ' on' : '')} onClick={() => { setF({ ...f, category: String(a.id) }); setPage(1) }}>
+        <span>{a.name}</span><span className="muted">{a.count}</span></div>)}
     </div>
     <div>
       <div className="card"><div className="row">
@@ -65,41 +67,41 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
         {canEdit && <Btn id="imOpen" onClick={() => setImOpen(true)}>导入意图</Btn>}
         {canEdit && <Btn p id="newIntent" onClick={() => setNewOpen(true)}>＋ 新建意图</Btn>}
       </div></div>
-      <div className="card" style={{ padding: 0 }}><table id="intentTbl"><thead><tr><th>编码</th><th>L1 大类</th><th>L2 问题桶</th><th>L3 意图</th><th>例句</th><th>知识</th><th>工具</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody>{!data ? <tr><td colSpan={9} className="loading">加载中…</td></tr> : data.items.length ? data.items.map((c: any) => <tr key={c.code}>
-          <td className="mono">{c.code}</td><td className="muted">{l1name(c.l1)}</td><td className="muted">{c.l2}</td>
+      <div className="card" style={{ padding: 0 }}><table id="intentTbl"><thead><tr><th>编码</th>{catCols.map(n => <th key={n}>{n}</th>)}<th>{leafName}</th><th>例句</th><th>知识</th><th>工具</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>{!data ? <tr><td colSpan={8 + catCols.length} className="loading">加载中…</td></tr> : data.items.length ? data.items.map((c: any) => <tr key={c.code}>
+          <td className="mono">{c.code}</td>{catCols.map((n, i) => <td key={n} className="muted">{c.category_path[i]?.name || '—'}</td>)}
           <td><a onClick={() => onEdit(c.code)}>{c.name}</a><div className="muted">{(c.description || '').slice(0, 34)}</div></td>
           <td>{c.example_count}</td><td>{c.kb_count || <span className="muted">0</span>}</td>
           <td>{c.tools.length ? c.tools.map((t: string) => <div key={t} className="mono">{t}</div>) : <span className="muted">0</span>}</td>
           <td><Badge c={ST_C[c.status]}>{c.status}</Badge></td>
           <td style={{ whiteSpace: 'nowrap' }}><Btn s onClick={() => onEdit(c.code)}>{canEdit ? '编辑' : '查看'}</Btn>
             {canEdit && (c.status === '启用' ? <Btn s onClick={() => quick(c.code, '停用')}>停用</Btn> : <Btn s onClick={() => quick(c.code, '启用')}>启用</Btn>)}</td>
-        </tr>) : <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有符合条件的意图</td></tr>}</tbody></table>
+        </tr>) : <tr><td colSpan={8 + catCols.length} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有符合条件的意图</td></tr>}</tbody></table>
         {data && <Pager page={page} total={data.total} size={size} onPage={setPage} />}
       </div>
     </div>
-    {newOpen && tax && <NewIntent tax={tax} l1={f.l1} onClose={() => setNewOpen(false)} onDone={code => { setNewOpen(false); reload(); onEdit(code) }} />}
-    {imOpen && <ImportModal onClose={() => setImOpen(false)} onDone={(st) => { setImOpen(false); reload(); if (st) { setF({ l1: '', q: '', status: st }); setStIn(st) } }} />}
+    {newOpen && tax && <NewIntent tax={tax} root={f.category} onClose={() => setNewOpen(false)} onDone={code => { setNewOpen(false); reload(); onEdit(code) }} />}
+    {imOpen && <ImportModal onClose={() => setImOpen(false)} onDone={(st) => { setImOpen(false); reload(); if (st) { setF({ category: '', q: '', status: st }); setStIn(st) } }} />}
   </div>
 }
 
-function NewIntent({ tax, l1, onClose, onDone }: { tax: any; l1: string; onClose: () => void; onDone: (c: string) => void }) {
+function NewIntent({ tax, root, onClose, onDone }: { tax: Tax; root: string; onClose: () => void; onDone: (c: string) => void }) {
   const { space } = useSession()
-  const opts = tax.l1.flatMap((a: any) => a.l2.map((b: any) => ({ v: a.code + '|' + b.name, label: `${a.name} / ${b.name}`, l1: a.code })))
-  const [p, setP] = useState(opts.find((o: any) => o.l1 === l1)?.v || opts[0]?.v || '')
+  const opts = leaves(tax)
+  const [p, setP] = useState(String(opts.find(o => String(o.root.id) === root)?.id || opts[0]?.id || ''))
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [err, setErr] = useState<string[]>()
-  const eg = `${space.code_prefix}.${(p.split('|')[0] || 'GEN')}.XXX`
+  const cur = opts.find(o => String(o.id) === p)
+  const eg = `${space.code_prefix}.${cur?.root.code ? cur.root.code + '.' : ''}XXX`
   const ok = async () => {
-    const [a, b] = p.split('|')
-    try { const r = await api.post(`/spaces/${space.id}/intents`, { code: code.trim().toUpperCase(), name: name.trim(), l1: a, l2: b }); onDone(r.code) }
+    try { const r = await api.post(`/spaces/${space.id}/intents`, { code: code.trim().toUpperCase(), name: name.trim(), category_id: p ? Number(p) : null }); onDone(r.code) }
     catch (e) { setErr(errLines(e)) }
   }
   return <Modal title="新建意图" onClose={onClose} foot={<><Btn onClick={onClose}>取消</Btn><Btn p id="newIntentDo" onClick={ok}>创建草稿并编辑</Btn></>}>
     <div className="muted" style={{ marginBottom: 8 }}>空间：{space.name}</div>
-    <div className="f"><label>所属 L1 大类 / L2 问题桶</label><select id="niP" value={p} onChange={e => setP(e.target.value)}>{opts.map((o: any) => <option key={o.v} value={o.v}>{o.label}</option>)}</select></div>
-    <div className="f"><label>编码（唯一，如 {eg}）</label><input type="text" id="niC" value={code} onChange={e => setCode(e.target.value)} placeholder="前缀.大类.意图" /></div>
+    {tax.category_levels > 0 && <div className="f"><label>所属分类（{tax.levels.slice(0, -1).join(' / ')}）</label><select id="niP" value={p} onChange={e => setP(e.target.value)}>{opts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></div>}
+    <div className="f"><label>编码（唯一，如 {eg}）</label><input type="text" id="niC" value={code} onChange={e => setCode(e.target.value)} placeholder={eg} /></div>
     <div className="f"><label>名称</label><input type="text" id="niN" value={name} onChange={e => setName(e.target.value)} /></div>
     <ErrBox lines={err} />
   </Modal>
@@ -183,26 +185,85 @@ function RecognitionTab() {
 }
 
 function TaxonomyCard() {
-  const { space, canEdit } = useSession()
-  const [tax, reload] = useAsync(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
-  const [l1, setL1] = useState({ code: '', name: '' })
-  const [l2, setL2] = useState<Record<string, string>>({})
-  const run = async (fn: () => Promise<any>, msg: string) => { try { await fn(); toast(msg); reload() } catch (e) { toast(errLines(e)[0]) } }
+  const { space, canEdit, reloadSpaces } = useSession()
+  const [tax, reload] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
+  const [names, setNames] = useState<string[]>([])
+  const [pv, setPv] = useState<any>(null)
+  const [adding, setAdding] = useState<{ parent: number | null; name: string; code: string } | null>(null)
+  useEffect(() => { if (tax) setNames(tax.levels) }, [tax])
   if (!tax) return null
-  return <div className="card" id="taxCard"><h3>意图分类（L1 大类 / L2 问题桶）<span className="sp" /><span className="muted" style={{ fontWeight: 'normal' }}>被意图使用的分类不能删除</span></h3>
-    <table><thead><tr><th style={{ width: 200 }}>L1 大类</th><th>L2 问题桶</th>{canEdit && <th style={{ width: 260 }}>新增 L2</th>}</tr></thead><tbody>
-      {tax.l1.map((a: any) => <tr key={a.code}><td><b>{a.name}</b> <span className="mono muted">{a.code}</span> <span className="muted">{a.count}</span>
-        {canEdit && !a.count && <a style={{ marginLeft: 6 }} onClick={() => window.confirm(`删除 L1「${a.name}」？`) && run(() => api.del(`/spaces/${space.id}/taxonomy/l1/${a.code}`), '已删除')}>删除</a>}</td>
-        <td>{a.l2.map((b: any) => <span key={b.name} className="chip">{b.name} <span className="muted">{b.count}</span>
-          {canEdit && !b.count && <a onClick={() => run(() => api.del(`/spaces/${space.id}/taxonomy/l1/${a.code}/l2/${encodeURIComponent(b.name)}`), '已删除')}>✕</a>}</span>)}</td>
-        {canEdit && <td><input type="text" value={l2[a.code] || ''} onChange={e => setL2({ ...l2, [a.code]: e.target.value })} placeholder="问题桶名称" style={{ width: 150 }} />
-          <Btn s onClick={() => run(() => api.post(`/spaces/${space.id}/taxonomy/l1/${a.code}/l2`, { name: l2[a.code] || '' }).then(() => setL2({ ...l2, [a.code]: '' })), '已新增 L2')}>添加</Btn></td>}
-      </tr>)}</tbody></table>
-    {canEdit && <div className="row" style={{ marginTop: 8 }}><span className="muted">新增 L1</span>
-      <input type="text" placeholder="编码（大写，如 PAY）" value={l1.code} onChange={e => setL1({ ...l1, code: e.target.value.toUpperCase() })} style={{ width: 160 }} />
-      <input type="text" placeholder="名称" value={l1.name} onChange={e => setL1({ ...l1, name: e.target.value })} style={{ width: 160 }} />
-      <Btn s onClick={() => run(() => api.post(`/spaces/${space.id}/taxonomy/l1`, l1).then(() => setL1({ code: '', name: '' })), '已新增 L1')}>添加</Btn></div>}
-  </div>
+  const n = tax.category_levels
+  const done = (msg: string) => { toast(msg); reload(); reloadSpaces() }
+  const run = async (fn: () => Promise<any>, msg: string) => { try { await fn(); done(msg) } catch (e) { toast(errLines(e)[0]) } }
+  const preview = async (change: any) => {
+    try {
+      const body = { change }
+      setPv({ change, name: change.op === 'insert' ? '新层级' : '', r: await api.post(`/spaces/${space.id}/levels/preview`, body) })
+    } catch (e) { toast(errLines(e)[0]) }
+  }
+  const apply = async () => {
+    const { change, name } = pv
+    const levels = change.op === 'insert' ? [...tax.levels.slice(0, change.index), name.trim(), ...tax.levels.slice(change.index)]
+      : tax.levels.filter((_, i) => i !== change.index)
+    try {
+      const r = await api.put(`/spaces/${space.id}/levels`, { levels, change, confirm: true })
+      setPv(null); done(`层级已调整，配置版本 v${r.version}`)
+    } catch (e) { toast(errLines(e)[0]) }
+  }
+  const saveNames = () => run(() => api.put(`/spaces/${space.id}/levels`, { levels: names.map(x => x.trim()) }), '层级名称已保存')
+  const addNode = () => adding && run(() => api.post(`/spaces/${space.id}/categories`, { parent_id: adding.parent, name: adding.name, code: adding.code || null }).then(() => setAdding(null)), '已新增分类')
+  const rename = (c: CatNode) => { const v = window.prompt(`修改「${c.name}」的名称`, c.name); if (v && v.trim() !== c.name) run(() => api.patch(`/spaces/${space.id}/categories/${c.id}`, { name: v.trim() }), '已修改') }
+  const del = (c: CatNode) => window.confirm(`删除分类「${c.name}」？`) && run(() => api.del(`/spaces/${space.id}/categories/${c.id}`), '已删除')
+  const addForm = (parent: number | null, depth: number) => adding && adding.parent === parent && <span className="row" style={{ display: 'inline-flex', marginLeft: 6 }}>
+    <input type="text" id="catNewName" autoFocus placeholder={`${tax.levels[depth - 1]}名称`} value={adding.name} onChange={e => setAdding({ ...adding, name: e.target.value })} style={{ width: 130 }} />
+    {depth === 1 && <input type="text" id="catNewCode" placeholder="编码（大写，可选）" value={adding.code} onChange={e => setAdding({ ...adding, code: e.target.value.toUpperCase() })} style={{ width: 130 }} />}
+    <Btn s p id="catNewOk" onClick={addNode}>添加</Btn><a onClick={() => setAdding(null)}>取消</a></span>
+  const ops = (c: CatNode) => canEdit && <span className="catops">
+    {c.depth < n && <a title={`新增${tax.levels[c.depth]}`} onClick={() => setAdding({ parent: c.id, name: '', code: '' })}>＋</a>}
+    <a title="改名" onClick={() => rename(c)}>改名</a>
+    {!c.count && !c.children.length && <a title="删除" onClick={() => del(c)}>✕</a>}</span>
+  const node = (c: CatNode): any => c.depth === n
+    ? <span key={c.id} className="chip">{c.name} <span className="muted">{c.count}</span>{ops(c)}</span>
+    : <div key={c.id} className="catnode">
+      <div className="catrow"><b>{c.name}</b> {c.code && <span className="mono muted">{c.code}</span>} <span className="muted">{c.count}</span>{ops(c)}{addForm(c.id, c.depth + 1)}</div>
+      <div style={{ marginLeft: 18 }}>{c.children.map(node)}</div>
+    </div>
+  const r = pv?.r
+  return <>
+    <div className="card" id="lvCard"><h3>分类层级<span className="sp" /><span className="muted" style={{ fontWeight: 'normal' }}>最多 5 层分类 + 最末层意图；调整后配置版本 +1</span></h3>
+      <table id="lvTbl"><tbody>
+        {tax.levels.map((nm, i) => <tr key={i}>
+          <th style={{ width: 110 }}>{i < n ? `第 ${i + 1} 层` : '最末层'}</th>
+          <td><input type="text" id={'lvName' + i} value={names[i] ?? nm} disabled={!canEdit} maxLength={10} style={{ width: 140 }}
+            onChange={e => setNames(names.map((x, j) => j === i ? e.target.value : x))} />
+            {i === n && <span className="muted"> 意图挂在这一层，不能删除</span>}</td>
+          <td style={{ width: 260, whiteSpace: 'nowrap' }}>{canEdit && <>
+            {n < 5 && <Btn s id={'lvIns' + i} onClick={() => preview({ op: 'insert', index: i })}>在上方插入一层</Btn>}
+            {i < n && <Btn s d id={'lvDel' + i} onClick={() => preview({ op: 'remove', index: i })}>删除这一层</Btn>}</>}</td></tr>)}
+      </tbody></table>
+      {canEdit && <div style={{ textAlign: 'right', marginTop: 8 }}><Btn p id="lvSave" disabled={names.join('|') === tax.levels.join('|')} onClick={saveNames}>保存名称</Btn></div>}
+    </div>
+    <div className="card" id="taxCard"><h3>分类（{tax.levels.slice(0, -1).join(' / ') || '无分类层'}）<span className="sp" /><span className="muted" style={{ fontWeight: 'normal' }}>数字为下属意图数；有下级或有意图的分类不能删除</span></h3>
+      {n === 0 ? <div className="muted">本空间没有分类层，意图直接挂在空间下。可在上方「分类层级」里插入一层。</div> : <>
+        {tax.tree.map(node)}
+        {canEdit && <div className="row" style={{ marginTop: 8 }}>{adding?.parent === null ? addForm(null, 1)
+          : <Btn s id="catAddRoot" onClick={() => setAdding({ parent: null, name: '', code: '' })}>＋ 新增{tax.levels[0]}</Btn>}</div>}</>}
+    </div>
+    {pv && <Modal title={pv.change.op === 'insert' ? '插入层级 · 影响预览' : '删除层级 · 影响预览'} testId="lvPreview" onClose={() => setPv(null)}
+      foot={<><Btn onClick={() => setPv(null)}>取消</Btn><Btn p d={pv.change.op === 'remove'} id="lvConfirm" disabled={pv.change.op === 'insert' && !pv.name.trim()} onClick={apply}>确认调整</Btn></>}>
+      {pv.change.op === 'insert' && <div className="f"><label>新层级名称</label><input type="text" id="lvNewName" maxLength={10} value={pv.name} onChange={e => setPv({ ...pv, name: e.target.value })} /></div>}
+      <div className="note w" id="lvImpact">
+        <div>层级：{r.levels_before.join(' / ')} → <b>{(pv.change.op === 'insert' ? [...tax.levels.slice(0, pv.change.index), pv.name || '新层级', ...tax.levels.slice(pv.change.index)] : r.levels_after).join(' / ')}</b></div>
+        {pv.change.op === 'insert' ? <div>每个上级下新增一个「未分类」节点接住原有下级，共 <b>{r.created_uncategorized}</b> 个；之后可在分类里改名或调整。</div>
+          : <div>这一层的分类会被删除，下级分类和意图并入上一层{r.merged.length ? <>；同名下级将合并：<b>{r.merged.map((m: any) => m.name).join('、')}</b></> : ''}。</div>}
+        <div>分类节点 {r.categories_before} → {r.categories_after}；移动意图 <b>{r.intents_moved}</b> 个（其中已启用 {r.enabled_intents_moved} 个，Bot 拉到新版本后生效）。</div>
+        {r.dropped_codes.length > 0 && <div>将不再使用的分类编码：<span className="mono">{r.dropped_codes.map((d: any) => d.code).join('、')}</span>（已有意图编码不变）</div>}
+      </div>
+      {r.samples.length > 0 && <table style={{ marginTop: 8 }}><thead><tr><th>意图</th><th>调整前</th><th>调整后</th></tr></thead><tbody>
+        {r.samples.slice(0, 8).map((x: any) => <tr key={x.code}><td className="mono">{x.code}</td><td className="muted">{x.before}</td><td>{x.after}</td></tr>)}</tbody></table>}
+      {r.samples.length > 8 && <div className="muted">… 共 {r.intents_moved} 个意图</div>}
+    </Modal>}
+  </>
 }
 
 /* ---------------- 导入记录 ---------------- */
