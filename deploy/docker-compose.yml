@@ -1,0 +1,70 @@
+# 用法（在仓库根目录）：
+#   cp deploy/.env.example deploy/.env  # 修改其中的密码与密钥
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+name: intent-platform
+
+x-backend-env: &backend-env
+  IP_ENV: production
+  IP_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-intent}:${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-intent}
+  IP_SECRET_KEY: ${IP_SECRET_KEY:?请设置至少 32 位的 IP_SECRET_KEY}
+  IP_PUBLIC_BASE_URL: ${IP_PUBLIC_BASE_URL:-http://localhost:8080}
+  IP_ADMIN_USERNAME: ${IP_ADMIN_USERNAME:-admin}
+  IP_ADMIN_PASSWORD: ${IP_ADMIN_PASSWORD:?请设置 IP_ADMIN_PASSWORD}
+  IP_RATE_LIMIT_PER_MINUTE: ${IP_RATE_LIMIT_PER_MINUTE:-60}
+  IP_COOKIE_SECURE: ${IP_COOKIE_SECURE:-false}
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-intent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-intent}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: intent-platform-backend:latest
+    environment: *backend-env
+    # 迁移到最新版本；SEED_DEMO=true 时在空库导入 demo 数据（已有数据自动跳过），否则只创建管理员
+    command: ["sh", "-c", "alembic upgrade head && if [ \"${SEED_DEMO:-true}\" = \"true\" ]; then python -m app.seed; else python -m app.seed --admin-only; fi"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    image: intent-platform-backend:latest
+    restart: unless-stopped
+    environment: *backend-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  pgdata:

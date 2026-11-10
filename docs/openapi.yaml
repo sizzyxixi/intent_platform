@@ -1,0 +1,2350 @@
+openapi: 3.0.3
+info:
+  title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
+  version: 0.5.0
+  description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
+
+    给 AI 的总规则：
+
+    - 先选空间：GET /api/v1/spaces；之后意图类请求（taxonomy、slots、intents、runtime-config）带 X-Space-Id 请求头（或 space 查询参数），必须是 Key 绑定的空间之一（一个 Key 可绑定多个空间），否则 403 SPACE_FORBIDDEN。
+
+    - 知识库（kbs、imports）与工具（tools）全平台通用，不区分空间，不需要 X-Space-Id。
+
+    - 先读后写：写入前先调用 GET /api/v1/taxonomy、GET /api/v1/slots 与 GET /api/v1/intents 获取本空间分类、槽位与已有意图并查重。
+
+    - 槽位按空间维护：优先复用本空间已有槽位，不要新建同义槽位。
+
+    - 写意图只用 POST /api/v1/intents:batchUpsert 且 mode=merge；写回的意图一律是「草稿」，不要尝试启用。
+
+    - 不自建 L1/L2，不删除任何数据，不覆盖已启用意图。
+
+    - 层级固定为 L1 大类 → L2 问题桶 → L3 意图，L2 必填。
+
+    - v0.5 起意图上不再有 fallback（兜底条件）；兜底由空间设置（GET/PUT /api/v1/recognition，运行时配置中的 recognition）统一处理，写入时带 fallback 会被忽略。
+
+    - 所有写请求都带 Idempotency-Key；单次最多 100 条；每个 Key 每分钟最多 60 次请求。
+
+    - 工具类型：http（API 接口）/ mcp（MCP 工具）/ cli（CLI 命令）/ skill（技能·工作流）。AI 只读工具目录，不注册、不调用工具。
+
+    - 本接口自身也作为「平台内置」工具登记在工具中心（8 个能力，source=builtin）；其中写回意图、槽位写入/删除、导入知识为维护类，不能关联到意图，只给维护用 AI 通过 API Key 调用。
+
+    '
+servers:
+- url: https://intent.example.com
+security:
+- bearerAuth: []
+tags:
+- name: 空间
+- name: 分类
+- name: 槽位
+- name: 意图
+- name: 知识库
+- name: 工具
+- name: 导入任务
+- name: 运行时
+paths:
+  /api/v1/spaces:
+    get:
+      tags:
+      - 空间
+      operationId: listSpaces
+      summary: 业务空间列表
+      description: '先调用它确认要读写的空间；返回当前 Key 可访问的空间（Key 绑定一个空间）。
+
+
+        只返回当前 API Key 绑定的空间（一个 Key 可绑定一个或多个空间）。
+
+        '
+      responses:
+        '200':
+          description: 空间列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Space'
+              example:
+              - space_id: cs
+                name: 1688 智能客服
+                bot: Bot（吴钢）
+                code_prefix: B
+              - space_id: mc
+                name: Moonclaw 跨境智能体
+                bot: Moonclaw 智能体
+                code_prefix: M
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/slots:
+    get:
+      tags:
+      - 槽位
+      operationId: listSlots
+      summary: 读取当前空间的槽位列表
+      description: '槽位按空间维护（由 X-Space-Id / space 决定），其他空间的槽位不可见。整理意图前先读，优先复用已有槽位。
+
+        '
+      parameters:
+      - name: q
+        in: query
+        schema:
+          type: string
+        description: 匹配槽位名或显示名
+      responses:
+        '200':
+          description: 槽位列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SlotDef'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      tags:
+      - 槽位
+      operationId: createSlot
+      summary: 在当前空间新建槽位
+      description: '仅在本空间确实没有合适槽位时使用；本空间已有同名槽位返回 409。
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SlotDef'
+            example:
+              name: color
+              display_name: 颜色
+              type: 枚举
+              options:
+              - 红
+              - 黑
+              - 白
+              default_ask: 请问要什么颜色？
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlotDef'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - $ref: '#/components/parameters/SpaceHeader'
+    - $ref: '#/components/parameters/SpaceQuery'
+  /api/v1/slots/{name}:
+    parameters:
+    - $ref: '#/components/parameters/SpaceHeader'
+    - $ref: '#/components/parameters/SpaceQuery'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+    put:
+      tags:
+      - 槽位
+      operationId: updateSlot
+      summary: 修改当前空间的槽位
+      description: '只能改显示名、类型、可选值和默认追问话术，英文名不可改。修改默认追问话术会影响本空间继承它的意图（MVP 不触发运行时配置 version 变化）。
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SlotUpdate'
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlotDef'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    delete:
+      tags:
+      - 槽位
+      operationId: deleteSlot
+      summary: 删除当前空间的槽位
+      description: '槽位正被本空间意图使用时拒绝删除（409 SLOT_IN_USE，details.used_by 列出引用的意图编码），需先在这些意图中移除该槽位。给 AI 的说明：不要调用删除，除非运营明确要求。
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: 已删除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/taxonomy:
+    get:
+      tags:
+      - 分类
+      operationId: getTaxonomy
+      summary: 读取意图分类（L1 大类 / L2 问题桶）
+      description: '何时用：每次整理或写入意图之前先调用，拿到合法的 l1 编码与 l2 名称。
+
+        何时不用：不要用它来查具体意图，查意图用 GET /api/v1/intents。
+
+        分类由平台维护，AI 不能新增；找不到合适的 L2 时，选最接近的并在 description（意图描述）中说明。
+
+        '
+      responses:
+        '200':
+          description: 分类树
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - l1
+                properties:
+                  l1:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TaxonomyL1'
+              example:
+                l1:
+                - code: STOCK
+                  name: 库存与货期
+                  l2:
+                  - 现货
+                  - 货期
+                  - 批次日期
+                - code: PRICE
+                  name: 价格与议价
+                  l2:
+                  - 询价
+                  - 议价
+                  - 费用
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - $ref: '#/components/parameters/SpaceHeader'
+    - $ref: '#/components/parameters/SpaceQuery'
+  /api/v1/intents:
+    get:
+      tags:
+      - 意图
+      operationId: listIntents
+      summary: 查询意图列表
+      description: '何时用：写入前查重（按 q 搜名称/例句，或按 l1、l2 列出同类意图）；增量同步时用 updated_after。
+
+        何时不用：已知编码时直接用 GET /api/v1/intents/{code} 读详情。
+
+        Bot 只应读取 status=启用 的意图。
+
+        '
+      parameters:
+      - name: l1
+        in: query
+        schema:
+          type: string
+          example: STOCK
+        description: L1 大类编码
+      - name: l2
+        in: query
+        schema:
+          type: string
+          example: 现货
+        description: L2 问题桶名称
+      - name: status
+        in: query
+        schema:
+          $ref: '#/components/schemas/IntentStatus'
+      - name: q
+        in: query
+        schema:
+          type: string
+          example: 现货
+        description: 关键词，匹配编码、名称、意图描述、例句
+      - name: updated_after
+        in: query
+        schema:
+          type: string
+          format: date-time
+        description: 只返回该时间之后更新的意图
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - name: page_size
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      responses:
+        '200':
+          description: 意图列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - total
+                - items
+                properties:
+                  total:
+                    type: integer
+                    example: 123
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IntentSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - $ref: '#/components/parameters/SpaceHeader'
+    - $ref: '#/components/parameters/SpaceQuery'
+  /api/v1/intents/{code}:
+    parameters:
+    - $ref: '#/components/parameters/SpaceHeader'
+    - $ref: '#/components/parameters/SpaceQuery'
+    - name: code
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/IntentCode'
+    get:
+      tags:
+      - 意图
+      operationId: getIntent
+      summary: 读取意图详情
+      description: '何时用：需要完整的例句、槽位、关联知识切片、工具入参映射时。
+
+        何时不用：批量浏览用列表接口，避免逐条请求触发限流。
+
+        '
+      responses:
+        '200':
+          description: 意图详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Intent'
+        '401': &id001
+          $ref: '#/components/responses/Unauthorized'
+        '403': &id002
+          $ref: '#/components/responses/Forbidden'
+        '404': &id003
+          $ref: '#/components/responses/NotFound'
+        '429': &id004
+          $ref: '#/components/responses/TooManyRequests'
+    patch:
+      tags:
+      - 意图
+      operationId: patchIntent
+      summary: 修改单个草稿意图
+      description: '何时用：只改一个草稿意图的少量字段（如补例句、补追问话术）。
+
+        何时不用：批量写入用 batchUpsert；不要用它修改已启用意图，也不要把 status 改为「启用」（启用由运营在平台上完成，AI 调用会返回 403）。
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntentPatch'
+            example:
+              examples:
+              - 没货能先拍吗
+              - 可以预定吗
+              - 预售什么时候发
+      responses:
+        '200':
+          description: 修改后的意图
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Intent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/intents:batchUpsert:
+    post:
+      tags:
+      - 意图
+      operationId: batchUpsertIntents
+      summary: 批量写入意图（AI 写回的主入口）
+      description: '何时用：AI 整理好一批意图后写回平台。编码不存在则新建为草稿；编码已存在则按 mode 处理。
+
+        给 AI 的规则：
+
+        - mode 一律用 merge（只补充新例句、新槽位，不改已有非空字段）。
+
+        - 已启用意图只允许 merge；mode=overwrite 作用于已启用意图会被跳过并在 conflicts 中返回 ENABLED_PROTECTED。
+
+        - 单次最多 100 条，超出返回 413；按结果中的 conflicts 逐条修正后重试，不要整批重复提交。
+
+        何时不用：不要用它删除意图或修改状态；不要用它新建 L1/L2。
+
+        - fallback（兜底条件）字段已取消：传入不会报错，但会被忽略，并在结果 ignored_fields 中列出。
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchUpsertRequest'
+            example:
+              mode: merge
+              intents:
+              - code: B.STOCK.PREORDER
+                name: 预售/订货
+                l1: STOCK
+                l2: 现货
+                description: 用户想在缺货时先下单预订；问能否预定、先拍后发算；问何时补货不算（→ B.STOCK.RESTOCK_ETA）
+                examples:
+                - 没货能先拍吗
+                - 可以预定吗
+                - 先下单等补货可以吗
+                slots:
+                - name: sku
+                  required: true
+                  ask: 请问是哪一款？
+      responses:
+        '200':
+          description: 写入结果（部分成功也返回 200，失败项在 conflicts 中）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchUpsertResult'
+              example:
+                created: 1
+                updated: 0
+                skipped: 1
+                items:
+                - code: B.STOCK.PREORDER
+                  result: created
+                  status: 草稿
+                conflicts:
+                - code: B.SHIP.URGE
+                  reason: DUPLICATE_NAME
+                  message: 与已有意图 B.STOCK.AVAIL 同名
+                import_id: IMP-1012
+                ignored_fields: []
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - $ref: '#/components/parameters/SpaceHeader'
+    - $ref: '#/components/parameters/SpaceQuery'
+  /api/v1/kbs:
+    get:
+      tags:
+      - 知识库
+      operationId: listKnowledgeBases
+      summary: 知识库列表
+      description: '何时用：导入或检索知识前，先找到目标知识库的 kb_id、类型和表头（表格知识库）。
+
+        何时不用：AI 不能创建或删除知识库；需要新库请让运营在平台上新建。
+
+
+        全局接口：知识库与工具全平台通用，不需要 X-Space-Id（传了也会忽略）。
+
+        '
+      responses:
+        '200':
+          description: 知识库列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KnowledgeBase'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/kbs/{kb_id}/documents:
+    parameters:
+    - $ref: '#/components/parameters/KbId'
+    get:
+      tags:
+      - 知识库
+      operationId: listDocuments
+      summary: 文档列表
+      description: '何时用：导入前检查是否已有同名或同内容文档（会被覆盖）；查看构建状态。
+
+
+        全局接口：知识库与工具全平台通用，不需要 X-Space-Id（传了也会忽略）。
+
+        '
+      parameters:
+      - name: name
+        in: query
+        schema:
+          type: string
+        description: 文档名称关键词
+      responses:
+        '200':
+          description: 文档列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Document'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/kbs/{kb_id}/documents:import:
+    parameters:
+    - $ref: '#/components/parameters/KbId'
+    post:
+      tags:
+      - 知识库
+      operationId: importDocuments
+      summary: 向知识库导入文档
+      description: '何时用：把整理好的问答表或文档导入到已有知识库。导入为异步构建，返回 202 和 import_id，用 GET /api/v1/imports/{import_id} 查询结果。
+
+        规则：
+
+        - 表格知识库支持 .xlsx .xls .csv .json .jsonl，表头必须与知识库完全一致（列名与顺序），否则 400 HEADER_MISMATCH。
+
+        - 图文知识库支持 .docx .doc .pdf .pptx .ppt .html .htm .md .png .jpg .jpeg .webp。
+
+        - 与已有文档名称或内容相同会覆盖并更新原文档；未传 overwrite=true 时返回 409，响应中列出受影响的关联意图。AI 遇到 409 时应停下并请运营确认，不要自行加 overwrite=true 重试。
+
+        何时不用：只改一条切片时用 PUT /api/v1/kbs/{kb_id}/chunks/{chunk_id}。
+
+
+        全局接口：知识库与工具全平台通用，不需要 X-Space-Id（传了也会忽略）。
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - files
+              properties:
+                files:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: string
+                    format: binary
+                overwrite:
+                  type: boolean
+                  default: false
+                  description: 同名/同内容文档是否覆盖。必须由运营确认后才可设为 true。
+      responses:
+        '202':
+          description: 已受理，构建中
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportTask'
+              example:
+                import_id: IMP-1013
+                status: 构建中
+                documents:
+                - name: 开票与发票规则.md
+                  action: created
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/kbs/{kb_id}/chunks:
+    parameters:
+    - $ref: '#/components/parameters/KbId'
+    get:
+      tags:
+      - 知识库
+      operationId: listChunks
+      summary: 查询知识切片
+      description: '何时用：为意图挑选可关联的切片，或浏览某文档的切片；结果包含每个切片已关联的意图。
+
+        何时不用：按问题找最相关内容时用 POST /api/v1/kbs/{kb_id}/search。
+
+
+        全局接口：知识库与工具全平台通用，不需要 X-Space-Id（传了也会忽略）。
+
+        '
+      parameters:
+      - name: doc_id
+        in: query
+        schema:
+          type: string
+      - name: q
+        in: query
+        schema:
+          type: string
+        description: 切片内容关键词
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - name: page_size
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      responses:
+        '200':
+          description: 切片列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - total
+                - items
+                properties:
+                  total:
+                    type: integer
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Chunk'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/kbs/{kb_id}/chunks/{chunk_id}:
+    parameters:
+    - $ref: '#/components/parameters/KbId'
+    - name: chunk_id
+      in: path
+      required: true
+      schema:
+        type: string
+    put:
+      tags:
+      - 知识库
+      operationId: updateChunk
+      summary: 编辑单个知识切片
+      description: '何时用：修正某个切片的错别字或过期内容。表格知识库传 cells（键必须与表头一致），图文知识库传 content。
+
+        何时不用：内容变化较大时，请整理成文件后走导入，并由运营确认覆盖。
+
+
+        全局接口：知识库与工具全平台通用，不需要 X-Space-Id（传了也会忽略）。
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChunkUpdate'
+            example:
+              cells:
+                问题: 包邮吗
+                答案: 单笔满 ¥300 包邮（新疆西藏除外）
+                意图编码: B.PRICE.FREIGHT
+                适用范围: 全店
+      responses:
+        '200':
+          description: 更新后的切片
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Chunk'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/kbs/{kb_id}/search:
+    parameters:
+    - $ref: '#/components/parameters/KbId'
+    post:
+      tags:
+      - 知识库
+      operationId: searchKnowledge
+      summary: 知识库检索
+      description: '何时用：按一句用户问题找最相关的切片（返回相似度），用于判断知识是否已覆盖、或为意图挑选关联切片。
+
+        何时不用：需要完整列表时用 GET chunks。
+
+        可用 platform / site / language / category 过滤：只返回生效标签包含该值或该类标签为空（不限）的切片。
+
+
+        全局接口：知识库与工具全平台通用，不需要 X-Space-Id（传了也会忽略）。
+
+        '
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - query
+              properties:
+                query:
+                  type: string
+                  example: 有现货吗
+                top_k:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                  default: 5
+                threshold:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  default: 0.2
+                platform:
+                  type: string
+                  example: TikTok
+                site:
+                  type: string
+                  example: US
+                language:
+                  type: string
+                  example: en
+                category:
+                  type: string
+                  example: 通用
+      responses:
+        '200':
+          description: 命中切片
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SearchHit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/imports/{import_id}:
+    get:
+      tags:
+      - 导入任务
+      operationId: getImport
+      summary: 查询导入任务结果
+      description: '何时用：知识导入返回 202 后轮询构建状态（建议间隔 ≥ 10 秒）；或查看 batchUpsert 的导入记录。
+
+
+        全局接口：知识库与工具全平台通用，不需要 X-Space-Id（传了也会忽略）。
+
+        '
+      parameters:
+      - name: import_id
+        in: path
+        required: true
+        schema:
+          type: string
+          example: IMP-1013
+      responses:
+        '200':
+          description: 导入任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportTask'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/tools:
+    get:
+      tags:
+      - 工具
+      operationId: listTools
+      summary: 工具目录
+      description: '何时用：整理意图时了解有哪些已注册工具（全平台通用；含平台内置工具）（API 接口 / MCP 工具 / CLI 命令 / 技能·工作流）及其入参，以便在槽位中准备好工具需要的参数（如 sku、order_id）。
+
+
+        何时不用：AI 不能注册或调用工具；工具与意图的绑定由运营在平台上完成，执行在 Bot 侧。
+
+
+        全局接口：知识库与工具全平台通用，不需要 X-Space-Id（传了也会忽略）。
+
+        '
+      responses:
+        '200':
+          description: 工具列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tool'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      parameters:
+      - name: source
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - external
+          - builtin
+        description: 按来源筛选
+  /api/v1/runtime-config:
+    get:
+      tags:
+      - 运行时
+      operationId: getRuntimeConfig
+      summary: 拉取当前空间的运行时配置（供 Bot / 智能体使用）
+      description: '这个接口是给 Bot / 智能体运行时用的：按空间返回全部「已启用」意图的完整配置（意图描述、例句、槽位及生效追问话术、关联知识及用途、工具及入参映射与类型），以及本空间的槽位定义、校验集全文（validation_sets）和工具清单，并带 version。
+
+        给 AI 的说明：整理意图时不要用这个接口（它只含已启用意图，也不能写入）；整理请用 intents 系列接口。
+
+        Bot 用法（完整流程见 AI 接入说明第 5 节）：识别 → 按 recognition.threshold 判定命中，否则列出 ≥ candidate_min 的候选澄清（最多 max_clarify 次）→ 缺必填槽位用 slots[].ask 追问（每个最多 max_slot_ask 次）→ 检索参考知识、生成后用 validation_sets 逐条校验 → 调用工具（失败重试 tool_retry 次）→ 任一环节超限或失败执行 recognition.final_action。
+
+        工具执行规则（平台只登记，执行在 Bot）：http=按 method + url 发请求，入参按 input_schema 组装为 query（GET）或 JSON body，鉴权凭据由 Bot 侧托管；mcp=连接 mcp_server 调用 tools/call，name=mcp_tool，arguments=入参；cli=在 Bot 运行环境中用 cli.bin 执行 cli.command_template，把 {参数名} 替换为入参值，选填参数为空时连同其前面的 --选项 一起省略，执行前按 cli.install 安装并按 cli.login_command 完成鉴权，output_format=json 时解析 stdout 为 JSON，confirm_required=true 时先向用户确认；skill=在 platform 上运行 skill_id，inputs=入参。
+
+        '
+      parameters:
+      - name: since_version
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          example: 41
+        description: Bot 当前持有的版本号；与最新版本相同时返回 304
+      responses:
+        '200':
+          description: 最新运行时配置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeConfig'
+              example:
+                space:
+                  id: mc
+                  name: Moonclaw 跨境智能体
+                  bot: Moonclaw 智能体
+                version: 7
+                generated_at: '2026-11-10T02:30:00Z'
+                recognition:
+                  threshold: 0.6
+                  candidate_min: 0.3
+                  max_candidates: 3
+                  max_clarify: 2
+                  max_slot_ask: 2
+                  tool_retry: 1
+                  final_action: general_assistant
+                  final_action_label: 交给通用助手
+                  clarify_prompt: 我想确认一下，您是想要以下哪一项？
+                  final_message: null
+                slots:
+                - name: product_image
+                  display_name: 商品图
+                  type: 文本
+                  default_ask: 请上传商品原图或图片链接
+                - name: platform
+                  display_name: 平台
+                  type: 枚举
+                  options:
+                  - TikTok
+                  - Shopee
+                  - Amazon
+                  - Lazada
+                  - '1688'
+                  default_ask: 请问是哪个平台？
+                intents:
+                - code: M.DESIGN.MAIN
+                  name: 产品主图
+                  l1: DESIGN
+                  l2: 主图与白底图
+                  description: 用户想为商品生成符合目标平台规范的电商主图（Listing 首图）；"做主图""首图"算；只要换白底不算（→ 白底图），已有主图改尺寸不算（→ 多平台主图适配）
+                  examples:
+                  - 帮我给这款蓝牙耳机做一张亚马逊美国站主图
+                  - TikTok 美区的首图帮我出一张
+                  - 这张实拍图能不能做成 Temu 能过审的主图
+                  slots:
+                  - name: product_image
+                    required: true
+                    ask: 请上传商品原图或图片链接
+                    ask_overridden: false
+                  - name: platform
+                    required: true
+                    ask: 要发布到哪个平台？
+                    ask_overridden: true
+                  knowledge:
+                  - kb_id: kb_spec
+                    doc_id: P1
+                    chunk_id: P1-1
+                    usage: reference
+                  - kb_id: kb_spec
+                    doc_id: P1
+                    chunk_id: P1-3
+                    usage: validate
+                  - kb_id: kb_ban
+                    doc_id: BW
+                    chunk_id: '*'
+                    usage: validate
+                  tools:
+                  - tool: gen_image_skill
+                    type: skill
+                    param_map:
+                      task:
+                        source: 常量
+                        value: main
+                      product_image:
+                        source: 槽位
+                        value: product_image
+                      platform:
+                        source: 槽位
+                        value: platform
+                validation_sets:
+                - kb_id: kb_ban
+                  kb_name: 违禁词库
+                  doc_id: BW
+                  doc_name: 违禁词示例.xlsx
+                  chunk_id: '*'
+                  used_by:
+                  - M.DESIGN.MAIN
+                  items:
+                  - chunk_id: BW-1
+                    content: '词：No.1
+
+                      平台：TikTok
+
+                      站点：US
+
+                      语言：en
+
+                      类型：极限词
+
+                      替换建议：Top rated'
+                    cells:
+                      词: No.1
+                      平台: TikTok
+                      站点: US
+                      语言: en
+                      类型: 极限词
+                      替换建议: Top rated
+                    tags:
+                      platform:
+                      - TikTok
+                      site:
+                      - US
+                      language:
+                      - en
+                      category:
+                      - 通用
+                tools:
+                - name: gen_image_skill
+                  display_name: 生图技能
+                  type: skill
+                  description: 按商品图与平台规范生成电商主图/海报（示例技能）
+                  params:
+                  - name: product_image
+                    type: string
+                    required: true
+                  skill_id: skill_img_main_v2
+                  platform: Moonclaw 技能平台
+                  source: external
+                - name: xclaw_product_detail
+                  display_name: 西之月商品详情
+                  type: cli
+                  description: 用西之月 xclaw-cli 读取商城商品详情（可带图包）
+                  params:
+                  - name: sku
+                    type: string
+                    required: true
+                  - name: locale
+                    type: string
+                    required: false
+                  - name: include_mainpicture
+                    type: number
+                    required: false
+                  cli:
+                    bin: xclaw-cli
+                    command_template: xclaw-cli mall mall-product detail get --sku {sku} --locale {locale} --include-mainpicture {include_mainpicture} --json
+                    auth: CLI 内置登录（OAuth）
+                    login_command: xclaw-cli auth login
+                    install: curl -fsSL https://open.westmonth.com/install | bash
+                    verified_version: 2.2.10
+                    output_format: json
+                    confirm_required: false
+                  source: external
+        '304':
+          description: since_version 与当前版本相同，配置无变化
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - $ref: '#/components/parameters/SpaceHeader'
+    - $ref: '#/components/parameters/SpaceQuery'
+  /api/v1/recognition:
+    parameters:
+    - $ref: '#/components/parameters/SpaceHeader'
+    - $ref: '#/components/parameters/SpaceQuery'
+    get:
+      tags:
+      - 运行时
+      operationId: getRecognition
+      summary: 读取当前空间的空间设置
+      description: '何时用：Bot 想单独确认识别阈值、澄清和最终动作时；运行时配置里的 recognition 与本接口一致。
+
+        '
+      responses:
+        '200':
+          description: 空间设置
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Recognition'
+                - type: object
+                  properties:
+                    version:
+                      type: integer
+                      description: 当前空间配置版本
+              example:
+                threshold: 0.6
+                candidate_min: 0.3
+                max_candidates: 3
+                max_clarify: 2
+                max_slot_ask: 2
+                tool_retry: 1
+                final_action: general_assistant
+                final_action_label: 交给通用助手
+                clarify_prompt: 我想确认一下，您是想要以下哪一项？
+                final_message: null
+                version: 8
+        '401': *id001
+        '403': *id002
+        '404': *id003
+        '429': *id004
+    put:
+      tags:
+      - 运行时
+      operationId: updateRecognition
+      summary: 更新当前空间的空间设置（配置版本 +1）
+      description: '何时用：运营或维护用 AI 调整识别阈值、澄清 / 追问次数、工具重试或最终动作。维护类接口，需「意图:写」权限。
+
+        给 AI 的规则：未经运营明确要求不要调用；有改动时当前空间配置版本 +1，无改动不升版本。
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecognitionUpdate'
+            example:
+              threshold: 0.55
+              max_clarify: 1
+      responses:
+        '200':
+          description: 更新后的空间设置
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Recognition'
+                - type: object
+                  properties:
+                    version:
+                      type: integer
+                      description: 当前空间配置版本
+              example:
+                threshold: 0.55
+                candidate_min: 0.28
+                max_candidates: 3
+                max_clarify: 1
+                max_slot_ask: 2
+                tool_retry: 1
+                final_action: general_assistant
+                final_action_label: 交给通用助手
+                clarify_prompt: 我想确认一下，您是想要以下哪一项？
+                final_message: null
+                version: 9
+        '401': *id001
+        '403': *id002
+        '404': *id003
+        '429': *id004
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 在平台「工具中心 › 接入与密钥」页创建的 API Key，形如 ipk_xxx。Key 可绑定一个或多个空间（只约束意图类接口）；知识与工具接口对所有 Key 全局可用（仍受知识/工具权限控制）。
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 写请求必填。同一 Key 24 小时内重复提交返回首次结果，不会重复写入。重试时必须复用同一个值。
+      schema:
+        type: string
+        maxLength: 64
+        example: 7f3a-20261110-0001
+    KbId:
+      name: kb_id
+      in: path
+      required: true
+      schema:
+        type: string
+        example: kb_aq
+    SpaceHeader:
+      name: X-Space-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        example: mc
+      description: 业务空间 ID（如 cs、mc），只用于意图类接口（taxonomy、slots、intents、runtime-config）。与 query 参数 space 二选一；都不传时使用 API Key 绑定的第一个空间；不在 Key 绑定的空间内返回 403 SPACE_FORBIDDEN。
+    SpaceQuery:
+      name: space
+      in: query
+      required: false
+      schema:
+        type: string
+        example: mc
+      description: 业务空间 ID，等同于 X-Space-Id 请求头。
+  responses:
+    BadRequest:
+      description: 参数或文件格式错误（如表头不一致、扩展名不支持、编码格式错误）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: HEADER_MISMATCH
+            message: 表头与知识库不一致
+            details:
+              expected:
+              - 问题
+              - 答案
+              - 意图编码
+              - 适用范围
+              actual:
+              - question
+              - answer
+    Unauthorized:
+      description: 未携带或携带了无效/已吊销的 API Key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Key 无此权限，或操作被平台规则禁止（如启用意图、修改已启用意图）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: 意图、知识库、文档或切片不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: 冲突（同名/同内容文档需确认覆盖、编码或名称冲突、Idempotency-Key 被不同请求体复用）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: OVERWRITE_REQUIRED
+            message: 与已有文档同名，覆盖会影响 1 个已关联意图
+            details:
+              affected_intents:
+              - B.STOCK.QTY
+    PayloadTooLarge:
+      description: 单次超过 100 条或文件过大
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: 内容校验不通过（例句不足 3 条、必填槽位缺追问话术、L1/L2 不存在等）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyRequests:
+      description: 超过每分钟 60 次限制
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: 建议等待的秒数
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    IntentCode:
+      type: string
+      pattern: ^[A-Z]{1,4}\.[A-Z]+\.[A-Z0-9_]+$
+      example: M.DESIGN.MAIN
+      description: 编码规则 {空间前缀}.{L1 编码}.{意图英文}，全大写，下划线分隔，全局唯一，创建后不可改。1688 智能客服前缀 B，Moonclaw 前缀 M。
+    IntentStatus:
+      type: string
+      enum:
+      - 草稿
+      - 启用
+      - 停用
+    TaxonomyL1:
+      type: object
+      required:
+      - code
+      - name
+      - l2
+      properties:
+        code:
+          type: string
+          example: STOCK
+        name:
+          type: string
+          example: 库存与货期
+        l2:
+          type: array
+          items:
+            type: string
+          example:
+          - 现货
+          - 货期
+          - 批次日期
+    Slot:
+      type: object
+      required:
+      - name
+      - required
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z][a-z0-9_]*$
+          example: sku
+          description: 必须是本空间槽位列表中的槽位名
+        required:
+          type: boolean
+          example: true
+        ask:
+          type: string
+          description: 本意图的追问话术；留空则继承该槽位的 default_ask
+          example: 请问是哪一款？
+    KbRef:
+      type: object
+      required:
+      - kb_id
+      - doc_id
+      - chunk_id
+      - usage
+      properties:
+        kb_id:
+          type: string
+          example: kb_spec
+        doc_id:
+          type: string
+          example: P1
+        chunk_id:
+          type: string
+          example: P1-3
+          description: '"*" 表示整篇文档'
+        usage:
+          type: string
+          enum:
+          - reference
+          - validate
+          description: reference=参考（检索后用于回答/生成）；validate=校验（生成后比对，硬约束）
+    ToolBind:
+      type: object
+      required:
+      - tool
+      - param_map
+      properties:
+        tool:
+          type: string
+          example: query_stock
+        param_map:
+          type: object
+          additionalProperties:
+            type: object
+            required:
+            - source
+            - value
+            properties:
+              source:
+                type: string
+                enum:
+                - 槽位
+                - 常量
+                - 上下文
+              value:
+                type: string
+                example: sku
+    IntentSummary:
+      type: object
+      required:
+      - code
+      - name
+      - l1
+      - l2
+      - status
+      - updated_at
+      properties:
+        code:
+          $ref: '#/components/schemas/IntentCode'
+        name:
+          type: string
+          example: 现货/有货确认
+        l1:
+          type: string
+          example: STOCK
+        l2:
+          type: string
+          example: 现货
+        description:
+          type: string
+          description: 意图描述
+        status:
+          $ref: '#/components/schemas/IntentStatus'
+        example_count:
+          type: integer
+          example: 5
+        updated_at:
+          type: string
+          format: date-time
+        space:
+          type: string
+          example: mc
+    Intent:
+      allOf:
+      - $ref: '#/components/schemas/IntentSummary'
+      - type: object
+        properties:
+          examples:
+            type: array
+            items:
+              type: string
+          slots:
+            type: array
+            items:
+              $ref: '#/components/schemas/Slot'
+          kb_refs:
+            type: array
+            items:
+              $ref: '#/components/schemas/KbRef'
+          tools:
+            type: array
+            items:
+              $ref: '#/components/schemas/ToolBind'
+    IntentInput:
+      type: object
+      required:
+      - code
+      - name
+      - l1
+      - l2
+      - description
+      - examples
+      properties:
+        code:
+          $ref: '#/components/schemas/IntentCode'
+        name:
+          type: string
+          maxLength: 30
+        l1:
+          type: string
+          description: 必须是 taxonomy 中已有的 L1 编码
+        l2:
+          type: string
+          description: 必须是该 L1 下已有的 L2 名称
+        description:
+          type: string
+          minLength: 15
+          description: 意图描述。这段描述会被大模型分类和语义匹配使用，至少 15 个字。请写清：用户想做什么；什么情况算这个意图；什么情况不算（容易和哪个意图混淆）。示例：用户想为商品生成符合平台规范的主图；"做主图""首图"算；只要换白底不算（→ M.DESIGN.WHITE_BG）
+        examples:
+          type: array
+          minItems: 3
+          items:
+            type: string
+          description: 用户原话风格的例句，至少 3 条，不要重复
+        slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Slot'
+    IntentPatch:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          minLength: 15
+          description: 意图描述，写作要求同 IntentInput.description
+        examples:
+          type: array
+          items:
+            type: string
+        slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Slot'
+        status:
+          type: string
+          enum:
+          - 草稿
+          - 停用
+          description: AI 不得设为「启用」
+    BatchUpsertRequest:
+      type: object
+      required:
+      - mode
+      - intents
+      properties:
+        mode:
+          type: string
+          enum:
+          - merge
+          - overwrite
+          default: merge
+          description: AI 一律使用 merge
+        intents:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/IntentInput'
+    BatchUpsertResult:
+      type: object
+      required:
+      - created
+      - updated
+      - skipped
+      - items
+      - conflicts
+      - import_id
+      properties:
+        created:
+          type: integer
+        updated:
+          type: integer
+        skipped:
+          type: integer
+        items:
+          type: array
+          items:
+            type: object
+            required:
+            - code
+            - result
+            - status
+            properties:
+              code:
+                type: string
+              result:
+                type: string
+                enum:
+                - created
+                - merged
+                - overwritten
+                - unchanged
+              status:
+                $ref: '#/components/schemas/IntentStatus'
+        conflicts:
+          type: array
+          items:
+            type: object
+            required:
+            - code
+            - reason
+            - message
+            properties:
+              code:
+                type: string
+              reason:
+                type: string
+                enum:
+                - INVALID_CODE
+                - MISSING_FIELD
+                - DESCRIPTION_TOO_SHORT
+                - UNKNOWN_L1
+                - UNKNOWN_L2
+                - DUPLICATE_IN_BATCH
+                - DUPLICATE_NAME
+                - TOO_FEW_EXAMPLES
+                - SLOT_ASK_MISSING
+                - ENABLED_PROTECTED
+                - CODE_IN_OTHER_SPACE
+              message:
+                type: string
+        import_id:
+          type: string
+        space:
+          type: string
+        new_slots:
+          type: array
+          items:
+            type: string
+          description: 本次在当前空间自动新建的槽位（槽位名在本空间不存在时自动创建为文本槽位），请提醒运营补全显示名和追问话术
+        ignored_fields:
+          type: array
+          description: 被忽略的字段（如已取消的 fallback），不影响写入
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              fields:
+                type: array
+                items:
+                  type: string
+                example:
+                - fallback
+    KnowledgeBase:
+      type: object
+      required:
+      - kb_id
+      - name
+      - type
+      - status
+      - updated_at
+      - created_at
+      properties:
+        kb_id:
+          type: string
+          example: kb_aq
+        name:
+          type: string
+          example: 客服AQ
+        type:
+          type: string
+          enum:
+          - 表格知识库
+          - 图文知识库-富文本
+        status:
+          type: string
+          enum:
+          - 构建中
+          - 构建成功
+          - 构建失败
+        headers:
+          type: array
+          items:
+            type: string
+          description: 仅表格知识库；导入文件表头必须与之完全一致
+          example:
+          - 问题
+          - 答案
+          - 意图编码
+          - 适用范围
+        updated_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        tags:
+          $ref: '#/components/schemas/ScopeTags'
+      description: 知识库全平台通用，不区分业务空间；用 tags 区分适用场景。
+    Document:
+      type: object
+      required:
+      - doc_id
+      - name
+      - status
+      - data_size
+      - uploaded_at
+      - updated_at
+      properties:
+        doc_id:
+          type: string
+          example: A1
+        name:
+          type: string
+          example: 现货与库存.xlsx
+        status:
+          type: string
+          enum:
+          - 构建中
+          - 构建成功
+          - 构建失败
+        data_size:
+          type: string
+          example: 4 条
+        uploaded_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Chunk:
+      type: object
+      required:
+      - chunk_id
+      - doc_id
+      - order
+      - content
+      - updated_at
+      properties:
+        chunk_id:
+          type: string
+          example: Q1
+        doc_id:
+          type: string
+          example: A1
+        order:
+          type: integer
+          example: 1
+        content:
+          type: string
+          example: '问题：有现货吗
+
+            答案：仓库现货约 2,360 件'
+        cells:
+          type: object
+          additionalProperties:
+            type: string
+          description: 仅表格知识库
+        linked_intents:
+          type: array
+          items:
+            type: string
+          example:
+          - B.STOCK.AVAIL
+        updated_at:
+          type: string
+          format: date-time
+        tags:
+          allOf:
+          - $ref: '#/components/schemas/ScopeTags'
+          description: 切片自身标签
+        effective_tags:
+          allOf:
+          - $ref: '#/components/schemas/ScopeTags'
+          description: 生效标签：切片未设置的类别继承知识库标签；为空表示不限
+          readOnly: true
+    ChunkUpdate:
+      type: object
+      properties:
+        content:
+          type: string
+          description: 图文知识库使用
+        cells:
+          type: object
+          additionalProperties:
+            type: string
+          description: 表格知识库使用，键必须与表头一致
+        tags:
+          $ref: '#/components/schemas/ScopeTags'
+    SearchHit:
+      type: object
+      required:
+      - chunk
+      - doc_name
+      - score
+      properties:
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          example: 0.82
+        doc_name:
+          type: string
+        chunk:
+          $ref: '#/components/schemas/Chunk'
+    ImportTask:
+      type: object
+      required:
+      - import_id
+      - status
+      properties:
+        import_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - 构建中
+          - 构建成功
+          - 构建失败
+        documents:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              action:
+                type: string
+                enum:
+                - created
+                - overwritten
+        affected_intents:
+          type: array
+          items:
+            type: string
+        message:
+          type: string
+    Tool:
+      type: object
+      required:
+      - name
+      - display_name
+      - type
+      - description
+      - params
+      - source
+      properties:
+        name:
+          type: string
+          example: query_stock
+        display_name:
+          type: string
+          example: 查库存
+        description:
+          type: string
+        method:
+          type: string
+          enum:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          description: type=http
+        params:
+          type: array
+          items:
+            type: object
+            required:
+            - name
+            - type
+            - required
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+                enum:
+                - string
+                - number
+                - boolean
+              required:
+                type: boolean
+              description:
+                type: string
+        type:
+          type: string
+          enum:
+          - http
+          - mcp
+          - cli
+          - skill
+          description: http=API 接口（HTTP）；mcp=MCP 工具；cli=CLI 命令；skill=技能/工作流。平台只登记，执行在 Bot。
+        url:
+          type: string
+          description: type=http
+        skill_id:
+          type: string
+          description: type=skill
+        platform:
+          type: string
+          description: type=skill，技能/工作流所属平台
+        output_description:
+          type: string
+          description: type=skill
+        mcp_server:
+          type: string
+          description: type=mcp，MCP Server URL
+        mcp_tool:
+          type: string
+          description: type=mcp
+        input_schema:
+          type: object
+          description: type=mcp 时为注册的 inputSchema；其他类型（http / cli / skill）由 params 生成。意图里的入参映射（槽位 / 常量 / 上下文）对四种类型一致
+        auth:
+          type: string
+          enum:
+          - 无
+          - API Key
+          - Bearer Token
+          - OAuth2
+          description: type=http，鉴权方式；密钥由平台托管，不在接口中返回
+        cli:
+          type: object
+          description: type=cli 时返回
+          required:
+          - bin
+          - command_template
+          properties:
+            bin:
+              type: string
+              example: xclaw-cli
+              description: 可执行程序名
+            command_template:
+              type: string
+              example: xclaw-cli mall mall-product detail get --sku {sku} --locale {locale} --include-mainpicture {include_mainpicture} --json
+              description: 命令 / 子命令模板，{参数名} 引用入参；选填参数为空时连同其前面的 --选项 一起省略
+            auth:
+              type: string
+              enum:
+              - 无
+              - CLI 内置登录（OAuth）
+              - 环境变量 Token
+              description: 所需鉴权
+            login_command:
+              type: string
+              example: xclaw-cli auth login
+              description: Bot 运行环境首次使用或 Token 过期时执行的登录命令
+            install:
+              type: string
+              example: curl -fsSL https://open.westmonth.com/install | bash
+              description: 所需环境 / 安装方式
+            verified_version:
+              type: string
+              example: 2.2.10
+              description: 登记时验证过的 CLI 版本
+            output_format:
+              type: string
+              enum:
+              - json
+              - text
+            confirm_required:
+              type: boolean
+              description: 写操作，Bot 执行前需用户确认
+            output_description:
+              type: string
+        source:
+          type: string
+          enum:
+          - external
+          - builtin
+          description: external=技术注册的外部工具；builtin=平台内置工具（本平台自己的接口，不可编辑/删除）
+        maintenance:
+          type: boolean
+          description: source=builtin 时返回；true=维护类（写回意图、槽位写入/删除、导入知识），不能关联到意图
+        space_scoped:
+          type: boolean
+          description: source=builtin 时返回；true=调用时需带 X-Space-Id
+        endpoints:
+          type: array
+          items:
+            type: string
+          description: source=builtin 时返回，该能力合并的 REST 接口
+          example:
+          - POST /api/v1/kbs/{kb_id}/search
+        mcp_tools:
+          type: array
+          items:
+            type: string
+          description: source=builtin 时返回，对应的 MCP 工具
+          example:
+          - search_knowledge
+      description: 工具全平台通用，不区分业务空间。
+    RuntimeConfig:
+      type: object
+      required:
+      - space
+      - version
+      - generated_at
+      - recognition
+      - slots
+      - intents
+      - validation_sets
+      - tools
+      properties:
+        version:
+          type: integer
+          example: 42
+          description: 本空间意图启用、停用或编辑已启用意图时递增（各空间独立）
+        generated_at:
+          type: string
+          format: date-time
+        recognition:
+          $ref: '#/components/schemas/Recognition'
+        intents:
+          type: array
+          items:
+            type: object
+            required:
+            - code
+            - name
+            - l1
+            - l2
+            - description
+            - examples
+            - slots
+            - knowledge
+            - tools
+            properties:
+              code:
+                $ref: '#/components/schemas/IntentCode'
+              name:
+                type: string
+              l1:
+                type: string
+              l2:
+                type: string
+              description:
+                type: string
+              examples:
+                type: array
+                items:
+                  type: string
+              slots:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    required:
+                      type: boolean
+                    ask:
+                      type: string
+                      description: 生效追问话术（覆盖值或继承默认值）
+                    ask_overridden:
+                      type: boolean
+              knowledge:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KbRef'
+              tools:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    tool:
+                      type: string
+                    type:
+                      type: string
+                      enum:
+                      - http
+                      - mcp
+                      - cli
+                      - skill
+                    param_map:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        properties:
+                          source:
+                            type: string
+                            enum:
+                            - 槽位
+                            - 常量
+                            - 上下文
+                          value:
+                            type: string
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tool'
+          description: 本空间已启用意图引用到的工具（外部或平台内置），工具本身全平台通用
+        space:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            bot:
+              type: string
+        slots:
+          type: array
+          description: 本空间的槽位定义
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              display_name:
+                type: string
+              type:
+                type: string
+              options:
+                type: array
+                items:
+                  type: string
+              default_ask:
+                type: string
+        validation_sets:
+          type: array
+          description: 所有 usage=validate 知识的完整内容，Bot 生成后必须逐条校验
+          items:
+            type: object
+            properties:
+              kb_id:
+                type: string
+              kb_name:
+                type: string
+              doc_id:
+                type: string
+              doc_name:
+                type: string
+              chunk_id:
+                type: string
+                description: '"*" 表示整篇文档'
+              used_by:
+                type: array
+                items:
+                  type: string
+              items:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    chunk_id:
+                      type: string
+                    content:
+                      type: string
+                    cells:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    tags:
+                      $ref: '#/components/schemas/ScopeTags'
+    Error:
+      type: object
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: string
+          example: HEADER_MISMATCH
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        request_id:
+          type: string
+    Space:
+      type: object
+      required:
+      - space_id
+      - name
+      - bot
+      properties:
+        space_id:
+          type: string
+          example: mc
+        name:
+          type: string
+          example: Moonclaw 跨境智能体
+        description:
+          type: string
+        bot:
+          type: string
+          description: 对应的 Bot / 智能体
+          example: Moonclaw 智能体
+        code_prefix:
+          type: string
+          example: M
+    SlotDef:
+      type: object
+      required:
+      - name
+      - display_name
+      - type
+      - default_ask
+      description: 槽位按业务空间维护，各空间互不可见
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z][a-z0-9_]*$
+          example: platform
+          description: 英文名（本空间唯一，创建后不可改）
+        display_name:
+          type: string
+          example: 平台
+        type:
+          type: string
+          enum:
+          - 文本
+          - 数字
+          - 日期
+          - 枚举
+        options:
+          type: array
+          items:
+            type: string
+          description: 可选值，仅 type=枚举 时必填
+          example:
+          - TikTok
+          - Shopee
+          - Amazon
+        default_ask:
+          type: string
+          example: 请问是哪个平台？
+        used_by:
+          type: array
+          readOnly: true
+          items:
+            type: string
+          description: 本空间使用该槽位的意图编码
+    SlotUpdate:
+      type: object
+      properties:
+        display_name:
+          type: string
+        type:
+          type: string
+          enum:
+          - 文本
+          - 数字
+          - 日期
+          - 枚举
+        options:
+          type: array
+          items:
+            type: string
+        default_ask:
+          type: string
+    ScopeTags:
+      type: object
+      properties:
+        platform:
+          type: array
+          items:
+            type: string
+        site:
+          type: array
+          items:
+            type: string
+        language:
+          type: array
+          items:
+            type: string
+        category:
+          type: array
+          items:
+            type: string
+      example:
+        platform:
+        - TikTok
+        site:
+        - US
+        language:
+        - en
+        category: []
+    Recognition:
+      type: object
+      description: 空间设置（每个空间一份）：识别阈值、澄清、槽位追问、工具失败重试与最终动作。替代原意图级 fallback。
+      required:
+      - threshold
+      - candidate_min
+      - max_candidates
+      - max_clarify
+      - max_slot_ask
+      - tool_retry
+      - final_action
+      - clarify_prompt
+      properties:
+        threshold:
+          type: number
+          minimum: 0
+          maximum: 1
+          example: 0.6
+          description: 识别阈值，Top1 置信度 ≥ 阈值算命中。数值含义由 Bot 的识别模型决定，建议用单句测试和实际对话校准
+        candidate_min:
+          type: number
+          minimum: 0
+          maximum: 1
+          example: 0.3
+          description: 澄清候选下限，等于 threshold ÷ 2（只读，由平台计算）
+        max_candidates:
+          type: integer
+          example: 3
+          description: 澄清时最多列出的候选数
+        max_clarify:
+          type: integer
+          minimum: 0
+          maximum: 5
+          example: 2
+          description: 澄清最多次数，超过执行 final_action
+        max_slot_ask:
+          type: integer
+          minimum: 0
+          maximum: 5
+          example: 2
+          description: 每个必填槽位最多追问次数，超过执行 final_action
+        tool_retry:
+          type: integer
+          minimum: 0
+          maximum: 3
+          example: 1
+          description: 工具调用失败后的重试次数，仍失败执行 final_action
+        final_action:
+          type: string
+          enum:
+          - handoff_human
+          - general_assistant
+          - decline
+          example: general_assistant
+          description: handoff_human=转人工；general_assistant=交给通用助手；decline=告知无法处理（回复 final_message）
+        final_action_label:
+          type: string
+          example: 交给通用助手
+        clarify_prompt:
+          type: string
+          example: 我想确认一下，您是想要以下哪一项？
+        final_message:
+          type: string
+          nullable: true
+          description: final_action=decline 时回复的话术，其余为 null
+    RecognitionUpdate:
+      type: object
+      description: 更新空间设置；只传要改的字段。candidate_min 由平台按 threshold ÷ 2 计算，不可写。
+      properties:
+        threshold:
+          type: number
+          minimum: 0
+          maximum: 1
+          example: 0.6
+          description: 识别阈值，Top1 置信度 ≥ 阈值算命中。数值含义由 Bot 的识别模型决定，建议用单句测试和实际对话校准
+        max_clarify:
+          type: integer
+          minimum: 0
+          maximum: 5
+          example: 2
+          description: 澄清最多次数，超过执行 final_action
+        max_slot_ask:
+          type: integer
+          minimum: 0
+          maximum: 5
+          example: 2
+          description: 每个必填槽位最多追问次数，超过执行 final_action
+        tool_retry:
+          type: integer
+          minimum: 0
+          maximum: 3
+          example: 1
+          description: 工具调用失败后的重试次数，仍失败执行 final_action
+        final_action:
+          type: string
+          enum:
+          - handoff_human
+          - general_assistant
+          - decline
+          example: general_assistant
+          description: handoff_human=转人工；general_assistant=交给通用助手；decline=告知无法处理（回复 final_message）
+        clarify_prompt:
+          type: string
+          example: 我想确认一下，您是想要以下哪一项？
+        final_message:
+          type: string
+          nullable: true
+          description: final_action=decline 时回复的话术，其余为 null

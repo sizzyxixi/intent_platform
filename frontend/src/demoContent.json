@@ -1,0 +1,280 @@
+{
+ "API_ROWS": [
+  [
+   "GET",
+   "/api/v1/spaces",
+   "意图:读",
+   "业务空间列表（只返回 Key 绑定的空间）"
+  ],
+  [
+   "GET",
+   "/api/v1/taxonomy",
+   "意图:读",
+   "读取当前空间 L1 大类 / L2 问题桶（写入前先读）"
+  ],
+  [
+   "GET",
+   "/api/v1/slots",
+   "意图:读",
+   "当前空间的槽位列表（写意图前先读，优先复用）"
+  ],
+  [
+   "POST",
+   "/api/v1/slots",
+   "意图:写",
+   "在当前空间新建槽位（本空间同名会被拒绝）"
+  ],
+  [
+   "PUT",
+   "/api/v1/slots/{name}",
+   "意图:写",
+   "修改当前空间槽位的显示名、类型、可选值、默认追问话术"
+  ],
+  [
+   "DELETE",
+   "/api/v1/slots/{name}",
+   "意图:写",
+   "删除当前空间槽位（被意图使用时拒绝并返回引用意图）"
+  ],
+  [
+   "GET",
+   "/api/v1/intents",
+   "意图:读",
+   "查询当前空间意图，支持 l1、l2、status、q、updated_after"
+  ],
+  [
+   "GET",
+   "/api/v1/recognition",
+   "意图:读",
+   "读取当前空间的空间设置（识别阈值、澄清、追问、工具重试、最终动作）"
+  ],
+  [
+   "PUT",
+   "/api/v1/recognition",
+   "意图:写",
+   "更新空间设置，配置版本 +1"
+  ],
+  [
+   "GET",
+   "/api/v1/intents/{code}",
+   "意图:读",
+   "读取意图详情（例句、槽位、关联知识与用途、工具映射）"
+  ],
+  [
+   "POST",
+   "/api/v1/intents:batchUpsert",
+   "意图:写",
+   "批量写入当前空间意图（mode=merge；新增为草稿；冲突跳过并返回原因）"
+  ],
+  [
+   "PATCH",
+   "/api/v1/intents/{code}",
+   "意图:写",
+   "修改单个草稿意图；不能启用"
+  ],
+  [
+   "GET",
+   "/api/v1/kbs",
+   "知识:读",
+   "全部知识库（类型、状态、表头、标签），不区分空间"
+  ],
+  [
+   "GET",
+   "/api/v1/kbs/{kb_id}/documents",
+   "知识:读",
+   "文档列表"
+  ],
+  [
+   "POST",
+   "/api/v1/kbs/{kb_id}/documents:import",
+   "知识:写",
+   "导入文档（异步构建，表头需一致；同名/同内容需确认覆盖）"
+  ],
+  [
+   "GET",
+   "/api/v1/kbs/{kb_id}/chunks",
+   "知识:读",
+   "查询知识切片（含标签、关联意图）"
+  ],
+  [
+   "PUT",
+   "/api/v1/kbs/{kb_id}/chunks/{chunk_id}",
+   "知识:写",
+   "编辑单个切片（含标签）"
+  ],
+  [
+   "POST",
+   "/api/v1/kbs/{kb_id}/search",
+   "知识:读",
+   "知识库检索，可按 platform / site / language / category 过滤"
+  ],
+  [
+   "GET",
+   "/api/v1/imports/{import_id}",
+   "知识:读",
+   "查询导入任务结果"
+  ],
+  [
+   "GET",
+   "/api/v1/tools",
+   "工具:读",
+   "全部工具（外部 + 平台内置；类型、来源、入参），不区分空间"
+  ],
+  [
+   "GET",
+   "/api/v1/runtime-config",
+   "意图:读",
+   "当前空间运行时配置（意图、槽位定义、兜底条件、知识用途、校验集、工具类型，带 version）"
+  ]
+ ],
+ "MCP_ROWS": [
+  [
+   "list_intents",
+   "列出当前空间意图；view=taxonomy 读分类，view=slots 读本空间槽位，view=spaces 读空间列表"
+  ],
+  [
+   "get_intent",
+   "读取意图详情"
+  ],
+  [
+   "upsert_intents",
+   "批量写回意图（草稿，merge；槽位用本空间已有槽位名，不存在会自动新建为文本槽位）"
+  ],
+  [
+   "search_knowledge",
+   "检索知识切片（全局），可按 platform / site / language / category 过滤"
+  ],
+  [
+   "import_knowledge",
+   "向已有知识库导入文件（全局）"
+  ],
+  [
+   "list_tools",
+   "查看全部工具与入参（全局）"
+  ]
+ ],
+ "IM_TPL": {
+  "csv": "﻿编码,名称,L1,L2,意图描述,例句,槽位\nB.STOCK.PREORDER,预售/订货,STOCK,现货,商品缺货时用户询问能否先下单预订,没货能先拍吗｜可以预定吗｜先下单等补货可以吗,sku(必填:请问是哪一款？)；qty\n",
+  "json": "{\n  \"intents\": [\n    {\n      \"code\": \"B.STOCK.PREORDER\",\n      \"name\": \"预售/订货\",\n      \"l1\": \"STOCK\",\n      \"l2\": \"现货\",\n      \"description\": \"商品缺货时买家询问能否先下单预订\",\n      \"examples\": [\n        \"没货能先拍吗\",\n        \"可以预定吗\",\n        \"先下单等补货可以吗\"\n      ],\n      \"slots\": [\n        {\n          \"name\": \"sku\",\n          \"required\": true,\n          \"ask\": \"请问是哪一款？\"\n        },\n        {\n          \"name\": \"qty\",\n          \"required\": false,\n          \"ask\": \"\"\n        }\n      ]\n    }\n  ]\n}",
+  "md": "## B.STOCK.PREORDER 预售/订货\n- 归属：STOCK / 现货\n- 意图描述：商品缺货时买家询问能否先下单预订\n- 例句：没货能先拍吗｜可以预定吗｜先下单等补货可以吗\n- 槽位：sku(必填:请问是哪一款？)；qty\n"
+ },
+ "SAMPLES": {
+  "aiJson": {
+   "file": "林夏AI整理_库存与发货.json",
+   "src": "AI 工具产出",
+   "text": "{\n  \"source\": \"运营 AI 助手\",\n  \"intents\": [\n    {\n      \"code\": \"B.STOCK.AVAIL\",\n      \"name\": \"现货/有货确认\",\n      \"l1\": \"STOCK\",\n      \"l2\": \"现货\",\n      \"description\": \"买家询问商品是否有现货、能否买到\",\n      \"examples\": [\n        \"现货有吗\",\n        \"能马上发吗\",\n        \"有没有库存呀\"\n      ]\n    },\n    {\n      \"code\": \"B.STOCK.PREORDER\",\n      \"name\": \"预售/订货\",\n      \"l1\": \"STOCK\",\n      \"l2\": \"现货\",\n      \"description\": \"商品缺货时买家询问能否先下单预订、何时发货\",\n      \"examples\": [\n        \"没货能先拍吗\",\n        \"可以预定吗\",\n        \"先下单等补货可以吗\",\n        \"预售什么时候发\"\n      ],\n      \"slots\": [\n        {\n          \"name\": \"sku\",\n          \"required\": true,\n          \"ask\": \"请问是哪一款？\"\n        },\n        {\n          \"name\": \"qty\",\n          \"required\": false,\n          \"ask\": \"大概要多少件？\"\n        }\n      ],\n      \"fallback\": {\n        \"action\": \"转人工\",\n        \"conditions\": [\n          {\n            \"source\": \"上下文\",\n            \"field\": \"user_text\",\n            \"op\": \"包含\",\n            \"value\": \"承诺\"\n          }\n        ]\n      }\n    },\n    {\n      \"code\": \"B.SHIP.SPLIT\",\n      \"name\": \"分批发货\",\n      \"l1\": \"SHIP\",\n      \"l2\": \"XX\",\n      \"description\": \"买家要求一个订单分多次发货\",\n      \"examples\": [\n        \"能分两批发吗\",\n        \"先发一半\",\n        \"剩下的晚点发\"\n      ]\n    },\n    {\n      \"code\": \"B.SHIP.URGE\",\n      \"name\": \"现货/有货确认\",\n      \"l1\": \"SHIP\",\n      \"l2\": \"发货时效\",\n      \"description\": \"催促卖家尽快发货\",\n      \"examples\": [\n        \"快点发\"\n      ]\n    },\n    {\n      \"code\": \"bad code\",\n      \"name\": \"无效示例\",\n      \"l1\": \"STOCK\",\n      \"l2\": \"现货\",\n      \"description\": \"\",\n      \"examples\": []\n    }\n  ]\n}"
+  },
+  "csv": {
+   "file": "意图批量模板.xlsx",
+   "src": "文件上传",
+   "text": "编码,名称,L1,L2,意图描述,例句,槽位\nB.PRICE.INVOICE_TAX,开票含税价,PRICE,费用,买家询问含税价或开票加点,含税多少｜开票加几个点｜带票价多少,sku；qty\nB.ORDER.MOQ,起订量,ORDER,起订与数量,买家询问最少起订数量,最少拿多少｜起订量多少｜10个能拍吗,sku\nB.ORDER.MIXED,混批,ORDER,起订与数量,买家询问不同款能否混批,能混批吗｜不同颜色可以混吗｜几款一起凑起订量,sku"
+  },
+  "md": {
+   "file": "售后意图整理.md",
+   "src": "AI 工具产出",
+   "text": "# 售后意图（AI 整理）\n\n## B.AS.EXCHANGE 换货\n- 归属：AS / 售后诉求\n- 意图描述：买家要求更换颜色、尺码或型号\n- 例句：能换个颜色吗｜尺码不对能换吗｜发错型号了要换\n- 槽位：order_id(必填:请提供订单号)；sku\n- 兜底：转人工：上下文.user_text 包含 上门取件\n\n## B.AS.DAMAGE 破损/漏液\n- 归属：AS / 问题类型\n- 意图描述：买家反馈收到的货物破损、漏液\n- 例句：收到破了｜漏液了怎么办｜盒子压坏了"
+  }
+ },
+ "SAMPLES_MC": {
+  "aiJson": {
+   "file": "Moonclaw 标签整理_生图与生视频.json",
+   "src": "AI 工具产出",
+   "text": "{\n  \"source\": \"运营 AI 助手\",\n  \"space\": \"mc\",\n  \"intents\": [\n    {\n      \"code\": \"M.DESIGN.MAIN\",\n      \"name\": \"产品主图\",\n      \"l1\": \"DESIGN\",\n      \"l2\": \"主图与白底图\",\n      \"description\": \"用户想为商品生成符合目标平台规范的电商主图\",\n      \"examples\": [\n        \"做个白底主图\",\n        \"主图要 1:1\",\n        \"给 Shopee 做主图\"\n      ]\n    },\n    {\n      \"code\": \"M.VIDEO.GIF\",\n      \"name\": \"商品动图 GIF\",\n      \"l1\": \"VIDEO\",\n      \"l2\": \"商品视频\",\n      \"description\": \"用户想把商品图做成循环播放的 GIF 动图，用于详情页或社媒；\\\"做个动图\\\"\\\"GIF\\\"算；要 MP4 视频不算（→ 图生视频）\",\n      \"examples\": [\n        \"这张图做成 GIF 动图\",\n        \"详情页放个循环动图\",\n        \"把三张图做成轮播 GIF\"\n      ],\n      \"slots\": [\n        {\n          \"name\": \"product_image\",\n          \"required\": true\n        },\n        {\n          \"name\": \"ratio\",\n          \"required\": false\n        },\n        {\n          \"name\": \"商品图片\",\n          \"required\": false\n        }\n      ],\n      \"fallback\": {\n        \"action\": \"澄清追问\",\n        \"conditions\": [\n          {\n            \"source\": \"上下文\",\n            \"field\": \"confidence\",\n            \"op\": \"<\",\n            \"value\": \"0.5\"\n          }\n        ]\n      }\n    },\n    {\n      \"code\": \"M.MKT.LIVE_PREVIEW\",\n      \"name\": \"直播预告图\",\n      \"l1\": \"MKT\",\n      \"l2\": \"社媒与活动\",\n      \"description\": \"用户想为即将开始的直播生成预告海报\",\n      \"examples\": [\n        \"帮我做张直播预告图\",\n        \"今晚 8 点直播的海报\",\n        \"直播间预告封面\"\n      ],\n      \"slots\": [\n        \"platform(必填)\",\n        \"festival\",\n        \"copy_text\"\n      ]\n    },\n    {\n      \"code\": \"M.PACK.LABEL\",\n      \"name\": \"标签设计\",\n      \"l1\": \"PACK\",\n      \"l2\": \"包装\",\n      \"description\": \"用户想设计产品标签\",\n      \"examples\": [\n        \"设计一个标签\"\n      ]\n    }\n  ]\n}"
+  },
+  "csv": {
+   "file": "Moonclaw 意图模板.csv",
+   "src": "文件上传",
+   "text": "编码,名称,L1,L2,意图描述,例句,槽位\nM.SHOP.POPUP,店铺弹窗图,SHOP,店铺视觉,用户想为店铺首页生成新客弹窗或订阅弹窗图片,做个新客弹窗图｜首页订阅弹窗｜弹窗送 10% 优惠券,platform(必填)；discount\nM.POD.STICKER,贴纸图案,POD,图案设计,用户想设计可模切的贴纸图案，带白边,做一套贴纸图案｜模切贴纸带白边｜笔记本贴纸设计,theme(必填)；style"
+  }
+ },
+ "TOOL_TYPES": [
+  "API 接口",
+  "MCP 工具",
+  "CLI 命令",
+  "技能/工作流"
+ ],
+ "KB_SAMPLES": {
+  "表格": [
+   [
+    "客服AQ追加.csv",
+    "问题,答案,意图编码,适用范围\n能开专票吗,支持增值税专票，下单后在订单页申请,B.INV.REQUEST,全店\n能预定吗,缺货款可预定，发货以补货日期为准,B.STOCK.RESTOCK_ETA,全店"
+   ],
+   [
+    "旧客服话术.csv",
+    "question,answer,tag\n有货吗,有的亲,stock"
+   ],
+   [
+    "现货与库存.xlsx",
+    "问题,答案,意图编码,适用范围\n有现货吗,\"仓库现货约 2,100 件；16:00 前下单当天揽收\",B.STOCK.AVAIL,全店\n库存够不够3000件,先查实时库存，不足部分说明补货周期并转主管确认,B.STOCK.QTY,全店"
+   ],
+   [
+    "FAQ.jsonl",
+    "{\"问题\":\"支持哪些付款方式\",\"答案\":\"支持支付宝、对公转账\"}\n{\"问题\":\"可以月结吗\",\"答案\":\"老客户可申请月结\"}"
+   ]
+  ],
+  "图文": [
+   [
+    "开票与发票规则.md",
+    "# 开票规则\n\n支持普票、专票，专票需提供开票资料。\n\n含税价 = 单价 × 1.06。"
+   ],
+   [
+    "售后处理规范.docx",
+    "破损/漏液需在签收 48 小时内提供照片与订单号。\n退款一律创建售后单，由售后专员审核。"
+   ],
+   [
+    "产品手册.pdf",
+    null
+   ]
+  ]
+ },
+ "TYPE_EXT": {
+  "表格": [
+   "xlsx",
+   "xls",
+   "csv",
+   "json",
+   "jsonl"
+  ],
+  "图文": [
+   "docx",
+   "doc",
+   "pdf",
+   "pptx",
+   "ppt",
+   "html",
+   "htm",
+   "md",
+   "png",
+   "jpg",
+   "jpeg",
+   "webp"
+  ]
+ },
+ "FINAL_ACTS": [
+  "转人工",
+  "交给通用助手",
+  "告知无法处理"
+ ],
+ "TAGK": [
+  [
+   "platform",
+   "平台"
+  ],
+  [
+   "site",
+   "站点"
+  ],
+  [
+   "language",
+   "语言"
+  ],
+  [
+   "category",
+   "类目"
+  ]
+ ],
+ "KB_CFG": {
+  "topK": 5,
+  "th": 0.2
+ }
+}
