@@ -5,6 +5,7 @@ import { Badge, Btn, Drawer, ErrBox, ST_C, toast, useAsync } from '../ui'
 import KbPicker from './KbPicker'
 import { SlotForm } from './Slots'
 import { Tax, leaves } from '../taxonomy'
+import { McpPicker } from './McpServers'
 
 type Slot = { name: string; required: boolean; ask: string }
 type Ref = { kb_id: string; doc_id: string; chunk_id: string; usage: string; label?: string; valid?: boolean }
@@ -19,6 +20,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   const [pick, setPick] = useState(false)
   const [slotNew, setSlotNew] = useState(false)
   const [toolSel, setToolSel] = useState('')
+  const [mcpPick, setMcpPick] = useState<string | null>(null)
   const body = useRef<HTMLDivElement>(null)
   const [slots, reloadSlots] = useAsync(() => api.get(`/spaces/${space.id}/slots`), [space.id])
   const [tax] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
@@ -61,16 +63,22 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
       toast(e.code === 'ENABLE_CHECK_FAILED' ? '启用前校验未通过，未保存' : '保存失败')
     }
   }
-  const addTool = () => {
-    if (!toolSel) { toast('请先选择工具'); return }
-    const t = toolOf(toolSel)
+  const bindOf = (t: any): Bind => {
     const map: Bind['param_map'] = {}
     t.params.forEach((p: any) => {
       const s = E.slots.find((x: Slot) => x.name === p.name)
       map[p.name] = s ? { source: '槽位', value: s.name } : p.name === 'session_id' ? { source: '上下文', value: 'session_id' } : { source: '槽位', value: '' }
     })
-    set('tools', [...E.tools, { tool: toolSel, param_map: map }]); setToolSel(''); toast(`已关联 ${toolSel}，请确认入参映射`)
+    return { tool: t.name, param_map: map }
   }
+  const addTool = () => {
+    if (!toolSel) { toast('请先选择工具'); return }
+    if (toolSel.startsWith('srv:')) { setMcpPick(toolSel.slice(4)); return }
+    set('tools', [...E.tools, bindOf(toolOf(toolSel))]); setToolSel(''); toast(`已关联 ${toolSel}，请确认入参映射`)
+  }
+  const pickTool = (v: string) => { setToolSel(v); if (v.startsWith('srv:')) setMcpPick(v.slice(4)) }
+  const servers: any[] = Object.values(tools.filter((t: any) => t.type === 'mcp' && t.server).reduce((m: any, t: any) => {
+    (m[t.server] ||= { ...t.mcp_server, tools: [] }).tools.push(t); return m }, {}))
   const setMap = (ti: number, p: string, src: string, v: string) => {
     const tl = E.tools.map((b: Bind, i: number) => i !== ti ? b : { ...b, param_map: { ...b.param_map, [p]: { source: src, value: v } } })
     set('tools', tl)
@@ -129,7 +137,8 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
             const tl = toolOf(b.tool)
             if (!tl) return <div key={ti} className="err">工具 {b.tool} 未在工具中心注册 <a onClick={() => set('tools', E.tools.filter((_: any, j: number) => j !== ti))}>移除</a></div>
             return <div key={b.tool} className="sec" style={{ background: '#fafcff' }}>
-              <div className="row"><b>{tl.display_name}</b><span className="mono">{tl.name}</span><Badge c="b">{tl.type_label}</Badge><span className="muted">{tl.description}</span><span className="sp" />
+              <div className="row"><b>{tl.display_name}</b><span className="mono">{tl.name}</span><Badge c="b">{tl.type_label}</Badge>{tl.type === 'mcp' && <span className="tg">{tl.mcp_server.display_name}</span>}{tl.confirm_required && <Badge c="y">写操作需确认</Badge>}
+                {tl.remote_missing ? <Badge c="r">远端已消失，请更换</Badge> : tl.type === 'mcp' && !tl.enabled ? <Badge c="r">已停用</Badge> : null}<span className="muted">{tl.description}</span><span className="sp" />
                 {canEdit && <a onClick={() => set('tools', E.tools.filter((_: any, j: number) => j !== ti))}>移除</a>}</div>
               <table style={{ marginTop: 6 }}><thead><tr><th>入参</th><th>类型</th><th>必填</th><th>取值来源</th><th>值</th></tr></thead><tbody>
                 {tl.params.map((p: any) => { const m = b.param_map[p.name] || { source: '槽位', value: '' }; return <tr key={p.name}>
@@ -141,10 +150,12 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
                       : <input type="text" value={m.value} disabled={ro} placeholder="固定值" onChange={e => setMap(ti, p.name, '常量', e.target.value)} />}</td></tr> })}
               </tbody></table></div>
           })}
-          {canEdit && <div className="row"><select id="eTool" value={toolSel} onChange={e => setToolSel(e.target.value)}><option value="">— 选择工具 —</option>
-            {tools.filter((t: any) => !t.maintenance && !E.tools.some((x: Bind) => x.tool === t.name)).map((t: any) =>
-              <option key={t.name} value={t.name}>{t.display_name}（{t.name}{t.source === 'builtin' ? ' · 平台内置' : ''}）</option>)}</select>
-            <Btn s id="toolAdd" onClick={addTool}>＋ 关联</Btn><span className="muted">工具由技术在「工具中心」注册，所有空间通用；维护类平台内置工具不可选</span></div>}
+          {canEdit && <div className="row"><select id="eTool" value={toolSel} onChange={e => pickTool(e.target.value)}><option value="">— 选择工具 —</option>
+            {tools.filter((t: any) => t.type !== 'mcp' && !t.maintenance && !E.tools.some((x: Bind) => x.tool === t.name)).map((t: any) =>
+              <option key={t.name} value={t.name}>{t.display_name}（{t.name}{t.source === 'builtin' ? ' · 平台内置' : ''}）</option>)}
+            {servers.length > 0 && <optgroup label="MCP 服务（选择后下钻到具体工具）">{servers.map((v: any) =>
+              <option key={v.name} value={'srv:' + v.name}>{v.display_name}（{v.name} · {v.tools.filter((t: any) => t.enabled && !t.remote_missing).length} 个可用工具）▸</option>)}</optgroup>}</select>
+            <Btn s id="toolAdd" onClick={addTool}>＋ 关联</Btn><span className="muted">工具由技术在「工具中心」注册，所有空间通用；MCP 服务需下钻选择具体工具；维护类平台内置工具不可选</span></div>}
         </div>
 
         <SingleTest code={code} draft={() => ({ code, ...payload() })} />
@@ -156,6 +167,9 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
       </div>
     </Drawer>
     {pick && <KbPicker code={code} selected={E.kb_refs} onClose={() => setPick(false)} onOk={refs => { set('kb_refs', refs); setPick(false); toast(`已关联 ${refs.length} 项知识`) }} />}
+    {mcpPick && (() => { const v = servers.find((x: any) => x.name === mcpPick); return v ? <McpPicker server={v} tools={v.tools} bound={E.tools.map((b: Bind) => b.tool)}
+      onClose={() => { setMcpPick(null); setToolSel('') }}
+      onOk={names => { set('tools', [...E.tools, ...names.map(n => bindOf(toolOf(n)))]); setMcpPick(null); setToolSel(''); toast(`已关联 ${names.length} 个 MCP 工具，请确认入参映射`) }} /> : null })()}
     {slotNew && <SlotForm slot={null} inline onClose={() => setSlotNew(false)} onDone={s => { setSlotNew(false); reloadSlots(); set('slots', [...E.slots, { name: s.name, required: false, ask: '' }]) }} />}
   </>
 }

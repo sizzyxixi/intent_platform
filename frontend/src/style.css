@@ -91,3 +91,7 @@ pre.code{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;fo
 .check-list label{display:inline-flex;gap:4px;align-items:center;margin-right:12px}
 .lk{margin-right:12px;cursor:pointer}
 .catnode{padding:2px 0}.catrow{padding:3px 0}.catops a{margin-left:6px;font-size:12px;color:#94a3b8}
+.srvrow td:first-child{cursor:pointer;max-width:190px;word-break:break-all}.srvrow .caret{display:inline-block;width:14px;color:#6b7280}
+.subrow td{background:#fbfcfe}.subrow td:first-child{padding-left:30px}.subrow.missing td{background:#fef2f2}
+.rm-used td{background:#fef2f2}
+.pickrow{display:flex;gap:8px;align-items:flex-start;padding:6px 4px;border-bottom:1px solid #f1f5f9;cursor:pointer}.pickrow input{margin-top:3px}

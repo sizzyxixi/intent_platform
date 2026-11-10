@@ -3,6 +3,7 @@ import { api, download, errLines, fmt } from '../api'
 import demo from '../demoContent.json'
 import { useSession } from '../session'
 import { Badge, Btn, Drawer, ErrBox, Modal, toast, useAsync } from '../ui'
+import { ServerEdit, SyncModal, serverEnd, syncText } from './McpServers'
 
 const TYPES: [string, string][] = [['http', 'API 接口'], ['mcp', 'MCP 工具'], ['cli', 'CLI 命令'], ['skill', '技能/工作流']]
 const API_ROWS = (demo as any).API_ROWS as string[][]
@@ -28,41 +29,79 @@ function End({ t }: { t: any }) {
     <div className="muted" style={s}>{t.space_scoped ? '按空间：需 X-Space-Id' : '全局：不需要 X-Space-Id'}</div></>
   if (t.type === 'cli') return <><div className="mono" style={s}>{t.cli.command_template}</div><div className="muted" style={s}>鉴权：{t.cli.auth} · 输出 {t.cli.output_format === 'json' ? 'JSON' : '纯文本'}</div></>
   if (t.type === 'skill') return <><div className="mono" style={s}>{t.skill_id}</div><div className="muted" style={s}>{t.platform}</div></>
-  if (t.type === 'mcp') return <><div className="mono" style={s}>{t.mcp_tool}</div><div className="muted mono" style={s}>{t.mcp_server}</div></>
+  if (t.type === 'mcp') return <div className="mono" style={s}>tools/call {t.mcp_tool}</div>
   return <><Badge>{t.method}</Badge><div className="mono" style={s}>{t.url}</div></>
 }
 
 function ToolList() {
   const { canEdit } = useSession()
-  const [all, reload] = useAsync(() => api.get('/tools'), [])
+  const [data, reload] = useAsync(() => Promise.all([api.get('/tools'), api.get('/mcp-servers')]), [])
   const [sf, setSf] = useState('')
   const [tf, setTf] = useState('')
   const [edit, setEdit] = useState<any>(null)
   const [test, setTest] = useState<any>(null)
-  if (!all) return <div className="loading">加载中…</div>
+  const [srvEdit, setSrvEdit] = useState<any>(null)
+  const [sync, setSync] = useState<any>(null)
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  if (!data) return <div className="loading">加载中…</div>
+  const [all, servers] = data as [any[], any[]]
   const nb = all.filter((t: any) => t.source === 'builtin').length
-  const ts = all.filter((t: any) => (!tf || t.type === tf) && (!sf || t.source === sf))
+  const ts = all.filter((t: any) => t.type !== 'mcp' && (!tf || t.type === tf) && (!sf || t.source === sf))
+  const ss = servers.filter((v: any) => (!tf || tf === 'mcp') && (!sf || v.source === sf))
+  const subs = (v: any) => all.filter((t: any) => t.server === v.name)
   const fb = (id: string, lab: string, list: [string, string, number][], cur: string, set: (x: string) => void) =>
     <div className="row" id={id} style={{ marginTop: 8 }}><span className="muted">{lab}</span>{list.map(x => <Btn key={x[0] || 'all'} s={cur !== x[0]} p={cur === x[0]} onClick={() => set(x[0])}>{x[1]} {x[2]}</Btn>)}</div>
   const del = async (t: any) => {
     if (!window.confirm(t.used_by?.length ? `工具 ${t.name} 被 ${t.used_by.length} 个意图使用（${t.used_by.map((u: any) => u.code).join('、')}），删除后这些意图的关联会被移除，已启用意图若因此校验不通过会转为草稿。确认删除？` : `确认删除工具 ${t.name}？`)) return
     try { const r = await api.del('/tools/' + t.name); reload(); toast('已删除' + (r.downgraded?.length ? `；${r.downgraded.length} 个启用意图转为草稿` : '')) } catch (e) { toast(errLines(e)[0]) }
   }
+  const delSrv = async (v: any) => {
+    if (!window.confirm(`确认删除 MCP 服务 ${v.name} 及其 ${v.tool_count} 个工具？`)) return
+    try { await api.del('/mcp-servers/' + v.name); reload(); toast('已删除') } catch (e) { toast(errLines(e)[0]) }
+  }
+  const patch = async (t: any, body: any) => {
+    try { const r = await api.patch('/tools/' + t.name, body); reload(); toast('已更新 ' + t.name + (r.downgraded?.length ? '' : '')) } catch (e) { toast(errLines(e)[0]) }
+  }
+  const usedBy = (list: any[]) => list?.length ? list.map((u: any) => <div key={u.space + u.code}><span className="mono" style={{ color: '#2563eb' }}>{u.code}</span><div><span className="tg">{u.space_name}</span></div></div>) : <span className="muted">未使用</span>
+  const srcCell = (t: any) => t.source === 'builtin' ? <><Badge c="g">平台内置</Badge><div style={{ marginTop: 4 }}>{t.maintenance ? <Badge c="y">维护类</Badge> : <Badge>可在意图中使用</Badge>}</div></> : <span className="muted">外部</span>
+  const nMcp = all.filter((t: any) => t.type === 'mcp').length
   return <>
-    <div className="card"><div className="row"><span className="muted">全平台共 {all.length} 个工具（外部 {all.length - nb} · 平台内置 {nb}），所有业务空间通用</span><span className="sp" />{canEdit && <Btn p id="toolNew" onClick={() => setEdit({})}>＋ 注册工具</Btn>}</div>
+    <div className="card"><div className="row"><span className="muted">全平台共 {all.length} 个工具（外部 {all.length - nb} · 平台内置 {nb}；其中 {nMcp} 个来自 {servers.length} 个 MCP 服务），所有业务空间通用</span><span className="sp" />
+      {canEdit && <><Btn id="mcpNew" onClick={() => setSrvEdit({})}>＋ 注册 MCP 服务</Btn> <Btn p id="toolNew" onClick={() => setEdit({})}>＋ 注册工具</Btn></>}</div>
       {fb('toolSF', '按来源：', [['', '全部', all.length], ['external', '外部', all.length - nb], ['builtin', '平台内置', nb]], sf, setSf)}
       {fb('toolTF', '按类型：', [['', '全部', all.length], ...TYPES.map(([k, l]) => [k, l, all.filter((t: any) => t.type === k).length] as [string, string, number])], tf, setTf)}</div>
     <div className="card" style={{ padding: 0 }}><table id="toolTbl"><thead><tr><th>工具</th><th>类型</th><th>来源</th><th>描述</th><th>接入</th><th>入参</th><th>被意图使用</th><th>操作</th></tr></thead><tbody>
-      {ts.length ? ts.map((t: any) => <tr key={t.name}><td><b>{t.display_name}</b><div className="mono">{t.name}</div></td><td><Badge c="b">{t.type_label}</Badge></td>
-        <td>{t.source === 'builtin' ? <><Badge c="g">平台内置</Badge><div style={{ marginTop: 4 }}>{t.maintenance ? <Badge c="y">维护类</Badge> : <Badge>可在意图中使用</Badge>}</div></> : <span className="muted">外部</span>}</td>
+      {ts.map((t: any) => <tr key={t.name}><td><b>{t.display_name}</b><div className="mono">{t.name}</div></td><td><Badge c="b">{t.type_label}</Badge></td>
+        <td>{srcCell(t)}</td>
         <td className="muted">{t.description}</td><td><End t={t} /></td><td>{t.params.map((p: any, i: number) => <span key={p.name} className="mono">{i > 0 && ', '}{p.name}{p.required ? '*' : ''}</span>)}</td>
-        <td>{t.used_by?.length ? t.used_by.map((u: any) => <div key={u.space + u.code}><span className="mono" style={{ color: '#2563eb' }}>{u.code}</span><div><span className="tg">{u.space_name}</span></div></div>) : <span className="muted">未使用</span>}</td>
+        <td>{usedBy(t.used_by)}</td>
         <td style={{ whiteSpace: 'nowrap' }}><Btn s onClick={() => setTest(t)}>测试调用</Btn> {t.source === 'builtin' ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>平台提供<br />不可编辑 / 删除</div>
-          : canEdit && <><Btn s onClick={() => setEdit(t)}>编辑</Btn><div style={{ marginTop: 4, textAlign: 'right' }}><a style={{ color: '#dc2626', fontSize: 12 }} onClick={() => del(t)}>删除</a></div></>}</td></tr>)
-        : <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有符合条件的工具</td></tr>}
+          : canEdit && <><Btn s onClick={() => setEdit(t)}>编辑</Btn><div style={{ marginTop: 4, textAlign: 'right' }}><a style={{ color: '#dc2626', fontSize: 12 }} onClick={() => del(t)}>删除</a></div></>}</td></tr>)}
+      {ss.map((v: any) => { const sub = subs(v); const on = !!open[v.name]; const users = new Set(sub.flatMap((t: any) => (t.used_by || []).map((u: any) => u.code))); return [
+        <tr key={'s' + v.name} className="srvrow" data-server={v.name}><td onClick={() => setOpen({ ...open, [v.name]: !on })}><span className="caret">{on ? '▾' : '▸'}</span><b>{v.display_name}</b><div className="mono" style={{ paddingLeft: 14 }}>{v.name}</div></td>
+          <td><Badge c="p">MCP 服务</Badge><div className="muted" style={{ marginTop: 4 }}><a onClick={() => setOpen({ ...open, [v.name]: !on })}>{v.tool_count} 个工具</a></div></td>
+          <td>{v.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <span className="muted">外部</span>}</td>
+          <td className="muted">{v.description || '—'}<div>启用 {v.enabled_count} / {v.tool_count}{v.missing_count > 0 && <> · <b style={{ color: '#b91c1c' }}>{v.missing_count} 个远端已消失</b></>}</div></td>
+          <td><div className="muted" style={{ fontSize: 11 }}>{v.transport_label} · 鉴权：{v.auth.type}</div><div className="mono" style={{ fontSize: 11 }}>{serverEnd(v)}</div><div className="muted" style={{ fontSize: 11 }}>同步：{syncText(v)}</div></td>
+          <td className="muted">按工具</td><td>{users.size ? <span>{users.size} 个意图</span> : <span className="muted">未使用</span>}</td>
+          <td style={{ whiteSpace: 'nowrap' }}>{v.source === 'builtin' ? <div className="muted" style={{ fontSize: 11 }}>平台提供<br />不可编辑 / 同步</div>
+            : canEdit && <><Btn s onClick={() => setSync(v)}>同步工具</Btn><div style={{ marginTop: 4, textAlign: 'right', fontSize: 12 }}><a onClick={() => setSrvEdit(v)}>编辑</a>　<a style={{ color: '#dc2626' }} onClick={() => delSrv(v)}>删除</a></div></>}</td></tr>,
+        ...(on ? sub.length ? sub.map((t: any) => <tr key={t.name} className={'subrow' + (t.remote_missing ? ' missing' : '')} data-tool={t.name}>
+          <td><b>{t.display_name}</b><div className="mono">{t.name}</div>{t.remote_missing && <Badge c="r">远端已消失</Badge>}</td>
+          <td><Badge c="b">MCP 工具</Badge></td>
+          <td>{v.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <>
+            <label style={{ display: 'block', whiteSpace: 'nowrap' }}><input type="checkbox" className="mEn" checked={t.enabled} disabled={!canEdit} onChange={e => patch(t, { enabled: e.target.checked })} /> 启用</label>
+            <label style={{ display: 'block', whiteSpace: 'nowrap' }}><input type="checkbox" className="mCf" checked={t.confirm_required} disabled={!canEdit} onChange={e => patch(t, { confirm_required: e.target.checked })} /> 写操作需确认</label></>}</td>
+          <td className="muted">{t.description}</td><td className="mono" style={{ fontSize: 11 }}>tools/call {t.mcp_tool}</td>
+          <td>{t.params.map((p: any, i: number) => <span key={p.name} className="mono">{i > 0 && ', '}{p.name}{p.required ? '*' : ''}</span>)}</td>
+          <td>{usedBy(t.used_by)}</td><td><Btn s onClick={() => setTest(t)}>测试调用</Btn></td></tr>)
+          : [<tr key={'e' + v.name} className="subrow"><td colSpan={8} className="muted">还没有工具，点「同步工具」读取</td></tr>] : [])] })}
+      {!ts.length && !ss.length && <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有符合条件的工具</td></tr>}
     </tbody></table></div>
     {edit && <ToolEdit t={edit.name ? edit : null} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload() }} />}
     {test && <ToolTest t={test} onClose={() => setTest(null)} />}
+    {srvEdit && <ServerEdit sv={srvEdit.name ? srvEdit : null} onClose={() => setSrvEdit(null)} onDone={n => { const isNew = !srvEdit.name; setSrvEdit(null); reload(); setOpen(o => ({ ...o, [n]: true })); if (isNew) api.get('/mcp-servers/' + n).then(setSync) }} />}
+    {sync && <SyncModal sv={sync} onClose={() => setSync(null)} onDone={() => { setOpen(o => ({ ...o, [sync.name]: true })); setSync(null); reload() }} />}
   </>
 }
 
@@ -72,22 +111,20 @@ function ToolEdit({ t, onClose, onDone }: { t: any | null; onClose: () => void; 
   const [f, setF] = useState<any>(() => t ? {
     type: t.type, name: t.name, display_name: t.display_name, description: t.description, owner: t.owner,
     url: t.url || '', method: t.method || 'GET', auth: t.auth || '无', output_example: t.output_example || (t.type === 'http' ? '{}' : ''),
-    mcp_server: t.mcp_server || '', mcp_tool: t.mcp_tool || '', schema: JSON.stringify(t.input_schema, null, 2),
-    skill_id: t.skill_id || '', platform: t.platform || '', output_description: t.output_description || t.cli?.output_description || '',
+        skill_id: t.skill_id || '', platform: t.platform || '', output_description: t.output_description || t.cli?.output_description || '',
     bin: t.cli?.bin || '', command_template: t.cli?.command_template || '', cli_auth: t.cli?.auth || '无', login_command: t.cli?.login_command || '',
     install: t.cli?.install || '', verified_version: t.cli?.verified_version || '', output_format: t.cli?.output_format || 'json', confirm_required: !!t.cli?.confirm_required, secret: '',
-  } : { type: 'http', name: '', display_name: '', description: '', owner: user.display_name, url: '', method: 'GET', auth: '无', output_example: '{}', mcp_server: '', mcp_tool: '',
-    schema: '{\n  "type": "object",\n  "properties": {},\n  "required": []\n}', skill_id: '', platform: '', output_description: '', bin: '', command_template: '', cli_auth: '无', login_command: '', install: '', verified_version: '', output_format: 'json', confirm_required: false, secret: '' })
+  } : { type: 'http', name: '', display_name: '', description: '', owner: user.display_name, url: '', method: 'GET', auth: '无', output_example: '{}',
+    skill_id: '', platform: '', output_description: '', bin: '', command_template: '', cli_auth: '无', login_command: '', install: '', verified_version: '', output_format: 'json', confirm_required: false, secret: '' })
   const [params, setParams] = useState<P[]>(() => t ? t.params.map((p: any) => ({ ...p, description: p.description || '' })) : [{ name: '', type: 'string', required: true, description: '' }])
   const [err, setErr] = useState<string[]>()
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value })
   const save = async () => {
     let config: any
     if (f.type === 'http') config = { url: f.url, method: f.method, auth: f.auth, output_example: f.output_example }
-    else if (f.type === 'mcp') config = { mcp_server: f.mcp_server, mcp_tool: f.mcp_tool, input_schema: f.schema, output_example: f.output_example }
     else if (f.type === 'cli') config = { bin: f.bin, command_template: f.command_template, auth: f.cli_auth, login_command: f.login_command, install: f.install, verified_version: f.verified_version, output_format: f.output_format, confirm_required: f.confirm_required, output_description: f.output_description }
     else config = { skill_id: f.skill_id, platform: f.platform, output_description: f.output_description }
-    const body: any = { type: f.type, name: f.name.trim(), display_name: f.display_name, description: f.description, owner: f.owner, params: f.type === 'mcp' ? undefined : params, config }
+    const body: any = { type: f.type, name: f.name.trim(), display_name: f.display_name, description: f.description, owner: f.owner, params, config }
     if (f.secret) body.secret = f.secret
     try {
       const r = t ? await api.put('/tools/' + t.name, body) : await api.post('/tools', body)
@@ -95,10 +132,10 @@ function ToolEdit({ t, onClose, onDone }: { t: any | null; onClose: () => void; 
     } catch (e) { setErr(errLines(e)) }
   }
   const sp = (i: number, k: keyof P, v: any) => setParams(params.map((p, j) => j === i ? { ...p, [k]: v } : p))
-  const outLabel = f.type === 'skill' ? '输出说明' : f.type === 'cli' ? '输出说明 / 示例' : f.type === 'mcp' ? '输出示例' : '出参示例（JSON）'
+  const outLabel = f.type === 'skill' ? '输出说明' : f.type === 'cli' ? '输出说明 / 示例' : '出参示例（JSON）'
   return <Drawer testId="toolEdit" title={t ? `编辑工具 · ${t.name}` : '注册工具'} onClose={onClose} foot={<><Btn onClick={onClose}>取消</Btn> <Btn p id="toolSave" onClick={save}>保存</Btn></>}>
     <ErrBox lines={err} />
-    <div className="grid g2"><div className="f"><label>工具类型 *</label><select id="tTy" value={f.type} disabled={!!t} onChange={set('type')}>{TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div><div /></div>
+    <div className="grid g2"><div className="f"><label>工具类型 *</label><select id="tTy" value={f.type} disabled={!!t} onChange={set('type')}>{TYPES.filter(x => x[0] !== 'mcp').map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div><div className="muted" style={{ alignSelf: 'end', paddingBottom: 12 }}>MCP 工具请用「注册 MCP 服务」登记后同步</div></div>
     <div className="grid g2"><div className="f"><label>工具名（英文，唯一）*</label><input type="text" id="tN" value={f.name} disabled={!!t} onChange={set('name')} placeholder="query_stock" /></div>
       <div className="f"><label>显示名 *</label><input type="text" id="tD" value={f.display_name} onChange={set('display_name')} placeholder="查库存" /></div></div>
     <div className="f"><label>描述 *（运营据此判断该挂到哪个意图）</label><input type="text" id="tDs" value={f.description} onChange={set('description')} /></div>
@@ -116,20 +153,17 @@ function ToolEdit({ t, onClose, onDone }: { t: any | null; onClose: () => void; 
       <div className="grid g2"><div className="f"><label>安装方式（所需环境）</label><input type="text" id="tIn" className="mono" value={f.install} onChange={set('install')} placeholder="curl -fsSL https://.../install | bash" /></div>
         <div className="f"><label>输出格式</label><select id="tOf" value={f.output_format} onChange={set('output_format')}><option value="json">JSON</option><option value="text">纯文本</option></select></div></div>
       <div className="f"><label><input type="checkbox" id="tCf" checked={f.confirm_required} onChange={set('confirm_required')} /> 写操作，Bot 执行前需用户确认</label></div></>}
-    {f.type === 'mcp' && <><div className="grid g2"><div className="f"><label>MCP Server URL *</label><input type="text" id="tSv" value={f.mcp_server} onChange={set('mcp_server')} placeholder="https://mcp.example.com/xxx" /></div>
-      <div className="f"><label>MCP 工具名 *</label><input type="text" id="tTn" value={f.mcp_tool} onChange={set('mcp_tool')} placeholder="check_banned_words" /></div></div>
-      <div className="f"><label>inputSchema（JSON Schema，入参由此生成）*</label><textarea id="tSc" className="mono" style={{ minHeight: 120 }} value={f.schema} onChange={set('schema')} /></div></>}
-    {f.type !== 'mcp' && <div className="sec"><b>入参</b><table><thead><tr><th>参数名</th><th>类型</th><th>必填</th><th>说明</th><th></th></tr></thead><tbody>
+    {<div className="sec"><b>入参</b><table><thead><tr><th>参数名</th><th>类型</th><th>必填</th><th>说明</th><th></th></tr></thead><tbody>
       {params.map((p, i) => <tr key={i}><td><input type="text" id={'pN' + i} value={p.name} onChange={e => sp(i, 'name', e.target.value)} style={{ width: 120 }} /></td>
         <td><select id={'pT' + i} value={p.type} onChange={e => sp(i, 'type', e.target.value)}>{['string', 'number', 'boolean'].map(x => <option key={x}>{x}</option>)}</select></td>
         <td><input type="checkbox" id={'pR' + i} checked={p.required} onChange={e => sp(i, 'required', e.target.checked)} /></td>
         <td><input type="text" id={'pD' + i} value={p.description} onChange={e => sp(i, 'description', e.target.value)} style={{ width: '100%' }} /></td>
         <td><a onClick={() => setParams(params.filter((_, j) => j !== i))}>删除</a></td></tr>)}</tbody></table>
       <Btn s onClick={() => setParams([...params, { name: '', type: 'string', required: false, description: '' }])}>＋ 添加入参</Btn></div>}
-    <div className="f"><label>{outLabel}</label><textarea id="tO" className="mono" value={f.type === 'http' || f.type === 'mcp' ? f.output_example : f.output_description} onChange={set(f.type === 'http' || f.type === 'mcp' ? 'output_example' : 'output_description')} /></div>
+    <div className="f"><label>{outLabel}</label><textarea id="tO" className="mono" value={f.type === 'http' ? f.output_example : f.output_description} onChange={set(f.type === 'http' ? 'output_example' : 'output_description')} /></div>
     <div className="grid g2">{f.type === 'http' ? <div className="f"><label>鉴权方式</label><select id="tA" value={f.auth} onChange={set('auth')}>{['无', 'API Key', 'Bearer Token', 'OAuth2'].map(x => <option key={x}>{x}</option>)}</select></div> : <div />}
       <div className="f"><label>负责人 *</label><input type="text" id="tW" value={f.owner} onChange={set('owner')} /></div></div>
-    {(f.type === 'http' || f.type === 'mcp') && f.auth !== '无' && <div className="f"><label>密钥（加密托管，只写不读{t?.has_secret ? '；已设置，留空保持不变' : ''}）</label><input type="password" id="tSec" value={f.secret} onChange={set('secret')} autoComplete="new-password" /></div>}
+    {f.type === 'http' && f.auth !== '无' && <div className="f"><label>密钥（加密托管，只写不读{t?.has_secret ? '；已设置，留空保持不变' : ''}）</label><input type="password" id="tSec" value={f.secret} onChange={set('secret')} autoComplete="new-password" /></div>}
   </Drawer>
 }
 
@@ -139,7 +173,7 @@ function ToolTest({ t, onClose }: { t: any; onClose: () => void }) {
   const [r, setR] = useState<any>(null)
   const [err, setErr] = useState<string[]>()
   const hd = t.type === 'cli' ? <>CLI：<span className="mono">{t.cli.bin}</span> · 鉴权：{t.cli.auth}</> : t.type === 'skill' ? <>技能：<span className="mono">{t.skill_id}</span> · {t.platform}</>
-    : t.type === 'mcp' ? <>MCP：<span className="mono">{t.mcp_server}</span> · tools/call <span className="mono">{t.mcp_tool}</span></> : <><Badge c="b">{t.method}</Badge> <span className="mono">{t.url}</span> · 鉴权：{t.auth}</>
+    : t.type === 'mcp' ? <>MCP 服务：{t.mcp_server.display_name} <span className="mono">{serverEnd(t.mcp_server)}</span> · tools/call <span className="mono">{t.mcp_tool}</span>{t.confirm_required && <> · <Badge c="y">写操作需确认</Badge></>}</> : <><Badge c="b">{t.method}</Badge> <span className="mono">{t.url}</span> · 鉴权：{t.auth}</>
   const run = async () => {
     setErr(undefined)
     try { setR(await api.post(`/tools/${t.name}/test`, { values: v, space: space.id })) } catch (e) { setR(null); setErr(errLines(e)) }

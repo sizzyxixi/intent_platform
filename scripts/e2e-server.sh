@@ -25,4 +25,8 @@ with eng2.connect() as c:
 PY
 "$PY" -m alembic upgrade head
 "$PY" -m app.seed --reset --tokens-out /tmp/e2e_tokens.json
-exec "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port "${E2E_PORT:-8100}"
+# 测试用最小 MCP 服务（3 个工具），供「同步工具 / 差异 / 下钻」用例使用
+"$PY" tests/mini_mcp_server.py --port "${E2E_MCP_PORT:-8766}" &
+MCP_PID=$!
+trap 'kill $MCP_PID 2>/dev/null || true' EXIT INT TERM
+"$PY" -m uvicorn app.main:app --host 127.0.0.1 --port "${E2E_PORT:-8100}"

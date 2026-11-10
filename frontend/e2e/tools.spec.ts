@@ -4,7 +4,9 @@ import { login } from './helpers'
 test('工具：注册 HTTP 工具 → 测试调用预览 → 删除', async ({ page }) => {
   await login(page)
   await page.goto('/#/tools/list')
-  await expect(page.locator('#toolTbl tbody tr')).toHaveCount(29)
+  // 24 个非 MCP 工具一行一个；MCP 工具按服务折叠
+  await expect(page.locator('#toolTbl tbody tr:not(.srvrow):not(.subrow)')).toHaveCount(24)
+  expect(await page.locator('#toolTbl tbody tr.srvrow').count()).toBeGreaterThanOrEqual(4)
   await page.click('#toolNew')
   await page.fill('#tN', 'e2e_query_color')
   await page.fill('#tD', '查颜色')
