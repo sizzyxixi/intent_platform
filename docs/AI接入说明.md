@@ -7,9 +7,10 @@
 
 意图管理平台是**通用的意图与知识管理平台**，服务多个 Bot 和智能体（如 1688 智能客服、Moonclaw 跨境智能体）。
 - **业务空间**：每个 Bot / 智能体对应一个空间。意图、意图分类、槽位、意图导入记录、运行时配置及其版本按空间隔离；**知识库和工具全平台通用，不区分空间**，任何空间的意图都能关联。
-- **意图**：用户想办的一件事，比如「问是否有现货」「生成产品主图」。每个意图有编码、名称、L1 大类 / L2 问题桶、意图描述、例句、槽位（处理前要拿到的信息），以及由运营关联的知识和工具。层级固定三层：**L1 大类 → L2 问题桶 → L3 意图**（L3 就是一个个意图，L2 必填）。
+- **意图**：用户想办的一件事，比如「问是否有现货」「生成产品主图」。每个意图有编码、名称、分类路径、意图描述、例句、槽位（处理前要拿到的信息），以及由运营关联的知识和工具。
+- **分类层级（v0.6 起按空间动态配置）**：每个空间在「空间设置」里自定义层数和每层名称，最后一层固定是意图，上面有 0～5 层分类。例如 1688 智能客服是「大类 → 问题桶 → 意图」，别的空间可能是「业务线 → 场景 → 子场景 → 意图」。意图必须挂在**最末一层分类**下；分类路径用 `category_path` 表示（从第一层到最末层）。**不要假设固定是两层分类**，每次先读 `GET /api/v1/taxonomy`。
 - **空间设置**：每个空间一份，统一规定识别阈值、澄清、槽位追问次数、工具失败重试和最终动作（转人工 / 交给通用助手 / 告知无法处理）。意图上**不再配置兜底条件**（见第 5 节）。
-- **工具**：技术在平台「工具中心」登记的外部能力，共 4 种类型：`http`（API 接口）、`mcp`（MCP 工具）、`cli`（CLI 命令）、`skill`（技能/工作流）。平台只登记，**执行在 Bot / 智能体侧**（见第 12 节）。本说明里的接口本身也作为「平台内置」工具登记在工具中心（见第 13 节）。
+- **工具**：技术在平台「工具中心」登记的外部能力，共 4 种类型：`http`（API 接口）、`mcp`（MCP 工具）、`cli`（CLI 命令）、`skill`（技能/工作流）。MCP 按「**MCP 服务 → 子工具**」两级登记：一个第三方 MCP 服务通常包含一批工具，平台同步它的 tools/list，意图只关联其中具体的子工具（工具名形如 `{服务名}.{远端工具名}`，如 `compliance.check_ip_risk`）。平台只登记，**执行在 Bot / 智能体侧**（见第 12 节）。本说明里的接口本身也作为「平台内置」工具登记在工具中心（见第 13 节）。
 - **槽位**：按空间维护的槽位列表（如 `platform`、`site`、`sku`），每个空间一份、互不可见；意图只能从本空间的槽位里选。
 - **知识库**：分「表格知识库」和「图文知识库-富文本」，导入后构建为知识切片。知识库和切片带适用范围标签（平台 / 站点 / 语言 / 类目）。意图关联知识时要标明用途：**参考**或**校验**。
 - **状态**：草稿 / 启用 / 停用。只有运营可以启用；Bot 只使用启用的意图。
@@ -19,9 +20,9 @@
 ## 2. 工作流
 
 1. **先选空间**：`GET /api/v1/spaces`，确认要写入的空间（如 `cs` 1688 智能客服、`mc` Moonclaw 跨境智能体）。之后**意图类请求**（taxonomy、slots、intents、runtime-config）都带 `X-Space-Id`（或 query 参数 `space`）；它必须是 Key 绑定的空间之一（一个 Key 可绑定多个空间），否则返回 403 `SPACE_FORBIDDEN`。知识库（kbs、imports）和工具（tools）请求不需要 X-Space-Id。**不确定该写入哪个空间就先问运营。**
-2. **读分类**：`GET /api/v1/taxonomy`，拿到当前空间合法的 L1 编码和 L2 名称。
+2. **读分类**：`GET /api/v1/taxonomy`，拿到当前空间的层级定义 `levels`（每层名称，最后一层是意图）和分类树 `categories`（每个节点有 `name`，第一层节点可能有 `code`）。
 3. **读本空间槽位**：`GET /api/v1/slots`（带空间）。整理意图时**优先复用本空间已有槽位**（见第 4 节）。
-4. **读已有意图**：`GET /api/v1/intents?l1=...`（或 `q=关键词`），必要时 `GET /api/v1/intents/{code}` 读详情。
+4. **读已有意图**：`GET /api/v1/intents?category={分类 id}`（含其下所有子分类；或 `q=关键词`），必要时 `GET /api/v1/intents/{code}` 读详情。
 5. **查重**：对每个准备写入的意图，检查是否已有相同含义的意图（名称、意图描述、例句相近）。已存在就补充例句，不要另建一个新编码。
 6. **整理**：按第 3、4 节的规则补全字段。
 7. **写回**：`POST /api/v1/intents:batchUpsert`，`mode` 固定为 `merge`，每批 ≤ 100 条，带 `Idempotency-Key`。
@@ -34,12 +35,14 @@
 
 | 字段 | 规则 |
 |---|---|
-| code | `{空间前缀}.{L1 编码}.{英文名}`，全大写，单词用下划线连接。1688 智能客服用 `B`（如 `B.STOCK.PREORDER`），Moonclaw 用 `M`（如 `M.DESIGN.MAIN`）；全局唯一，创建后不可改 |
+| code | 全大写，单词用下划线连接，全局唯一，创建后不可改。第一层分类有编码时用 `{空间前缀}.{第一层编码}.{英文名}`（如 1688 智能客服 `B.STOCK.PREORDER`、Moonclaw `M.DESIGN.MAIN`）；第一层没有编码时用 `{空间前缀}.{英文名}` |
 | name | 中文短名，≤ 30 字，同一空间内不能重名 |
-| l1 / l2 | 必须取自当前空间的 taxonomy；**不要自建** |
+| category_path | 分类路径数组，从第一层到最末层，每段写该层分类的 `code` 或 `name`，如 `["STOCK", "现货"]`；必须取自当前空间的 taxonomy，**不要自建**。旧字段 `l1` / `l2` 仍可用于两层分类的空间，但已不推荐 |
 | description（意图描述） | **至少 15 个字**。写清三件事：用户想做什么；什么情况算这个意图；什么情况不算（用「→ 编码/名称」指出易混淆意图）。示例：用户想为商品生成符合平台规范的主图；"做主图""首图"算；只要换白底不算（→ M.DESIGN.WHITE_BG） |
 | examples | **至少 3 条**，用用户原话风格，不重复，不含手机号/微信等隐私 |
 | slots | `[{name, required, ask}]`。`name` 用本空间槽位列表里的英文名；`ask` 可省略，省略时继承该槽位的默认追问话术，只有需要特殊说法时才填 |
+
+**0.5 → 0.6 兼容**：写入时仍接受 `l1` / `l2`（仅限两层分类的空间，等价于 `category_path: [l1, l2]`），列表筛选 `l1` / `l2` 仍可用；输出里不再有 `l1` / `l2`，改为 `category_path`；冲突原因 `UNKNOWN_L1` / `UNKNOWN_L2` 合并为 `UNKNOWN_CATEGORY`。工具的 `mcp_server` 由 URL 字符串改为连接信息对象。
 
 关联知识（含用途）、绑定工具和入参映射由运营在平台上完成，你只需在意图描述或例句中把需要的信息体现清楚（可先 `GET /api/v1/tools` 了解工具需要哪些参数（工具全平台通用），并把这些参数设为槽位）。
 
@@ -92,7 +95,7 @@ v0.5 起**取消意图级兜底条件**：意图上不再有 `fallback` 字段�
 ## 7. 禁止事项
 
 - 不在未确认空间的情况下写入；不把一个空间的意图写到另一个空间。
-- 不自建 L1 / L2 分类。
+- 不自建分类，不改分类层级（层级由运营在「空间设置」调整）。
 - 不建同义槽位；不改槽位英文名；不跨空间复用槽位（每个空间自己维护）。
 - 不删除任何意图、知识库、文档、切片（接口也不提供删除）；不删除槽位。
 - 不覆盖已启用意图：只用 `mode=merge`；`overwrite` 作用于已启用意图会被拒绝（`ENABLED_PROTECTED`）。
@@ -107,9 +110,9 @@ v0.5 起**取消意图级兜底条件**：意图上不再有 `fallback` 字段�
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 403 `SPACE_FORBIDDEN` | 意图类请求没带空间，或空间不在 Key 绑定范围内 | 用 `GET /api/v1/spaces` 确认空间；换对应空间的 Key |
-| conflicts: `INVALID_CODE` | 编码格式不对 | 按「前缀.L1.NAME」全大写重写编码 |
+| conflicts: `INVALID_CODE` | 编码格式不对 | 按「前缀.第一层编码.NAME」（第一层无编码时「前缀.NAME」）全大写重写编码 |
 | conflicts: `CODE_IN_OTHER_SPACE` | 编码已被其他空间使用 | 换编码，或确认是否写错空间 |
-| conflicts: `UNKNOWN_L1` / `UNKNOWN_L2` | 用了当前空间不存在的分类 | 重新读 taxonomy，选最接近的已有 L2 |
+| conflicts: `UNKNOWN_CATEGORY` | 分类路径在当前空间不存在、层数不对或没到最末一层 | 重新读 taxonomy，选最接近的已有最末层分类，写完整路径 |
 | conflicts: `DUPLICATE_NAME` | 与同空间其他意图同名 | 查该意图，含义相同就并入它的编码，否则改名 |
 | conflicts: `DUPLICATE_IN_BATCH` | 同批重复编码 | 合并成一条 |
 | conflicts: `DESCRIPTION_TOO_SHORT` | 意图描述少于 15 个字 | 按第 3 节补写「想做什么 / 什么算 / 什么不算」 |
@@ -129,18 +132,51 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
 [
   {
     "name": "list_intents",
-    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读合法的 L1/L2，view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
+    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories），view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "space": {"type": "string", "description": "空间 ID，如 cs、mc；不传则用 Key 绑定的空间"},
-        "view": {"type": "string", "enum": ["intents", "taxonomy", "slots", "spaces", "recognition"], "default": "intents"},
-        "l1": {"type": "string", "description": "L1 编码，如 STOCK、DESIGN"},
-        "l2": {"type": "string", "description": "L2 名称"},
-        "status": {"type": "string", "enum": ["草稿", "启用", "停用"]},
-        "q": {"type": "string", "description": "关键词，匹配编码/名称/意图描述/例句"},
-        "updated_after": {"type": "string", "format": "date-time"},
-        "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
+        "space": {
+          "type": "string",
+          "description": "空间 ID，如 cs、mc；不传则用 Key 绑定的空间"
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "intents",
+            "taxonomy",
+            "slots",
+            "spaces",
+            "recognition"
+          ],
+          "default": "intents"
+        },
+        "category": {
+          "type": "string",
+          "description": "分类路径筛选，每段填编码或名称，用 / 分隔，可只写前几层，如 STOCK 或 STOCK/现货"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "草稿",
+            "启用",
+            "停用"
+          ]
+        },
+        "q": {
+          "type": "string",
+          "description": "关键词，匹配编码/名称/意图描述/例句"
+        },
+        "updated_after": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "page_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
+        }
       }
     }
   },
@@ -149,8 +185,18 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
     "description": "按编码读取单个意图的完整信息（例句、槽位、关联知识及用途、工具映射）。只读。",
     "inputSchema": {
       "type": "object",
-      "required": ["code"],
-      "properties": {"space": {"type": "string"}, "code": {"type": "string", "pattern": "^[A-Z]{1,4}\\.[A-Z]+\\.[A-Z0-9_]+$"}}
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z]{1,4}\\.[A-Z]+\\.[A-Z0-9_]+$"
+        }
+      }
     }
   },
   {
@@ -158,24 +204,98 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
     "description": "批量写回当前空间的意图，结果一律为草稿。mode 只用 merge；不能启用、不能删除、不能覆盖已启用意图。槽位名用本空间已有槽位的英文名，不要建同义槽位。单次最多 100 条，必须提供 idempotency_key。",
     "inputSchema": {
       "type": "object",
-      "required": ["mode", "intents", "idempotency_key"],
+      "required": [
+        "mode",
+        "intents",
+        "idempotency_key"
+      ],
       "properties": {
-        "space": {"type": "string"},
-        "mode": {"type": "string", "enum": ["merge"]},
-        "idempotency_key": {"type": "string", "maxLength": 64},
+        "space": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "merge"
+          ]
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        },
         "intents": {
-          "type": "array", "minItems": 1, "maxItems": 100,
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
           "items": {
             "type": "object",
-            "required": ["code", "name", "l1", "l2", "description", "examples"],
+            "required": [
+              "code",
+              "name",
+              "description",
+              "examples"
+            ],
             "properties": {
-              "code": {"type": "string", "pattern": "^[A-Z]{1,4}\\.[A-Z]+\\.[A-Z0-9_]+$"},
-              "name": {"type": "string", "maxLength": 30},
-              "l1": {"type": "string"},
-              "l2": {"type": "string"},
-              "description": {"type": "string", "minLength": 15, "description": "意图描述：用户想做什么；什么算；什么不算（易混淆意图）"},
-              "examples": {"type": "array", "minItems": 3, "items": {"type": "string"}},
-              "slots": {"type": "array", "items": {"type": "object", "required": ["name", "required"], "properties": {"name": {"type": "string", "description": "本空间槽位英文名"}, "required": {"type": "boolean"}, "ask": {"type": "string", "description": "留空则继承该槽位默认追问话术"}}}}
+              "code": {
+                "type": "string",
+                "pattern": "^[A-Z]{1,4}(\\.[A-Z0-9_]+){1,6}$"
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 30
+              },
+              "category_path": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 0,
+                "maxItems": 5,
+                "description": "从第 1 层到最末层分类的完整路径，每段填编码或名称（先用 list_intents view=taxonomy 读取），如 [\"STOCK\", \"现货\"]。空间有分类层时必填；0.5 版的 l1 / l2 仍兼容"
+              },
+              "l1": {
+                "type": "string",
+                "description": "已废弃（兼容）：等价于 category_path 第 1 段"
+              },
+              "l2": {
+                "type": "string",
+                "description": "已废弃（兼容）：等价于 category_path 第 2 段"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 15,
+                "description": "意图描述：用户想做什么；什么算；什么不算（易混淆意图）"
+              },
+              "examples": {
+                "type": "array",
+                "minItems": 3,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "slots": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "required"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "本空间槽位英文名"
+                    },
+                    "required": {
+                      "type": "boolean"
+                    },
+                    "ask": {
+                      "type": "string",
+                      "description": "留空则继承该槽位默认追问话术"
+                    }
+                  }
+                }
+              }
             }
           }
         }
@@ -187,15 +307,38 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
     "description": "在全部知识库（全平台通用）中按问题检索最相关的知识切片，可按平台/站点/语言/类目标签过滤，返回相似度、标签和已关联意图。只读。",
     "inputSchema": {
       "type": "object",
-      "required": ["query"],
+      "required": [
+        "query"
+      ],
       "properties": {
-        "kb_id": {"type": "string", "description": "不传则检索全部知识库"},
-        "query": {"type": "string"},
-        "platform": {"type": "string", "description": "如 TikTok、Shopee、Amazon、1688"},
-        "site": {"type": "string", "description": "如 US、VN、CN"},
-        "language": {"type": "string", "description": "如 en、vi、zh"},
-        "category": {"type": "string"},
-        "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5}
+        "kb_id": {
+          "type": "string",
+          "description": "不传则检索全部知识库"
+        },
+        "query": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string",
+          "description": "如 TikTok、Shopee、Amazon、1688"
+        },
+        "site": {
+          "type": "string",
+          "description": "如 US、VN、CN"
+        },
+        "language": {
+          "type": "string",
+          "description": "如 en、vi、zh"
+        },
+        "category": {
+          "type": "string"
+        },
+        "top_k": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 5
+        }
       }
     }
   },
@@ -204,19 +347,72 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
     "description": "向已有知识库导入文件（异步构建）。表格库表头必须完全一致；与已有文档同名/同内容时默认返回冲突并列出受影响意图，需运营确认后才能 overwrite=true。",
     "inputSchema": {
       "type": "object",
-      "required": ["kb_id", "files", "idempotency_key"],
+      "required": [
+        "kb_id",
+        "files",
+        "idempotency_key"
+      ],
       "properties": {
-        "kb_id": {"type": "string"},
-        "idempotency_key": {"type": "string", "maxLength": 64},
-        "overwrite": {"type": "boolean", "default": false},
-        "files": {"type": "array", "maxItems": 100, "items": {"type": "object", "required": ["name", "content_base64"], "properties": {"name": {"type": "string"}, "content_base64": {"type": "string"}}}}
+        "kb_id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "overwrite": {
+          "type": "boolean",
+          "default": false
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "content_base64"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "content_base64": {
+                "type": "string"
+              }
+            }
+          }
+        }
       }
     }
   },
   {
     "name": "list_tools",
     "description": "列出全部工具（外部：API 接口 / MCP 工具 / CLI 命令 / 技能·工作流；以及平台内置工具）及入参，用于在意图中准备对应槽位。全局，不区分空间。只读；不能注册或调用工具。",
-    "inputSchema": {"type": "object", "properties": {"source": {"type": "string", "enum": ["external", "builtin"]}, "q": {"type": "string"}, "type": {"type": "string", "enum": ["http", "mcp", "cli", "skill"]}}}
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "external",
+            "builtin"
+          ]
+        },
+        "q": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "http",
+            "mcp",
+            "cli",
+            "skill"
+          ]
+        }
+      }
+    }
   }
 ]
 ```
@@ -231,7 +427,7 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
 | 404 | 空间、意图、知识库、文档、切片或槽位不存在 | 重新列表查询，确认 ID 后再操作 |
 | 409 | 冲突：文档同名/同内容需确认覆盖，本空间槽位已存在或仍被使用，或 Idempotency-Key 被不同请求体复用 | 覆盖类：把受影响意图告诉运营等待确认；幂等类：换一个新的 Key |
 | 413 | 单次超过 100 条或文件过大 | 拆成每批 ≤ 100 条 / 拆分文件后分批提交 |
-| 422 | 内容校验不通过（例句不足、必填槽位缺追问话术、L1/L2 不存在） | 按 `details` 补全对应字段，只重提有问题的条目 |
+| 422 | 内容校验不通过（例句不足、必填槽位缺追问话术、分类不存在） | 按 `details` 补全对应字段，只重提有问题的条目 |
 | 429 | 超过每分钟 60 次 | 按 `Retry-After` 秒数等待后重试，并合并请求、改用批量接口 |
 
 ## 11. 限制
@@ -249,9 +445,18 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
 | type | 平台登记的字段 | Bot 怎么执行 |
 |---|---|---|
 | `http`（API 接口） | `method`、`url`、`auth`、`input_schema` | 按 method + url 发请求；GET 把入参放 query，其他放 JSON body；凭据由 Bot 侧密钥托管提供，平台不下发密钥 |
-| `mcp`（MCP 工具） | `mcp_server`、`mcp_tool`、`input_schema`（即注册的 inputSchema） | 连接 mcp_server，调用 `tools/call`，`name`=mcp_tool，`arguments`=入参 |
+| `mcp`（MCP 子工具） | `server`（服务名）、`mcp_server`（连接信息：`transport`、`url` 或 `command`/`args`/`env`、`auth`）、`mcp_tool`（远端工具名）、`input_schema`（同步自远端的 inputSchema）、`confirm_required` | 按 `mcp_server` 连接（同一服务只建一个会话），调用 `tools/call`，`name`=mcp_tool，`arguments`=入参；`confirm_required=true` 时先向用户确认再调用 |
 | `cli`（CLI 命令） | `cli.bin`、`cli.command_template`、`cli.auth`、`cli.login_command`、`cli.install`、`cli.verified_version`、`cli.output_format`、`cli.confirm_required`、`input_schema` | 在 Bot 的运行环境里执行：未安装时按 `install` 安装；未登录或返回 `AUTH_REQUIRED` 时按 `login_command` 引导完成授权（不要向用户索要账号密码、cookie、token）；把模板里的 `{参数名}` 替换为入参值，**选填参数为空时连同它前面的 `--选项` 一起省略**，值含空格时加引号；以参数数组方式执行，不拼接 shell 字符串；`output_format=json` 时把 stdout 解析为 JSON；`confirm_required=true` 时先向用户确认再执行 |
 | `skill`（技能/工作流） | `skill_id`、`platform`、`output_description`、`input_schema` | 在对应平台运行该技能或工作流，`inputs`=入参 |
+
+**MCP 服务与密钥**：runtime-config 顶层的 `mcp_servers` 列出已启用意图用到的 MCP 服务（只含被用到的服务；`tools` 里也只含被用到的子工具）。平台**不下发密钥**，`auth.token_env` 给出 Bot 运行环境里应保存密钥的环境变量名，例如：
+
+```json
+{"name": "compliance", "transport": "streamable_http", "url": "https://mcp.example.com/compliance",
+ "auth": {"type": "API Key", "header": "X-API-Key", "token_env": "MCP_COMPLIANCE_TOKEN"}}
+```
+
+Bot 用 `X-API-Key: ${MCP_COMPLIANCE_TOKEN}` 连接；`Bearer Token` 类型用 `Authorization: Bearer ${token_env}`；stdio 服务按 `command` + `args` 在 Bot 机器上启动，`auth.type=环境变量` 时把 `token_env` 的值放进进程环境变量 `auth.env`。
 
 CLI 示例（Moonclaw 空间，命令来自西之月开放平台 CLI 文档 https://open.westmonth.com/cli）：
 
@@ -267,7 +472,7 @@ CLI 示例（Moonclaw 空间，命令来自西之月开放平台 CLI 文档 http
 
 | 工具 | 类型 | 覆盖的接口 | 空间 | 分类 |
 |---|---|---|---|---|
-| `pf_search_knowledge` 检索知识 | mcp | `search_knowledge`、`POST /kbs/{kb_id}/search` | 全局 | 读取 |
+| `intent_platform.search_knowledge` 检索知识（MCP 服务 `intent_platform` 的子工具） | mcp | `search_knowledge`、`POST /kbs/{kb_id}/search` | 全局 | 读取 |
 | `pf_read_knowledge` 读取知识库 | http | `GET /kbs`、`/kbs/{kb_id}/documents`、`/kbs/{kb_id}/chunks`、`/imports/{import_id}` | 全局 | 读取 |
 | `pf_read_intents` 读取意图与槽位 | http | `GET /spaces`、`/taxonomy`、`/slots`、`/recognition`、`/intents`、`/intents/{code}`；`list_intents`、`get_intent` | 按空间 | 读取 |
 | `pf_list_tools` 读取工具目录 | http | `GET /tools`；`list_tools` | 全局 | 读取 |

@@ -1,10 +1,10 @@
-# 意图管理平台（生产版 v0.5）
+# 意图管理平台（生产版 v0.6）
 
-基于 demo（`intent-platform/index.html` + `src3/`）开发的生产可用版本。界面、交互和种子数据以 demo 为准，接口严格按 `docs/openapi.yaml` 0.5.0 实现。
+基于 demo（`intent-platform/index.html` + `src3/`）开发的生产可用版本。界面、交互和种子数据以 demo 为准，接口严格按 `docs/openapi.yaml` 0.6.0 实现。
 
-- **意图管理**：意图列表（左侧一级 L1 筛选）/ 槽位 / 空间设置 / 导入记录。按业务空间（`cs` 1688 智能客服、`mc` Moonclaw）隔离意图和槽位。
+- **意图管理**：意图列表（左侧第一层分类筛选，列按层级名生成）/ 槽位 / 空间设置（含分类层级：0～5 层分类 + 意图，层数与名称按空间配置，插入 / 删除层级先预览再确认）/ 导入记录。按业务空间（`cs` 1688 智能客服、`mc` Moonclaw）隔离意图和槽位。
 - **知识库**：全平台通用。可新建知识库、导入文档（异步构建）、编辑切片和标签、检索。
-- **工具中心**：工具目录分 4 类（API 接口 / MCP / CLI / 技能），内置 8 个平台工具。「接入与密钥」页管理 API Key，并提供 REST、MCP 接入说明和运行时配置下载。
+- **工具中心**：工具目录分 4 类（API 接口 / MCP / CLI / 技能），内置 8 个平台工具。MCP 按「服务 → 子工具」登记：注册服务后在线同步（Streamable HTTP / SSE / stdio，initialize + tools/list）或手动粘贴 tools/list JSON，先看差异再确认；子工具可单独启停、标记写操作需确认；意图里下钻选择具体子工具。「接入与密钥」页管理 API Key，并提供 REST、MCP 接入说明和运行时配置下载。
 - **用户与审计**（仅管理员）：账号分 admin / editor / viewer 三种角色；所有写操作都记审计日志。
 
 ## 技术栈
@@ -95,6 +95,8 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 | `IP_DOCS_DIR` | 仓库 `docs/` | 接入说明文件所在目录 |
 | `IP_FRONTEND_DIST` | 空 | 设置后由后端托管前端 |
 | `IP_LOG_LEVEL` | INFO | 日志级别 |
+| `IP_MCP_TIMEOUT_SECONDS` | 15 | MCP 在线同步的连接 / 读取超时（秒） |
+| `IP_MCP_STDIO_ENABLED` | false | 是否允许在平台服务器上启动 stdio MCP 服务做在线同步（会执行登记的命令，仅管理员可触发）。默认关闭，stdio 服务用「手动导入」 |
 
 ## Bot / AI 工具接入
 
@@ -108,8 +110,9 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
    - 错误统一为 `{code, message, details, request_id}` 格式。
 3. **运行时配置**：Bot 定时请求 `GET /api/v1/runtime-config?since_version=<本地版本>`。
    - 版本未变：返回 304。
-   - 版本有变：返回本空间已启用意图、槽位定义、recognition（阈值/澄清/追问/重试/最终动作）、校验集全文和用到的工具。
-   - 拉到新版本后应清空意图识别缓存。意图启用、停用、编辑或空间设置变更都会让该空间的 version +1。
+   - 版本有变：返回本空间已启用意图（含 `category_path`）、分类层级 `taxonomy`、槽位定义、recognition（阈值/澄清/追问/重试/最终动作）、校验集全文、用到的工具，以及用到的 MCP 服务 `mcp_servers`。
+   - MCP 服务的密钥不下发：`mcp_servers[].auth.token_env` 是 Bot 侧应设置的环境变量名（默认 `MCP_{服务名大写}_TOKEN`）。
+   - 拉到新版本后应清空意图识别缓存。意图启用、停用、编辑，分类 / 层级调整，空间设置变更，MCP 同步或子工具启停影响已启用意图，都会让该空间的 version +1。
 4. **MCP**：地址为 `POST {IP_PUBLIC_BASE_URL}/mcp`（JSON-RPC 2.0，非流式），请求头与 REST 相同。
    - 支持的方法：`initialize`、`tools/list`、`tools/call`。
    - 提供的工具：`list_intents`、`get_intent`、`upsert_intents`、`search_knowledge`、`import_knowledge`、`list_tools`。
@@ -121,17 +124,26 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
    ```
 5. 通过接口或 MCP 写入的意图一律为草稿，并在「导入记录」中显示来源为「AI 工具（API）」。启用只能在控制台操作。
 
+## 升级到 v0.6
+
+`alembic upgrade head` 会依次执行：
+
+- `0002_dynamic_taxonomy`：`taxonomy_l1/l2` 与 `intents.l1/l2` 转成 `categories` 邻接表 + `intents.category_id`，现有空间设为三层「大类 → 问题桶 → 意图」。
+- `0003_mcp_servers`：原 MCP 工具按 Server URL 归为 MCP 服务（服务名取 URL 最后一段，平台内置为 `intent_platform`），工具改名为 `{服务名}.{MCP 工具名}`，意图里的绑定同步改名，工具上的密钥移到服务上。
+
+接口兼容：写入与筛选仍接受 `l1` / `l2`；输出改为 `category_path`；`Tool.mcp_server` 由 URL 字符串改为连接信息对象。
+
 ## 测试
 
 ```bash
-# 后端：需要 intent_test 库（测试会重建 schema）
+# 后端：需要 intent_test 库（测试会重建 schema）；MCP 用例会在本机随机端口起 tests/mini_mcp_server.py
 createdb -O intent intent_test
 cd backend && ../.venv/bin/python -m pytest -q
 
 # 前端类型检查与构建
 cd frontend && npm run build
 
-# e2e：自动重建 intent_e2e 库、灌入种子、在 :8100 启动后端（托管 dist），截图输出到 screenshots/
+# e2e：自动重建 intent_e2e 库、灌入种子、在 :8100 启动后端（托管 dist）和 :8766 的测试 MCP 服务，截图输出到 screenshots/
 cd frontend && npm run build && npx playwright test        # 本机 Chrome：CHROME_PATH=/usr/bin/google-chrome
 ```
 
@@ -140,6 +152,7 @@ CI 配置见 `.github/workflows/ci.yml`：在 postgres 服务上跑 pytest、前
 ## 已知限制
 
 - 单句测试用例句的二元组相似度模拟识别（返回 `simulated: true`），分数与 Bot 实际使用的模型不同，只用来自查例句是否合理。
-- 工具「测试调用」只生成请求预览（`executed: false`），平台不执行外部工具；实际执行在 Bot 侧。
+- 工具「测试调用」只生成请求预览（`executed: false`），平台不执行外部工具；实际执行在 Bot 侧。MCP 在线同步是平台唯一主动连接外部服务的地方（只调 initialize / tools/list，不调 tools/call）。
+- MCP 在线同步会让平台服务器访问登记的地址，部署时请用出站网络策略限制可访问的范围（平台未内置地址白名单）。
 - 知识构建在后端进程内用后台任务完成，进程重启时会把卡在「构建中」的任务标为失败，需要重新导入。超大文件建议以后改用独立队列（如 Celery/RQ）。
 - 图片（png/jpg/webp）不做 OCR，导入后显示「构建失败」并给出原因。

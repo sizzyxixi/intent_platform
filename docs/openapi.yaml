@@ -26,6 +26,8 @@ info:
 
     - 工具类型：http（API 接口）/ mcp（MCP 工具）/ cli（CLI 命令）/ skill（技能·工作流）。AI 只读工具目录，不注册、不调用工具。
 
+    - v0.6 起 MCP 按「服务 → 子工具」登记：子工具名为 {服务名}.{远端工具名}，Tool.server 为服务名，Tool.mcp_server 由 0.5 的 URL 字符串改为连接信息对象（URL 在 mcp_server.url）；runtime-config 新增 mcp_servers（只含被用到的服务，密钥只给环境变量名 auth.token_env）。
+
     - 本接口自身也作为「平台内置」工具登记在工具中心（8 个能力，source=builtin）；其中写回意图、槽位写入/删除、导入知识为维护类，不能关联到意图，只给维护用 AI 通过 API Key 调用。
 
     '

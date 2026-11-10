@@ -84,3 +84,14 @@ def test_search_and_import(full_key):
     assert r.json()["status"] == "构建成功"
     err, b = call(full_key, "list_tools", {"type": "cli"})
     assert len(b["items"]) == 2
+
+
+def test_ai_guide_mcp_block_matches_tools():
+    """AI接入说明.md §9 内嵌的工具定义与 MCP 实际返回的一致。"""
+    import json as _json
+    from pathlib import Path as _P
+    doc = (_P(__file__).resolve().parents[2] / "docs" / "AI接入说明.md").read_text(encoding="utf-8")
+    sec = doc[doc.index("## 9. MCP 工具"):]
+    block = sec[sec.index("```json") + 7:sec.index("```", sec.index("```json") + 7)]
+    tools = _json.loads((_P(__file__).resolve().parents[1] / "app" / "mcp_tools.json").read_text(encoding="utf-8"))
+    assert _json.loads(block) == tools
