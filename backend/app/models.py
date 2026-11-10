@@ -167,9 +167,36 @@ class Chunk(Base):
     document: Mapped[Document] = relationship(back_populates="chunks")
 
 
+class McpServer(Base):
+    """MCP 服务：一个服务下有多个子工具（tools.server 指向这里）。平台只登记连接信息并同步工具清单，执行在 Bot。"""
+    __tablename__ = "mcp_servers"
+    name: Mapped[str] = mapped_column(String(40), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str] = mapped_column(Text, default="")
+    transport: Mapped[str] = mapped_column(String(20))  # streamable_http / sse / stdio
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    command: Mapped[str | None] = mapped_column(Text, nullable=True)
+    args: Mapped[list] = mapped_column(JSONB, default=list)
+    env: Mapped[dict] = mapped_column(JSONB, default=dict)  # 非敏感环境变量（stdio）
+    auth: Mapped[str] = mapped_column(String(20), default="无")  # 无 / Bearer Token / API Key / 环境变量
+    auth_header: Mapped[str | None] = mapped_column(String(64), nullable=True)  # API Key 的请求头名
+    auth_env: Mapped[str | None] = mapped_column(String(64), nullable=True)  # stdio：凭据放进哪个环境变量
+    secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(10), default="external")  # external / builtin
+    owner: Mapped[str] = mapped_column(String(100), default="")
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    server_info: Mapped[dict] = mapped_column(JSONB, default=dict)  # initialize 返回的 serverInfo / protocolVersion
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_sync_source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 在线同步 / 手动导入
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())
+
+
 class Tool(Base):
     __tablename__ = "tools"
-    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # MCP 子工具的 name = {服务名}.{远端工具名}
+    name: Mapped[str] = mapped_column(String(120), primary_key=True)
     type: Mapped[str] = mapped_column(String(8))  # http / mcp / cli / skill
     display_name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str] = mapped_column(Text)
@@ -179,7 +206,13 @@ class Tool(Base):
     space_scoped: Mapped[bool] = mapped_column(Boolean, default=False)
     endpoints: Mapped[list] = mapped_column(JSONB, default=list)
     mcp_tools: Mapped[list] = mapped_column(JSONB, default=list)
-    # 类型特有字段：http{url,method,auth,output_example} mcp{mcp_server,mcp_tool,input_schema,output_example}
+    # MCP 子工具所属服务；停用 / 远端已消失（最近一次同步里没有了，但仍被意图使用，所以保留）
+    server: Mapped[str | None] = mapped_column(ForeignKey("mcp_servers.name", ondelete="CASCADE"), nullable=True,
+                                               index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    remote_missing: Mapped[bool] = mapped_column(Boolean, default=False)
+    server_ref: Mapped[McpServer | None] = relationship()
+    # 类型特有字段：http{url,method,auth,output_example} mcp{mcp_tool,title,input_schema,annotations,output_example,confirm_required}
     # cli{bin,command_template,auth,login_command,install,verified_version,output_format,confirm_required,output_description}
     # skill{skill_id,platform,output_description}
     config: Mapped[dict] = mapped_column(JSONB, default=dict)

@@ -2,7 +2,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Category, Chunk, Document, SlotDef, Space, Tool
+from ..models import Category, Chunk, Document, McpServer, SlotDef, Space, Tool
 from .common import INTENT_CODE_RE
 
 
@@ -15,6 +15,7 @@ class RefIndex:
         self._tools: dict[str, Tool] | None = None
         self._slots: dict[str, dict[str, SlotDef]] = {}
         self._cats: dict[str, tuple[int, dict[int, int]]] = {}
+        self._servers: set[str] | None = None
 
     def kb_docs(self, kb_id: str) -> dict[str, set[str]]:
         if kb_id not in self._docs:
@@ -41,6 +42,11 @@ class RefIndex:
             self._tools = {t.name: t for t in self.db.scalars(select(Tool))}
         return self._tools
 
+    def servers(self) -> set[str]:
+        if not hasattr(self, "_servers") or self._servers is None:
+            self._servers = set(self.db.scalars(select(McpServer.name)))
+        return self._servers
+
     def slots(self, space_id: str) -> dict[str, SlotDef]:
         if space_id not in self._slots:
             self._slots[space_id] = {s.name: s for s in self.db.scalars(
@@ -57,6 +63,7 @@ class RefIndex:
         return self._cats[space_id]
 
     def invalidate(self):
+        self._servers = None
         self._cats.clear()
         self._docs.clear()
         self._tools = None
@@ -112,11 +119,22 @@ def validate(it: dict, idx: RefIndex) -> list[str]:
     for b in binds:
         t = tools.get(b.get("tool"))
         if not t:
-            e.append(f"工具未注册：{b.get('tool')}")
+            if b.get("tool") in idx.servers():
+                e.append(f"「{b.get('tool')}」是 MCP 服务，不能整体绑定，请下钻选择具体工具")
+            else:
+                e.append(f"工具未注册：{b.get('tool')}")
             continue
         if t.maintenance:
             e.append(f"工具 {t.name} 是维护类平台内置工具，不能在意图中使用")
+        if t.remote_missing:
+            e.append(f"工具 {t.name} 在 MCP 服务 {t.server} 最近一次同步中已不存在，请更换工具")
+        elif not t.enabled:
+            e.append(f"工具 {t.name} 已停用")
         pm = b.get("param_map") or {}
+        known = {p["name"] for p in t.params}
+        for k in pm:
+            if k not in known:
+                e.append(f"工具 {t.name} 没有入参「{k}」")
         for p in t.params:
             m = pm.get(p["name"])
             if p.get("required") and (not m or not str(m.get("value") or "").strip()):

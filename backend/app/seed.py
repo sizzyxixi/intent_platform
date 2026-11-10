@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import SessionLocal
 from .models import (ApiKey, Chunk, Document, ImportRecord, Intent, IntentLog, KnowledgeBase, Setting, SlotDef, Space,
-                     Tool, User, Category)
+                     Tool, User, Category, McpServer)
 from .security import hash_password, new_api_token, token_hash, token_hint
 from .services.common import TZ_CN, parse_local, utcnow
 from .services.parsers import content_hash
@@ -30,7 +30,7 @@ TOOL_TYPE = {"API 接口": "http", "MCP 工具": "mcp", "CLI 命令": "cli", "�
 KB_TYPE = {"表格": "表格知识库", "图文": "图文知识库-富文本"}
 USAGE = {"参考": "reference", "校验": "validate"}
 TABLES = ["intent_logs", "intents", "slots", "categories", "chunks", "documents", "knowledge_bases",
-          "tools", "import_records", "api_keys", "audit_logs", "idempotency_records", "rate_counters", "settings",
+          "tools", "mcp_servers", "import_records", "api_keys", "audit_logs", "idempotency_records", "rate_counters", "settings",
           "spaces", "users"]
 
 
@@ -99,6 +99,8 @@ def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
         chunk_pks += [c.id for d in k.documents for c in d.chunks]
     backend().reindex(db, chunk_pks)
     # 工具
+    mcp_servers: dict = {}
+    renamed: dict[str, str] = {}
     for pos, t in enumerate(st["tools"]):
         typ = TOOL_TYPE[t["type"]]
         params = [{"name": p["n"], "type": p.get("type") or "string", "required": bool(p.get("req")),
@@ -109,9 +111,26 @@ def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
             cfg = {"url": url, "method": t.get("method") or "GET", "auth": t.get("auth") or "无",
                    "output_example": t.get("out") or ""}
         elif typ == "mcp":
-            cfg = {"mcp_server": server, "mcp_tool": t.get("toolName") or "",
-                   "input_schema": json.loads(t["schema"]) if t.get("schema") else None,
-                   "output_example": t.get("out") or ""}
+            # 一个 Server URL 归为一个 MCP 服务；子工具名 = {服务名}.{远端工具名}（与迁移 0003 的规则一致）
+            builtin = bool(t.get("builtin"))
+            key = (server, builtin)
+            if key not in mcp_servers:
+                sname = "intent_platform" if builtin else (server.rstrip("/").rsplit("/", 1)[-1].lower() or "mcp")
+                host_path = server.split("://", 1)[-1]
+                mcp_servers[key] = McpServer(
+                    name=sname, display_name="意图管理平台（平台内置 MCP）" if builtin else host_path,
+                    description="" , transport="streamable_http", url=server, args=[], env={},
+                    auth="Bearer Token" if builtin else (t.get("auth") if t.get("auth") in ("Bearer Token", "API Key") else "无"),
+                    auth_header="X-API-Key" if (not builtin and t.get("auth") == "API Key") else None,
+                    source="builtin" if builtin else "external", owner=t.get("owner") or "", position=pos,
+                    server_info={})
+                db.add(mcp_servers[key])
+                db.flush()
+            sv = mcp_servers[key]
+            remote = t.get("toolName") or t["name"]
+            renamed[t["name"]] = f"{sv.name}.{remote}"
+            cfg = {"mcp_tool": remote, "title": "", "input_schema": json.loads(t["schema"]) if t.get("schema") else None,
+                   "annotations": {}, "output_example": t.get("out") or "", "confirm_required": False}
         elif typ == "cli":
             cfg = {"bin": t.get("bin") or "", "command_template": t.get("cmd") or "", "auth": t.get("cliAuth") or "无",
                    "login_command": t.get("login") or "", "install": t.get("install") or "",
@@ -121,7 +140,8 @@ def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
         else:
             cfg = {"skill_id": t.get("skillId") or "", "platform": t.get("platform") or "",
                    "output_description": t.get("out") or ""}
-        db.add(Tool(name=t["name"], type=typ, display_name=t["disp"], description=t["desc"], params=params,
+        db.add(Tool(name=renamed.get(t["name"], t["name"]), type=typ, server=mcp_servers[key].name if typ == "mcp" else None,
+                    display_name=t["disp"], description=t["desc"], params=params,
                     source="builtin" if t.get("builtin") else "external", maintenance=bool(t.get("maint")),
                     space_scoped=t.get("scope") == "space", endpoints=t.get("rest") or [], mcp_tools=t.get("mcp") or [],
                     config=cfg, owner=t.get("owner") or "", position=pos, updated_at=_t(t.get("updated"))))
@@ -137,7 +157,7 @@ def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
                           for s in it.get("slots") or []],
                    kb_refs=[{"kb_id": r["kb"], "doc_id": r["doc"], "chunk_id": r["chunk"],
                              "usage": USAGE.get(r.get("usage") or "参考", "reference")} for r in it.get("kbRefs") or []],
-                   tools=[{"tool": b["name"], "param_map": {k: {"source": v.get("src") or "槽位", "value": str(v.get("v") or "")}
+                   tools=[{"tool": renamed.get(b["name"], b["name"]), "param_map": {k: {"source": v.get("src") or "槽位", "value": str(v.get("v") or "")}
                                                             for k, v in (b.get("map") or {}).items()}}
                           for b in it.get("tools") or []],
                    status=it["status"], owner=it.get("owner") or "", position=pos,
@@ -177,6 +197,7 @@ def counts(db: Session) -> dict:
     out["kbs"] = db.scalar(select(func.count()).select_from(KnowledgeBase))
     out["tools"] = db.scalar(select(func.count()).select_from(Tool))
     out["builtin_tools"] = db.scalar(select(func.count()).select_from(Tool).where(Tool.source == "builtin"))
+    out["mcp_servers"] = db.scalar(select(func.count()).select_from(McpServer))
     return out
 
 

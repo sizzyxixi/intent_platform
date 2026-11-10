@@ -7,6 +7,7 @@ from . import knowledge as kb_svc
 from . import slots as slot_svc
 from . import spaces as space_svc
 from . import taxonomy as tax_svc
+from . import mcp_servers as mcp_svc
 from . import tools as tool_svc
 from .common import iso, norm_tags, utcnow
 from .validation import RefIndex
@@ -25,7 +26,10 @@ def build(db: Session, sp: Space) -> dict:
             t = idx.tools().get(b["tool"])
             if not t:
                 continue
-            tools.append({"tool": t.name, "type": t.type, "param_map": b.get("param_map") or {}})
+            tb = {"tool": t.name, "type": t.type, "param_map": b.get("param_map") or {}}
+            if t.type == "mcp":
+                tb.update({"server": t.server, "mcp_tool": t.config.get("mcp_tool")})
+            tools.append(tb)
             if t.name not in tool_names:
                 tool_names.append(t.name)
         intents_out.append({"code": it.code, "name": it.name, "category_path": tax.path(it.category_id),
@@ -56,8 +60,13 @@ def build(db: Session, sp: Space) -> dict:
             items.append(item)
         validation_sets.append({"kb_id": kb_id, "kb_name": kb.name, "doc_id": doc_id, "doc_name": doc.name,
                                 "chunk_id": chunk_id, "used_by": used, "items": items})
-    tools_out = [tool_svc.api_dict(t) for t in db.scalars(select(Tool).where(Tool.name.in_(tool_names)))]
+    used_tools = list(db.scalars(select(Tool).where(Tool.name.in_(tool_names))))
+    tools_out = [tool_svc.api_dict(t) for t in used_tools]
     tools_out.sort(key=lambda d: tool_names.index(d["name"]))
+    servers = []
+    for t in sorted(used_tools, key=lambda t: tool_names.index(t.name)):
+        if t.type == "mcp" and t.server_ref and t.server not in [s["name"] for s in servers]:
+            servers.append(mcp_svc.conn_dict(t.server_ref))
     return {
         "space": {"id": sp.id, "name": sp.name, "bot": sp.bot},
         "version": sp.version,
@@ -68,6 +77,7 @@ def build(db: Session, sp: Space) -> dict:
                   for s in slot_svc.list_slots(db, sp.id)],
         "intents": intents_out,
         "validation_sets": validation_sets,
+        "mcp_servers": servers,
         "tools": tools_out,
     }
 

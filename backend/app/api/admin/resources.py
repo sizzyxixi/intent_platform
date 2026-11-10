@@ -4,13 +4,15 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from ...db import get_db
 from ...deps import SCOPES, Role, require
 from ...errors import bad_request, not_found
-from ...models import ImportRecord, Space
+from ...models import ImportRecord, McpServer, Space
 from ...services import intents as intent_svc, keys as key_svc, knowledge as kb_svc, tools as tool_svc
+from ...services import mcp_servers as mcp_svc
 from ...services.common import iso
 from .common import json_body
 
@@ -189,6 +191,60 @@ def delete_tool(name: str, actor=Depends(EDIT), db: Session = Depends(get_db)):
     tool_svc.delete(db, name, actor)
     db.commit()
     return {"ok": True}
+
+
+@router.patch("/tools/{name}")
+async def patch_tool(name: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
+    t = mcp_svc.patch_tool(db, tool_svc.get(db, name), await json_body(request), actor)
+    db.commit()
+    return tool_svc.admin_dict(t, intent_svc.users_of_tool(db, name), kb_svc.space_names(db))
+
+
+# ---------------- MCP 服务 ----------------
+@router.get("/mcp-servers")
+def list_mcp_servers(actor=Depends(VIEW), db: Session = Depends(get_db)):
+    return [mcp_svc.admin_dict(db, s) for s in db.scalars(select(McpServer).order_by(McpServer.position, McpServer.name))]
+
+
+@router.get("/mcp-servers/{name}")
+def get_mcp_server(name: str, actor=Depends(VIEW), db: Session = Depends(get_db)):
+    return mcp_svc.admin_dict(db, mcp_svc.get(db, name))
+
+
+@router.post("/mcp-servers", status_code=201)
+async def create_mcp_server(request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
+    sv = mcp_svc.create(db, await json_body(request), actor)
+    db.commit()
+    return mcp_svc.admin_dict(db, sv)
+
+
+@router.put("/mcp-servers/{name}")
+async def update_mcp_server(name: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
+    sv = mcp_svc.update(db, name, await json_body(request), actor)
+    db.commit()
+    return mcp_svc.admin_dict(db, sv)
+
+
+@router.delete("/mcp-servers/{name}")
+def delete_mcp_server(name: str, actor=Depends(EDIT), db: Session = Depends(get_db)):
+    mcp_svc.delete(db, name, actor)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/mcp-servers/{name}/sync/preview")
+async def preview_mcp_sync(name: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
+    body = await json_body(request)
+    sv = mcp_svc.get(db, name)
+    return await run_in_threadpool(mcp_svc.preview, db, sv, body, actor)  # 在线同步会访问外部服务，不阻塞事件循环
+
+
+@router.post("/mcp-servers/{name}/sync/apply")
+async def apply_mcp_sync(name: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
+    sv = mcp_svc.get(db, name)
+    res = mcp_svc.apply(db, sv, await json_body(request), actor)
+    db.commit()
+    return {**res, "server": mcp_svc.admin_dict(db, sv)}
 
 
 @router.post("/tools/{name}/test")

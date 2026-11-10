@@ -174,7 +174,9 @@ def check_structure(db: Session, it_data: dict, idx: RefIndex) -> list[str]:
     tnames = [b["tool"] for b in it_data["tools"]]
     for n in tnames:
         t = tools.get(n)
-        if not t:
+        if not t and n in idx.servers():
+            e.append(f"「{n}」是 MCP 服务，不能整体绑定，请下钻选择具体工具")
+        elif not t:
             e.append(f"工具未注册：{n}")
         elif t.maintenance:
             e.append(f"工具 {n} 是维护类平台内置工具，不能在意图中使用")

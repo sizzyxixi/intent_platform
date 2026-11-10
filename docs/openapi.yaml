@@ -1402,6 +1402,12 @@ components:
               value:
                 type: string
                 example: sku
+        server:
+          type: string
+          description: type=mcp 时（运行时配置）所属 MCP 服务名
+        mcp_tool:
+          type: string
+          description: type=mcp 时（运行时配置）远端工具名
     IntentSummary:
       type: object
       required:
@@ -1862,6 +1868,11 @@ components:
           - cli
           - skill
           description: http=API 接口（HTTP）；mcp=MCP 工具；cli=CLI 命令；skill=技能/工作流。平台只登记，执行在 Bot。
+        server:
+          type: string
+          nullable: true
+          example: compliance
+          description: type=mcp，所属 MCP 服务名
         url:
           type: string
           description: type=http
@@ -1875,11 +1886,10 @@ components:
           type: string
           description: type=skill
         mcp_server:
-          type: string
-          description: type=mcp，MCP Server URL
+          $ref: '#/components/schemas/McpServerConn'
         mcp_tool:
           type: string
-          description: type=mcp
+          description: type=mcp，远端 MCP 服务里的原始工具名（tools/call 的 name）
         input_schema:
           type: object
           description: type=mcp 时为注册的 inputSchema；其他类型（http / cli / skill）由 params 生成。意图里的入参映射（槽位 / 常量 / 上下文）对四种类型一致
@@ -1961,6 +1971,15 @@ components:
           description: source=builtin 时返回，对应的 MCP 工具
           example:
           - search_knowledge
+        confirm_required:
+          type: boolean
+          description: type=mcp，写操作需确认：Bot 调用前须向用户确认
+        enabled:
+          type: boolean
+          description: type=mcp，子工具是否启用
+        remote_missing:
+          type: boolean
+          description: type=mcp，最近一次同步时远端已不存在但仍被意图使用（标红待处理）
       description: 工具全平台通用，不区分业务空间。
     RuntimeConfig:
       type: object
@@ -2057,6 +2076,17 @@ components:
                             - 上下文
                           value:
                             type: string
+                    server:
+                      type: string
+                      description: type=mcp：所属 MCP 服务名，连接信息见顶层 mcp_servers
+                    mcp_tool:
+                      type: string
+                      description: type=mcp：远端工具名（tools/call 的 name）
+        mcp_servers:
+          type: array
+          items:
+            $ref: '#/components/schemas/McpServerConn'
+          description: 已启用意图用到的 MCP 服务连接信息（只含被用到的服务）；密钥只以 auth.token_env 环境变量名出现
         tools:
           type: array
           items:
@@ -2441,3 +2471,62 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/CategoryNode'
+    McpServerConn:
+      type: object
+      required:
+      - name
+      - display_name
+      - transport
+      - auth
+      description: MCP 服务连接信息。第三方 MCP 通常一个服务打包多项能力，平台按「服务 → 子工具」两级登记；不含任何密钥明文，鉴权只给环境变量名。
+      properties:
+        name:
+          type: string
+          example: compliance
+          description: 服务名（小写字母/数字/下划线），子工具名为 {服务名}.{远端工具名}
+        display_name:
+          type: string
+        transport:
+          type: string
+          enum:
+          - streamable_http
+          - sse
+          - stdio
+        url:
+          type: string
+          description: transport=streamable_http / sse
+        command:
+          type: string
+          description: transport=stdio
+        args:
+          type: array
+          items:
+            type: string
+          description: transport=stdio
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: transport=stdio，非敏感环境变量
+        auth:
+          type: object
+          required:
+          - type
+          properties:
+            type:
+              type: string
+              enum:
+              - 无
+              - Bearer Token
+              - API Key
+              - 环境变量
+            header:
+              type: string
+              example: Authorization
+            scheme:
+              type: string
+              example: Bearer
+            token_env:
+              type: string
+              example: MCP_COMPLIANCE_TOKEN
+              description: Bot 运行环境中保存密钥的环境变量名

@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     frontend_dist: str | None = None
     # 知识检索后端（可插拔）：postgres
     search_backend: str = "postgres"
+    # MCP 同步：stdio 在线同步默认关闭（会在平台服务器上启动进程）
+    mcp_stdio_enabled: bool = False
+    mcp_timeout_seconds: float = 15
     cors_origins: str = ""  # 逗号分隔；同域部署时留空
     log_level: str = "INFO"
 

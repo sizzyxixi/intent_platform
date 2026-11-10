@@ -38,7 +38,10 @@ def api_dict(t: Tool) -> dict:
     if t.type == "http":
         d.update({"method": c.get("method", "GET"), "url": c.get("url", ""), "auth": c.get("auth", "无")})
     elif t.type == "mcp":
-        d.update({"mcp_server": c.get("mcp_server", ""), "mcp_tool": c.get("mcp_tool", "")})
+        from .mcp_servers import conn_dict
+        d.update({"server": t.server, "mcp_server": conn_dict(t.server_ref) if t.server_ref else {},
+                  "mcp_tool": c.get("mcp_tool", ""), "confirm_required": bool(c.get("confirm_required")),
+                  "enabled": t.enabled, "remote_missing": t.remote_missing})
     elif t.type == "cli":
         d["cli"] = {k: c.get(k) for k in ("bin", "command_template", "auth", "login_command", "install",
                                          "verified_version", "output_format", "confirm_required",
@@ -143,29 +146,7 @@ def validate_payload(data: dict, creating: bool, existing: Tool | None = None) -
                 errs.append({"field": "config.output_example", "message": "出参示例必须是合法 JSON"})
         cfg = {"url": url, "method": m, "auth": a, "output_example": oe}
     elif t == "mcp":
-        srv = str(cfg_in.get("mcp_server") or "").strip()
-        if not re.match(r"^https?://\S+$", srv):
-            errs.append({"field": "config.mcp_server", "message": "MCP Server URL 必须是 http(s) 地址"})
-        tn = str(cfg_in.get("mcp_tool") or "").strip()
-        if not tn:
-            errs.append({"field": "config.mcp_tool", "message": "MCP 工具名必填"})
-        sch = cfg_in.get("input_schema")
-        if isinstance(sch, str):
-            try:
-                sch = json.loads(sch)
-            except ValueError:
-                sch = None
-                errs.append({"field": "config.input_schema", "message": "inputSchema 必须是合法 JSON"})
-        if sch is not None and (not isinstance(sch, dict) or sch.get("type") != "object"
-                                or not isinstance(sch.get("properties", {}), dict)):
-            errs.append({"field": "config.input_schema", "message": "inputSchema 必须是 type=object 的 JSON Schema"})
-            sch = None
-        if sch is None and not any(e["field"] == "config.input_schema" for e in errs):
-            errs.append({"field": "config.input_schema", "message": "inputSchema 必填"})
-        if isinstance(sch, dict):
-            params = schema_params(sch)
-        cfg = {"mcp_server": srv, "mcp_tool": tn, "input_schema": sch,
-               "output_example": str(cfg_in.get("output_example") or "")}
+        errs.append({"field": "type", "message": "MCP 工具请在「注册 MCP 服务」里登记服务后同步工具，不能单独注册或改成 MCP 类型"})
     elif t == "cli":
         b = str(cfg_in.get("bin") or "").strip()
         tpl = str(cfg_in.get("command_template") or "").strip()
@@ -225,6 +206,8 @@ def update(db: Session, name: str, data: dict, actor: Actor) -> Tool:
     t = get(db, name)
     if t.source == "builtin":
         raise forbidden("平台内置工具由平台提供，不可编辑", "BUILTIN_READONLY")
+    if t.type == "mcp":
+        raise unprocessable("MCP 子工具的说明与入参来自同步，这里只能启停、设置写操作确认（PATCH）", "MCP_TOOL_SYNCED")
     if data.get("name") and data["name"] != name:
         raise unprocessable("工具名注册后不可修改")
     v = validate_payload({**data, "name": name}, False, t)
@@ -259,6 +242,8 @@ def delete(db: Session, name: str, actor: Actor) -> None:
     t = get(db, name)
     if t.source == "builtin":
         raise forbidden("平台内置工具不可删除", "BUILTIN_READONLY")
+    if t.type == "mcp":
+        raise unprocessable("MCP 子工具随服务同步维护，不需要的请停用；删除整个服务请在服务上操作", "MCP_TOOL_SYNCED")
     users = intent_svc.users_of_tool(db, name)
     if users:
         raise conflict(f"工具 {name} 正被 {len(users)} 个意图使用，请先在意图中移除", "TOOL_IN_USE",
@@ -337,8 +322,10 @@ def preview(t: Tool, values: dict, space_id: str | None = None) -> dict:
         out["request"] = req
         out["response_example"] = c.get("output_example") or None
     elif t.type == "mcp":
-        out["request"] = {"server": c.get("mcp_server"), "jsonrpc": "2.0", "method": "tools/call",
-                          "params": {"name": c.get("mcp_tool"), "arguments": args}}
+        from .mcp_servers import conn_dict
+        out["request"] = {"server": conn_dict(t.server_ref) if t.server_ref else None, "jsonrpc": "2.0",
+                          "method": "tools/call", "params": {"name": c.get("mcp_tool"), "arguments": args},
+                          "confirm_required": bool(c.get("confirm_required"))}
         out["response_example"] = c.get("output_example") or None
     elif t.type == "cli":
         argv = render_cli(c.get("command_template", ""), {k: str(v) for k, v in args.items()})
