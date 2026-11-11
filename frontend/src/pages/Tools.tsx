@@ -6,6 +6,7 @@ import { Badge, Btn, ErrBox, Modal, toast, useAsync } from '../ui'
 import { credText, serverEnd, syncText } from './McpServers'
 import ToolEdit, { KINDS, TypeTag, WF_PLAT, pTypeLabel } from './ToolEdit'
 
+const PAGE = 100
 const API_ROWS = (demo as any).API_ROWS as string[][]
 const MCP_ROWS = (demo as any).MCP_ROWS as string[][]
 const MOCKV: Record<string, string> = { sku: 'SKU-88231', need_qty: '500', qty: '500', order_id: '202611090012345', new_price: '4800', reason: '破损', session_id: 'ww-session-7781', product_image: 'https://img.example.com/demo/sku-88231.jpg', platform: 'TikTok', site: 'US', style: '简约', title: 'Women Summer Dress No.1 Best Seller', text: 'No.1 Best ever summer dress, 100% effective', language: 'en', locale: 'en', query: 'TikTok 主图要求', kb_id: 'kb_spec', mode: 'merge', since_version: '6', task: 'main', prompt: '白底主图，产品居中，柔和阴影', ratio: '1:1', image_url: 'https://img.example.com/demo/sku-88231.jpg', color: '白色', target_language: 'en', video_url: 'https://video.example.com/demo.mp4' }
@@ -25,7 +26,7 @@ function End({ t }: { t: any }) {
   if (t.source === 'builtin') return <><div className="mono" style={s}>{t.endpoints.map((e: string) => <div key={e}>{e}</div>)}</div>
     {t.mcp_tools.length > 0 && <div className="muted" style={s}>MCP：{t.mcp_tools.join('、')}</div>}
     <div className="muted" style={s}>{t.space_scoped ? '按空间：需 X-Space-Id' : '全局：不需要 X-Space-Id'}</div></>
-  if (t.type === 'cli') return <><div className="mono" style={s}>{t.cli.command_template}</div><div className="muted" style={s}>鉴权：{t.cli.auth} · 输出 {t.cli.output_format === 'json' ? 'JSON' : '纯文本'}</div></>
+  if (t.type === 'cli') return <><div className="mono" style={s}>{t.cli.command_template}</div>{t.cli.pack && <div className="muted" style={s}>{t.cli.pack_name || t.cli.pack}{t.cli.group && ` › ${t.cli.group}`}</div>}<div className="muted" style={s}>鉴权：{t.cli.auth}{t.cli.auth_env && <>（或 <span className="mono">${t.cli.auth_env}</span>）</>} · 输出 {t.cli.output_format === 'json' ? 'JSON' : '纯文本'}</div></>
   if (t.type === 'skill') return t.skill?.files?.length ? <div className="muted" style={s}>技能包 v{t.skill.version} · {t.skill.files.length} 个文件</div> : <div style={s}><Badge c="y">待上传技能包</Badge></div>
   if (t.type === 'workflow') { const w = t.workflow || {}; return <div className="muted" style={s}>{WF_PLAT[w.platform]}{w.platform === 'coze' ? ` · ${w.region} · ${w.workflow_id}` : w.platform === 'dify' ? ` · ${w.base_url}` : ` · ${w.url}`} · {w.response_mode === 'streaming' ? '流式' : '同步'}</div> }
   if (t.type === 'mcp') return <div className="mono" style={s}>tools/call {t.mcp_tool}</div>
@@ -40,13 +41,22 @@ function ToolList() {
   const [edit, setEdit] = useState<{ tool?: any; server?: any } | null>(null)
   const [test, setTest] = useState<any>(null)
   const [open, setOpen] = useState<Record<string, boolean>>({})
+  const [q, setQ] = useState('')
+  const [pk, setPk] = useState('')
+  const [lim, setLim] = useState(PAGE)
+  useEffect(() => setLim(PAGE), [q, pk, tf, sf])
   if (!data) return <div className="loading">加载中…</div>
   const [all, servers] = data as [any[], any[]]
   const nb = all.filter((t: any) => t.source === 'builtin').length
   const nbSrv = servers.filter((v: any) => v.source === 'builtin').length
   const flat = all.filter((t: any) => t.type !== 'mcp')
-  const ts = flat.filter((t: any) => (!tf || t.type === tf) && (!sf || t.source === sf))
-  const ss = servers.filter((v: any) => (!tf || tf === 'mcp') && (!sf || v.source === sf))
+  const kw = q.trim().toLowerCase()
+  const hit = (...xs: string[]) => !kw || xs.some(x => (x || '').toLowerCase().includes(kw))
+  const packs: [string, string, number][] = Object.values(flat.filter((t: any) => t.cli?.pack).reduce((m: any, t: any) => {
+    (m[t.cli.pack] ||= [t.cli.pack, t.cli.pack_name || t.cli.pack, 0])[2]++; return m }, {}))
+  const ts = flat.filter((t: any) => (!tf || t.type === tf) && (!sf || t.source === sf) && (!pk || t.cli?.pack === pk)
+    && hit(t.name, t.display_name, t.description, t.cli?.command_template, t.cli?.group))
+  const ss = servers.filter((v: any) => (!tf || tf === 'mcp') && (!sf || v.source === sf) && !pk && hit(v.name, v.display_name, v.description))
   const subs = (v: any) => all.filter((t: any) => t.server === v.name)
   const cnt = (k: string) => k === 'mcp' ? servers.length : flat.filter((t: any) => t.type === k).length
   const fb = (id: string, lab: string, list: [string, string, number][], cur: string, set: (x: string) => void) =>
@@ -69,14 +79,20 @@ function ToolList() {
     <div className="card"><div className="row"><span className="sp" />
       {canEdit && <Btn p id="toolNew" onClick={() => setEdit({})}>＋ 注册工具</Btn>}</div>
       {fb('toolSF', '按来源：', [['', '全部', flat.length + servers.length], ['external', '外部', flat.length - nb + servers.length - nbSrv], ['builtin', '平台内置', nb + nbSrv]], sf, setSf)}
-      {fb('toolTF', '按类型：', [['', '全部', flat.length + servers.length], ...KINDS.map(([k, l]) => [k, l, cnt(k)] as [string, string, number])], tf, setTf)}</div>
+      {fb('toolTF', '按类型：', [['', '全部', flat.length + servers.length], ...KINDS.map(([k, l]) => [k, l, cnt(k)] as [string, string, number])], tf, setTf)}
+      <div className="row" style={{ marginTop: 8 }}>
+        {packs.length > 0 && <select id="toolPack" value={pk} onChange={e => setPk(e.target.value)}><option value="">全部 CLI 命令包</option>
+          {packs.map(([k, l, n]) => <option key={k} value={k}>{l}（{n}）</option>)}</select>}
+        <input type="text" id="toolQ" value={q} onChange={e => setQ(e.target.value)} placeholder="搜索工具名 / 描述 / 命令" style={{ width: 260 }} />
+        <span className="muted">{ts.length + ss.length} 个</span></div></div>
     <div className="card" style={{ padding: 0 }}><table id="toolTbl"><thead><tr><th>工具</th><th>类型</th><th>来源</th><th>描述</th><th>接入</th><th>入参</th><th>被意图使用</th><th>操作</th></tr></thead><tbody>
-      {ts.map((t: any) => <tr key={t.name} data-tool={t.name}><td><b>{t.display_name}</b><div className="mono">{t.name}</div></td><td><TypeTag type={t.type} />{t.confirm_required && <div style={{ marginTop: 4 }}><Badge c="y">写操作需确认</Badge></div>}</td>
+      {ts.slice(0, lim).map((t: any) => <tr key={t.name} data-tool={t.name}><td><b>{t.display_name}</b><div className="mono">{t.name}</div></td><td><TypeTag type={t.type} />{t.confirm_required && <div style={{ marginTop: 4 }}><Badge c="y">写操作需确认</Badge></div>}</td>
         <td>{srcCell(t)}</td>
         <td className="muted">{t.description}</td><td><End t={t} /></td><td>{paramCell(t)}</td>
         <td>{usedBy(t.used_by)}</td>
         <td style={{ whiteSpace: 'nowrap' }}><Btn s onClick={() => setTest(t)}>测试调用</Btn> {t.source === 'builtin' ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>平台提供<br />不可编辑 / 删除</div>
           : canEdit && <><Btn s onClick={() => setEdit({ tool: t })}>编辑</Btn><div style={{ marginTop: 4, textAlign: 'right' }}><a style={{ color: '#dc2626', fontSize: 12 }} onClick={() => del(t)}>删除</a></div></>}</td></tr>)}
+      {ts.length > lim && <tr id="toolMore"><td colSpan={8} className="muted" style={{ textAlign: 'center' }}>已显示 {lim} / {ts.length} 个，可用上方搜索或命令包缩小范围 · <a onClick={() => setLim(lim + PAGE)}>再显示 {Math.min(PAGE, ts.length - lim)} 个</a></td></tr>}
       {ss.map((v: any) => { const sub = subs(v); const on = !!open[v.name]; const users = new Set(sub.flatMap((t: any) => (t.used_by || []).map((u: any) => u.code))); return [
         <tr key={'s' + v.name} className="srvrow" data-server={v.name}><td onClick={() => setOpen({ ...open, [v.name]: !on })}><span className="caret">{on ? '▾' : '▸'}</span><b>{v.display_name}</b><div className="mono" style={{ paddingLeft: 14 }}>{v.name}</div></td>
           <td><Badge c="p">MCP 服务</Badge><div className="muted" style={{ marginTop: 4 }}><a onClick={() => setOpen({ ...open, [v.name]: !on })}>{v.tool_count} 个工具</a></div></td>

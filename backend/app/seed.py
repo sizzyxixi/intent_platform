@@ -4,6 +4,8 @@
   python -m app.seed               # 空库时导入；已有数据则跳过
   python -m app.seed --reset       # 清空所有业务表后重新导入（会丢数据，仅用于演示/测试环境）
   python -m app.seed --admin-only  # 只确保初始管理员存在
+工具：默认只建平台内置工具，并按 seed/westmonth 快照登记西之月 xclaw-cli 的全部命令和技能；
+     demo 的示例外部工具只在 --demo-tools 时导入（e2e 用）。
 演示用 3 个 API Key 会生成新的随机 Token，只在本次输出里打印一次。
 """
 import argparse
@@ -50,8 +52,15 @@ def _t(s, default=None):
     return parse_local(s) or default or utcnow()
 
 
-def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
+def seed(db: Session, data: dict, with_keys: bool = True, demo_tools: bool = True) -> dict:
+    """demo_tools=False：不导入 demo 里的示例外部工具 / MCP 服务（只保留平台内置），意图里对它们的关联一并去掉。"""
     st = data["state"]
+    if not demo_tools:
+        st = {**st, "tools": [t for t in st["tools"] if t.get("builtin")],
+              "mcpServers": [v for v in st.get("mcpServers") or [] if v.get("builtin")]}
+        keep = {t["name"] for t in st["tools"]}
+        st["intents"] = {k: {**it, "tools": [b for b in it.get("tools") or [] if b["name"] in keep]}
+                         for k, it in st["intents"].items()}
     base = get_settings().public_base_url.rstrip("/")
     trees = {"cs": data["TREE"], "mc": data["MC_TREE"]}
     leaf: dict[tuple[str, str, str], int] = {}
@@ -260,6 +269,10 @@ def main(argv=None) -> int:
     ap.add_argument("--demo-keys", choices=["auto", "yes", "no"], default="auto",
                     help="是否创建 demo 的 3 个 API Key；auto=非生产环境创建，生产环境不创建")
     ap.add_argument("--tokens-out", help="把演示 Key 的 Token 写入该文件（JSON），便于脚本使用")
+    ap.add_argument("--demo-tools", action="store_true",
+                    help="同时导入 demo 的示例外部工具 / MCP 服务（仅测试用）；默认只建平台内置工具")
+    ap.add_argument("--no-westmonth", action="store_true",
+                    help="不登记西之月 xclaw-cli 工具（默认按 seed/westmonth 快照登记）")
     a = ap.parse_args(argv)
     with SessionLocal() as db:
         if a.reset:
@@ -272,7 +285,14 @@ def main(argv=None) -> int:
                 print("已有数据，跳过种子导入（如需重建用 --reset）")
             else:
                 wk = a.demo_keys == "yes" or (a.demo_keys == "auto" and get_settings().env != "production")
-                tokens = seed(db, json.loads(Path(a.file).read_text(encoding="utf-8")), with_keys=wk)
+                tokens = seed(db, json.loads(Path(a.file).read_text(encoding="utf-8")), with_keys=wk,
+                              demo_tools=a.demo_tools)
+                if not a.no_westmonth:
+                    from . import westmonth
+                    cat, skills = westmonth.load_fixture()
+                    r = westmonth.import_westmonth(db, cat, skills, by="种子数据")
+                    db.commit()
+                    print(f"已登记西之月工具：CLI 命令 {r['cli_commands']} 个，技能 {len(r['skills'])} 个")
                 print("种子数据已导入：", json.dumps(counts(db), ensure_ascii=False))
                 if tokens:
                     print("演示 API Key（只显示这一次，请妥善保存）：")

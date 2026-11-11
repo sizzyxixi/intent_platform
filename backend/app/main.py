@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -36,12 +37,13 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     s = get_settings()
-    app = FastAPI(title="意图管理平台", version="0.15.0", lifespan=lifespan,
+    app = FastAPI(title="意图管理平台", version="0.16.0", lifespan=lifespan,
                   docs_url="/api/docs" if s.env != "production" else None, redoc_url=None,
                   openapi_url="/api/openapi.json" if s.env != "production" else None)
     if s.cors_origins:
         app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in s.cors_origins.split(",") if o.strip()],
                            allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(GZipMiddleware, minimum_size=2048)  # 工具目录（数千个 CLI 命令）等大响应压缩传输
     errors.install(app)
 
     @app.get("/healthz")

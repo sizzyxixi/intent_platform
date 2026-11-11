@@ -1,6 +1,6 @@
-# 意图管理平台（生产版 v0.15）
+# 意图管理平台（生产版 v0.16）
 
-基于 demo（`intent-platform/index.html` + `src3/`）开发的生产可用版本。界面、交互和种子数据以 demo 为准，接口严格按 `docs/openapi.yaml` 0.15.0 实现。
+基于 demo（`intent-platform/index.html` + `src3/`）开发的生产可用版本。界面、交互和种子数据以 demo 为准，接口严格按 `docs/openapi.yaml` 0.16.0 实现。
 
 - **意图管理**：意图列表（左侧第一层分类筛选，列按层级名生成）/ 槽位 / 空间设置（含分类层级：0～5 层分类 + 意图，层数与名称按空间配置，插入 / 删除层级先预览再确认）/ 导入记录。「新建意图」弹窗有「管理分类」入口直达分类层级设置。槽位类型含文件 / 图片。按业务空间（`cs` 1688 智能客服、`mc` Moonclaw）隔离意图和槽位。
 - **知识库**：全平台通用。可新建知识库、导入文档（异步构建）、编辑切片和标签、检索。
@@ -10,6 +10,12 @@
   - **工作流**：Dify（基址 + 应用 Key 环境变量，`POST {基址}/workflows/run`，user 常量或会话用户）、Coze（区域、工作流 ID、令牌环境变量、run / stream_run、可选 workflow_version，高级里 is_async / bot_id / app_id / ext）、通用 HTTP；入参从平台同步（临时密钥在线读取或粘贴 JSON，默认只读，可微调）；可选输出字段映射。
   - 意图里两级选择工具（类型 → 工具，>5 个可筛选，MCP 下钻多选子工具）；技能不做入参映射，工作流必填入参须映射或有默认值，文件入参只能映射到文件 / 图片槽位。
   - 「接入与密钥」页管理 API Key，并提供 REST、MCP 接入说明和运行时配置下载。
+- **已接入的外部工具：西之月 xclaw-cli**（https://open.westmonth.com/cli，CLI 2.2.10，命令目录 release 1.9.22）：
+  - 官方命令目录（`xclaw-cli catalog index --json`）里的 **7037 条命令**全部登记为 CLI 命令工具：商城 698、运营 108、第三方平台 OpenAPI 转发 6212、数字供应链 18、商品 1；命令模板、入参（必填 / 类型 / 说明）、写操作需确认都取自官方目录。
+  - 官方 **5 个 Skills**（xclaw-cli-assistant / xclaw-mall / xclaw-operate / xclaw-platform / xclaw-supply，v2.2.1）登记为技能。
+  - 鉴权：`xclaw-cli auth login`（OAuth），或在 Bot 运行环境注入 `XCLAW_UMC_TOKEN`。
+  - 快照在 `backend/seed/westmonth/`；刷新：先 `xclaw-cli catalog index --json > index.json` 并下载 `skills list` 给出的 zip，再 `python -m app.westmonth refresh-fixture --catalog index.json --skills-dir <zip目录> --cli-version <版本>`，最后 `python -m app.westmonth import`（幂等；快照里没有了的命令若仍被意图使用则保留）。
+  - 工具中心按「CLI 命令包」筛选、搜索、分页显示；意图里选 CLI 时可先选「命令包 › 业务分组」。
 - **用户与审计**（仅管理员）：账号分 admin / editor / viewer 三种角色；所有写操作都记审计日志。
 
 ## 技术栈
@@ -65,6 +71,8 @@ cd frontend && npm ci && npm run dev         # http://localhost:5173，/api、/m
 - `--admin-only`：只创建管理员。
 - `--demo-keys yes|no|auto`：是否创建演示 Key，默认 `auto`，即生产环境不创建。
 - `--tokens-out f.json`：把演示 Key 的 Token 写入文件。
+- 工具：默认只建平台内置工具，并登记西之月 xclaw-cli 工具；`--demo-tools` 才导入 demo 的示例外部工具（e2e 用），`--no-westmonth` 跳过西之月。
+- 已有库清掉示例工具：`python -m app.westmonth purge-examples --backup backup.json --yes`（删除全部外部工具 / 外部 MCP 服务 / 技能包并移除意图关联，先写备份；因此没有任何知识和工具的已启用意图会转为草稿）。
 
 ## 部署（Docker Compose）
 

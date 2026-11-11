@@ -14,6 +14,7 @@ type Bind = { tool: string; param_map: Record<string, { source: string; value: s
 const CTX = ['session_id', 'buyer_id', 'order_id', 'sku']
 const FILE_SLOT = ['文件', '图片']
 const PICK_TYPES: [string, string][] = [['http', 'API 接口'], ['mcp', 'MCP'], ['cli', 'CLI 命令'], ['skill', '技能'], ['workflow', '工作流'], ['builtin', '平台内置']]
+const MAX_OPTS = 300
 
 export default function IntentEditor({ code, onClose, onSaved }: { code: string; onClose: () => void; onSaved: () => void }) {
   const { space, canEdit, reloadSpaces } = useSession()
@@ -26,6 +27,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   const [toolQ, setToolQ] = useState('')
   const [pickTy0, setPickTy] = useState(() => sessionStorage.getItem('pickToolType') || '')
   const [mcpPick, setMcpPick] = useState<string | null>(null)
+  const [cliGrp, setCliGrp] = useState('')
   const body = useRef<HTMLDivElement>(null)
   const [slots, reloadSlots] = useAsync(() => api.get(`/spaces/${space.id}/slots`), [space.id])
   const [tax] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
@@ -177,20 +179,34 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
             </div>
           })}
           {canEdit && (() => {
-            const items: any[] = pickTy === 'mcp' ? groups.mcp : (groups[pickTy] || [])
+            const all: any[] = pickTy === 'mcp' ? groups.mcp : (groups[pickTy] || [])
+            // CLI 命令多（如按官方目录接入的整套 CLI）时，按「命令包 › 业务分组」再分一级
+            const grpOf = (t: any) => t.cli?.pack ? [t.cli.pack, t.cli.pack_name || t.cli.pack, t.cli.group || ''] : null
+            const cliGroups: [string, string, number][] = pickTy !== 'cli' ? [] : Object.values(all.reduce((m: any, t: any) => {
+              const g = grpOf(t); if (!g) return m
+              ;(m[g[0]] ||= [g[0], g[1], 0])[2]++
+              if (g[2]) (m[g[0] + '|' + g[2]] ||= [g[0] + '|' + g[2], `${g[1]} › ${g[2]}`, 0])[2]++
+              return m }, {})).sort((a: any, b: any) => a[0].localeCompare(b[0])) as any
+            const grp = cliGroups.some(g => g[0] === cliGrp) ? cliGrp : ''
+            const items = !grp ? all : all.filter((t: any) => { const g = grpOf(t); return g && (grp.includes('|') ? g[0] + '|' + g[2] === grp : g[0] === grp) })
             const k = toolQ.trim().toLowerCase()
-            const shown = items.filter((x: any) => !k || (pickTy === 'mcp' ? [x.name, x.display_name] : [x.name, x.display_name, x.description]).some((s: string) => (s || '').toLowerCase().includes(k)))
+            const matched = items.filter((x: any) => !k || (pickTy === 'mcp' ? [x.name, x.display_name] : [x.name, x.display_name, x.description, x.cli?.command_template]).some((s: string) => (s || '').toLowerCase().includes(k)))
+            const shown = matched.slice(0, MAX_OPTS)
             return <><div className="row" id="ePicker" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <select id="eToolType" value={pickTy} onChange={e => { setPickTy(e.target.value); sessionStorage.setItem('pickToolType', e.target.value); setToolSel(''); setToolQ('') }}>
+              <select id="eToolType" value={pickTy} onChange={e => { setPickTy(e.target.value); sessionStorage.setItem('pickToolType', e.target.value); setToolSel(''); setToolQ(''); setCliGrp('') }}>
                 <option value="">— 选择类型 —</option>
                 {PICK_TYPES.filter(([k2]) => groups[k2]?.length).map(([k2, l]) => <option key={k2} value={k2}>{l}（{groups[k2].length}）</option>)}</select>
-              <select id="eTool" value={toolSel} disabled={!pickTy} onChange={e => setToolSel(e.target.value)}>
+              {cliGroups.length > 0 && <select id="eCliGrp" value={grp} onChange={e => { setCliGrp(e.target.value); setToolSel('') }}>
+                <option value="">全部命令包（{all.length}）</option>
+                {cliGroups.map(([g, l, n]) => <option key={g} value={g}>{g.includes('|') ? '　' : ''}{l}（{n}）</option>)}</select>}
+              <select id="eTool" value={toolSel} disabled={!pickTy} onChange={e => setToolSel(e.target.value)} style={{ maxWidth: 420 }}>
                 <option value="">{pickTy === 'mcp' ? '— 选择 MCP 服务 —' : '— 选择工具 —'}</option>
                 {pickTy === 'mcp' ? shown.map((v: any) => <option key={v.name} value={'srv:' + v.name}>{v.display_name}（{v.name} · {v.avail} 个可用工具）▸</option>)
-                  : shown.map((t: any) => <option key={t.name} value={t.name}>{t.display_name}（{t.name}）</option>)}</select>
-              {items.length > 5 && <input type="text" id="eToolQ" value={toolQ} onChange={e => setToolQ(e.target.value)} placeholder="筛选" style={{ width: 140 }} />}
+                  : shown.map((t: any) => <option key={t.name} value={t.name}>{t.display_name}（{t.name}）</option>)}
+                {matched.length > shown.length && <option disabled value="__more">…共 {matched.length} 个，只列出前 {MAX_OPTS} 个，请选分组或筛选</option>}</select>
+              {all.length > 5 && <input type="text" id="eToolQ" value={toolQ} onChange={e => setToolQ(e.target.value)} placeholder="筛选" style={{ width: 140 }} />}
               <Btn s id="toolAdd" onClick={addTool}>＋ 关联</Btn></div>
-              <div className="muted" style={{ marginTop: 4 }}>先选类型再选工具。技能无需映射入参；工作流按已同步入参映射（必填须映射或有默认值）；MCP 先选服务，再点「关联」下钻多选子工具；维护类平台内置工具不可选</div></>
+              <div className="muted" style={{ marginTop: 4 }}>先选类型再选工具。技能无需映射入参；工作流按已同步入参映射（必填须映射或有默认值）；MCP 先选服务，再点「关联」下钻多选子工具；CLI 命令多时可先选命令包 / 业务分组；维护类平台内置工具不可选</div></>
           })()}
         </div>
 

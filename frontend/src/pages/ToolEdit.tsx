@@ -15,12 +15,14 @@ const KIND_HINT: Record<string, string> = { mcp: '登记 MCP 服务并同步其�
 const TYPE_C: Record<string, string> = { http: 'b', cli: 'n', skill: 'g', workflow: 'o', mcp: 'p' }
 export const TypeTag = ({ type }: { type: string }) => <Badge c={TYPE_C[type] || 'n'}>{KIND_LABEL[type] || type}</Badge>
 
+const CLI_META = ['pack', 'pack_name', 'group', 'source_ref', 'risk_level']
+
 type P = { name: string; type: string; required: boolean; description: string; default?: string }
 
 function blankTool(owner: string) {
   return {
     name: '', display_name: '', description: '', owner, url: '', method: 'GET', auth: '无', output_example: '{}', output_description: '',
-    bin: '', command_template: '', cli_auth: '无', login_command: '', install: '', verified_version: '', output_format: 'json', confirm_required: false, secret: '',
+    bin: '', command_template: '', cli_auth: '无', cli_auth_env: '', cli_meta: {} as Record<string, string>, login_command: '', install: '', verified_version: '', output_format: 'json', confirm_required: false, secret: '',
     wf: { platform: 'dify', response_mode: 'blocking', base_url: 'https://api.dify.ai/v1', auth_env: 'DIFY_APP_KEY', user_mode: 'constant', user_value: 'intent-bot',
       region: 'coze.cn', workflow_id: '', workflow_version: '', is_async: false, bot_id: '', app_id: '', ext: '', url: '', wmethod: 'POST', wauth: '无',
       timeout_sec: '', output_mapping: [] as { from: string; as: string }[], params_locked: true },
@@ -40,6 +42,7 @@ function toolForm(t: any) {
     ...b, name: t.name, display_name: t.display_name, description: t.description, url: t.url || '', method: t.method || 'GET', auth: t.auth || '无',
     output_example: t.output_example || (t.type === 'http' ? '{}' : ''), output_description: t.output_description || t.cli?.output_description || c.output_description || '',
     bin: t.cli?.bin || '', command_template: t.cli?.command_template || '', cli_auth: t.cli?.auth || '无', login_command: t.cli?.login_command || '',
+    cli_auth_env: t.cli?.auth_env || '', cli_meta: Object.fromEntries(CLI_META.filter(k => t.cli?.[k]).map(k => [k, t.cli[k]])),
     install: t.cli?.install || '', verified_version: t.cli?.verified_version || '', output_format: t.cli?.output_format || 'json',
     confirm_required: t.type === 'workflow' ? !!c.confirm_required : !!t.cli?.confirm_required, wf,
   }
@@ -89,7 +92,7 @@ export default function ToolEdit({ tool, server, onClose, onDone }: { tool?: any
     if (kind === 'mcp') return saveMcp()
     let config: any
     if (kind === 'http') config = { url: f.url, method: f.method, auth: f.auth, output_example: f.output_example }
-    else if (kind === 'cli') config = { bin: f.bin, command_template: f.command_template, auth: f.cli_auth, login_command: f.login_command, install: f.install, verified_version: f.verified_version, output_format: f.output_format, confirm_required: f.confirm_required, output_description: f.output_description }
+    else if (kind === 'cli') config = { ...f.cli_meta, bin: f.bin, command_template: f.command_template, auth: f.cli_auth, auth_env: f.cli_auth_env, login_command: f.login_command, install: f.install, verified_version: f.verified_version, output_format: f.output_format, confirm_required: f.confirm_required, output_description: f.output_description }
     else if (kind === 'skill') {
       if (!tool && !pkg) { setErr(['请先上传包含 SKILL.md 的技能文件夹或 .zip']); return }
       config = pkg ? { package_id: pkg.package_id } : {}
@@ -157,9 +160,12 @@ export default function ToolEdit({ tool, server, onClose, onDone }: { tool?: any
         <div className="grid g2"><div className="f"><label>可执行程序 *</label><input type="text" id="tBin" value={f.bin} onChange={set('bin')} placeholder="mycli" /></div>
           <div className="f"><label>已验证版本</label><input type="text" id="tCv" value={f.verified_version} onChange={set('verified_version')} placeholder="1.0.0" /></div></div>
         <div className="f"><label>命令 / 子命令模板 *</label><input type="text" id="tCmd" className="mono" value={f.command_template} onChange={set('command_template')} placeholder="mycli product get --sku {sku} --json" />
-          <div className="muted">用 {'{参数名}'} 引用下方入参；选填参数为空时，连同它前面的 --选项 一起省略</div></div>
+          <div className="muted">用 {'{参数名}'} 引用下方入参；选填参数为空时，连同它前面的 --选项 一起省略</div>
+          {f.cli_meta.source_ref && <div className="muted" id="tCsrc">来源：{f.cli_meta.pack_name || f.cli_meta.pack}{f.cli_meta.group && ` › ${f.cli_meta.group}`} · <span className="mono">{f.cli_meta.source_ref}</span>（按官方命令目录接入）</div>}</div>
         <div className="grid g2"><div className="f"><label>鉴权方式</label><select id="tCa" value={f.cli_auth} onChange={set('cli_auth')}>{['无', 'CLI 内置登录（OAuth）', '环境变量 Token'].map(x => <option key={x}>{x}</option>)}</select></div>
           <div className="f"><label>登录 / 鉴权命令</label><input type="text" id="tLg" className="mono" value={f.login_command} onChange={set('login_command')} placeholder="mycli auth login" /></div></div>
+        <div className="f"><label>凭据环境变量（可选）</label><input type="text" id="tCe" className="mono" value={f.cli_auth_env} onChange={set('cli_auth_env')} placeholder="MYCLI_TOKEN" />
+          <div className="muted">Bot 运行环境可用这个环境变量注入 Token，代替交互式登录；只登记变量名，不保存值</div></div>
         <div className="grid g2"><div className="f"><label>安装方式（所需环境）</label><input type="text" id="tIn" className="mono" value={f.install} onChange={set('install')} placeholder="curl -fsSL https://.../install | bash" /></div>
           <div className="f"><label>输出格式</label><select id="tOf" value={f.output_format} onChange={set('output_format')}><option value="json">JSON</option><option value="text">纯文本</option></select></div></div>
         <div className="f"><label><input type="checkbox" id="tCf" checked={f.confirm_required} onChange={set('confirm_required')} /> 写操作，Bot 执行前需用户确认</label></div></>}

@@ -24,7 +24,7 @@ with eng2.connect() as c:
     c.execute(sa.text("drop schema public cascade; create schema public"))
 PY
 "$PY" -m alembic upgrade head
-"$PY" -m app.seed --reset --tokens-out /tmp/e2e_tokens.json
+"$PY" -m app.seed --reset --demo-tools --no-westmonth --tokens-out /tmp/e2e_tokens.json
 # 测试用最小 MCP 服务（3 个工具），供「同步工具 / 差异 / 下钻」用例使用
 "$PY" tests/mini_mcp_server.py --port "${E2E_MCP_PORT:-8766}" &
 MCP_PID=$!

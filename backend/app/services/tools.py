@@ -19,6 +19,12 @@ from .common import TOOL_NAME_RE, Actor, iso, utcnow
 TYPE_LABEL = {"http": "API 接口", "mcp": "MCP 工具", "cli": "CLI 命令", "skill": "技能", "workflow": "工作流"}
 HTTP_AUTH = ("无", "API Key", "Bearer Token", "OAuth2")
 CLI_AUTH = ("无", "CLI 内置登录（OAuth）", "环境变量 Token")
+# CLI 命令的来源 / 分组信息（按官方命令目录批量接入时写入，控制台编辑时原样保留）：
+# pack=解决方案包编码 pack_name=包名 group=业务分组 source_ref=来源命令 ID risk_level=来源标注的风险等级
+CLI_META = ("pack", "pack_name", "group", "source_ref", "risk_level")
+CLI_KEYS = ("bin", "command_template", "auth", "auth_env", "login_command", "install", "verified_version",
+            "output_format", "confirm_required", "output_description") + CLI_META
+ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 PARAM_TYPES = ("string", "number", "boolean", "file", "file_list", "string[]")
 PARAM_TYPE_LABEL = {"file": "文件", "file_list": "文件列表"}
 PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -75,9 +81,8 @@ def api_dict(t: Tool) -> dict:
                   "mcp_tool": c.get("mcp_tool", ""), "confirm_required": bool(c.get("confirm_required")),
                   "enabled": t.enabled, "remote_missing": t.remote_missing})
     elif t.type == "cli":
-        d["cli"] = {k: c.get(k) for k in ("bin", "command_template", "auth", "login_command", "install",
-                                         "verified_version", "output_format", "confirm_required",
-                                         "output_description")}
+        d["cli"] = {k: c.get(k) for k in CLI_KEYS if k not in CLI_META and k != "auth_env"}
+        d["cli"].update({k: c[k] for k in ("auth_env",) + CLI_META if c.get(k)})
         d["confirm_required"] = bool(c.get("confirm_required"))
     elif t.type == "skill":
         d["skill"] = {"name": c.get("skill_name") or t.name, "version": int(c.get("version") or 0),
@@ -164,7 +169,7 @@ def validate_payload(data: dict, creating: bool, existing: Tool | None = None) -
     if existing and data.get("type") and data["type"] != existing.type:
         errs.append({"field": "type", "message": "工具类型注册后不可修改"})
     name = (data.get("name") or (existing.name if existing else "")).strip()
-    if creating and (not TOOL_NAME_RE.match(name) or len(name) > 64):
+    if creating and (not TOOL_NAME_RE.match(name) or len(name) > 120):
         errs.append({"field": "name", "message": "工具名为小写英文/数字/下划线，以字母开头"})
     for f, label in (("display_name", "显示名"), ("description", "描述"), ("owner", "负责人")):
         if f == "description" and t == "skill":
@@ -212,6 +217,9 @@ def validate_payload(data: dict, creating: bool, existing: Tool | None = None) -
         a = cfg_in.get("auth") or "无"
         if a not in CLI_AUTH:
             errs.append({"field": "config.auth", "message": "鉴权方式不支持"})
+        ae = str(cfg_in.get("auth_env") or "").strip()
+        if ae and not ENV_RE.match(ae):
+            errs.append({"field": "config.auth_env", "message": "凭据环境变量名为大写英文/数字/下划线"})
         of = cfg_in.get("output_format") or "json"
         if of not in ("json", "text"):
             errs.append({"field": "config.output_format", "message": "输出格式为 json / text"})
@@ -220,7 +228,8 @@ def validate_payload(data: dict, creating: bool, existing: Tool | None = None) -
                "install": str(cfg_in.get("install") or "").strip(),
                "verified_version": str(cfg_in.get("verified_version") or "").strip(),
                "output_format": of, "confirm_required": bool(cfg_in.get("confirm_required")),
-               "output_description": str(cfg_in.get("output_description") or "").strip()}
+               "output_description": str(cfg_in.get("output_description") or "").strip(), "auth_env": ae}
+        cfg.update({k: str(cfg_in[k]).strip()[:200] for k in CLI_META if str(cfg_in.get(k) or "").strip()})
     elif t == "skill":
         params = []
         cfg = {"package_id": cfg_in.get("package_id")}

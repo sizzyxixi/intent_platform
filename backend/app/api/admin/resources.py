@@ -163,7 +163,13 @@ def get_import(import_id: str, actor=Depends(VIEW), db: Session = Depends(get_db
 @router.get("/tools")
 def list_tools(source: str | None = None, actor=Depends(VIEW), db: Session = Depends(get_db)):
     sp = kb_svc.space_names(db)
-    return [tool_svc.admin_dict(t, intent_svc.users_of_tool(db, t.name), sp) for t in tool_svc.list_tools(db, source)]
+    usage = intent_svc.tool_usage(db)
+    out = []
+    for t in tool_svc.list_tools(db, source):
+        d = tool_svc.admin_dict(t, usage.get(t.name, []), sp)
+        d.pop("input_schema", None)  # 列表不带（与 params 重复，工具多时体积翻倍）；详情接口仍返回
+        out.append(d)
+    return out
 
 
 @router.post("/skill-packages", status_code=201)

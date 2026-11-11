@@ -200,7 +200,7 @@ class Tool(Base):
     # MCP 子工具的 name = {服务名}.{远端工具名}
     name: Mapped[str] = mapped_column(String(120), primary_key=True)
     type: Mapped[str] = mapped_column(String(8))  # http / mcp / cli / skill / workflow
-    display_name: Mapped[str] = mapped_column(String(100))
+    display_name: Mapped[str] = mapped_column(String(255))
     description: Mapped[str] = mapped_column(Text)
     params: Mapped[list] = mapped_column(JSONB, default=list)  # [{name,type,required,description}]
     source: Mapped[str] = mapped_column(String(10), default="external")  # external / builtin

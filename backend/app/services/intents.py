@@ -335,6 +335,16 @@ def users_of_tool(db: Session, name: str) -> list[Intent]:
                            .order_by(Intent.space_id, Intent.position)))
 
 
+def tool_usage(db: Session) -> dict[str, list[Intent]]:
+    """一次查询得到 {工具名: [使用它的意图]}（工具多时避免逐个查询）。"""
+    out: dict[str, list[Intent]] = {}
+    for it in db.scalars(select(Intent).where(func.jsonb_array_length(Intent.tools) > 0)
+                         .order_by(Intent.space_id, Intent.position)):
+        for n in dict.fromkeys(b.get("tool") for b in it.tools or []):
+            out.setdefault(n, []).append(it)
+    return out
+
+
 def users_of_kb(db: Session, kb_id: str, doc_id: str | None = None) -> list[Intent]:
     pat = {"kb_id": kb_id}
     if doc_id:

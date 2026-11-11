@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
-  version: 0.15.0
+  version: 0.16.0
   description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
 
     给 AI 的总规则：
@@ -1122,29 +1122,33 @@ paths:
                     - path: scripts/generate.py
                       size: 280
                     download_path: /api/v1/tools/gen_image_skill/skill-package
-                - name: xclaw_product_detail
-                  display_name: 西之月商品详情
+                - name: xclaw_mall_mall_product_rank_list_query
+                  display_name: 爆款排行数据列表
                   type: cli
-                  description: 用西之月 xclaw-cli 读取商城商品详情（可带图包）
+                  description: 爆款排行数据列表
                   params:
-                  - name: sku
-                    type: string
+                  - name: delivery_region_id
+                    type: number
                     required: true
-                  - name: locale
-                    type: string
-                    required: false
-                  - name: include_mainpicture
+                    description: 【区域id】特殊区域集  100=海外  1000=全部
+                  - name: nums
                     type: number
                     required: false
+                    description: 【前limit条数据】默认10
                   cli:
                     bin: xclaw-cli
-                    command_template: xclaw-cli mall mall-product detail get --sku {sku} --locale {locale} --include-mainpicture {include_mainpicture} --json
+                    command_template: xclaw-cli mall mall-product rank-list query --delivery-region-id {delivery_region_id} --nums {nums} --json
                     auth: CLI 内置登录（OAuth）
+                    auth_env: XCLAW_UMC_TOKEN
                     login_command: xclaw-cli auth login
                     install: curl -fsSL https://open.westmonth.com/install | bash
                     verified_version: 2.2.10
                     output_format: json
                     confirm_required: false
+                    pack: mall
+                    pack_name: 商城解决方案
+                    group: mall-product
+                    source_ref: mall.mall-product.rank-list.query
                   source: external
         '304':
           description: since_version 与当前版本相同，配置无变化
@@ -1952,7 +1956,7 @@ components:
               description: 可执行程序名
             command_template:
               type: string
-              example: xclaw-cli mall mall-product detail get --sku {sku} --locale {locale} --include-mainpicture {include_mainpicture} --json
+              example: xclaw-cli mall mall-product rank-list query --delivery-region-id {delivery_region_id} --nums {nums} --json
               description: 命令 / 子命令模板，{参数名} 引用入参；选填参数为空时连同其前面的 --选项 一起省略
             auth:
               type: string
@@ -1961,6 +1965,28 @@ components:
               - CLI 内置登录（OAuth）
               - 环境变量 Token
               description: 所需鉴权
+            auth_env:
+              type: string
+              example: XCLAW_UMC_TOKEN
+              description: 可选。Bot 运行环境可用该环境变量注入 Token 代替交互式登录（只给变量名，不含值）
+            pack:
+              type: string
+              example: mall
+              description: 可选。按官方命令目录批量接入时的命令包编码
+            pack_name:
+              type: string
+              example: 商城解决方案
+            group:
+              type: string
+              example: mall-product
+              description: 可选。命令包下的业务分组
+            source_ref:
+              type: string
+              example: mall.mall-product.rank-list.query
+              description: 可选。来源命令 ID（官方目录里的 operationId）
+            risk_level:
+              type: string
+              description: 可选。来源标注的风险等级（low / medium / high）
             login_command:
               type: string
               example: xclaw-cli auth login
