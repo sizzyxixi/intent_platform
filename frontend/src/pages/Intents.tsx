@@ -67,12 +67,12 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
         {canEdit && <Btn id="imOpen" onClick={() => setImOpen(true)}>导入意图</Btn>}
         {canEdit && <Btn p id="newIntent" onClick={() => setNewOpen(true)}>＋ 新建意图</Btn>}
       </div></div>
-      <div className="card" style={{ padding: 0 }}><table id="intentTbl"><thead><tr><th>编码</th>{catCols.map(n => <th key={n}>{n}</th>)}<th>{leafName}</th><th>例句</th><th>知识</th><th>工具</th><th>状态</th><th>操作</th></tr></thead>
+      <div className="card tblwrap" style={{ padding: 0 }}><table id="intentTbl" className="fixed" style={{ minWidth: 760 }}><colgroup><col style={{ width: 150 }} />{catCols.map(n => <col key={n} style={{ width: 76 }} />)}<col /><col style={{ width: 44 }} /><col style={{ width: 44 }} /><col style={{ width: 200 }} /><col style={{ width: 60 }} /><col style={{ width: 104 }} /></colgroup><thead><tr><th>编码</th>{catCols.map(n => <th key={n}>{n}</th>)}<th>{leafName}</th><th>例句</th><th>知识</th><th>工具</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>{!data ? <tr><td colSpan={8 + catCols.length} className="loading">加载中…</td></tr> : data.items.length ? data.items.map((c: any) => <tr key={c.code}>
           <td className="mono">{c.code}</td>{catCols.map((n, i) => <td key={n} className="muted">{c.category_path[i]?.name || '—'}</td>)}
-          <td><a onClick={() => onEdit(c.code)}>{c.name}</a><div className="muted">{(c.description || '').slice(0, 34)}</div></td>
+          <td><a onClick={() => onEdit(c.code)}>{c.name}</a><div className="muted clamp2" title={c.description}>{c.description || ''}</div></td>
           <td>{c.example_count}</td><td>{c.kb_count || <span className="muted">0</span>}</td>
-          <td>{c.tools.length ? c.tools.map((t: string) => <div key={t} className="mono">{t}</div>) : <span className="muted">0</span>}</td>
+          <td>{c.tools.length ? <div className="mono clamp3" style={{ fontSize: 11 }} title={c.tools.join('\n')}>{c.tools.map((t: string) => <div key={t}>{t}</div>)}</div> : <span className="muted">0</span>}</td>
           <td><Badge c={ST_C[c.status]}>{c.status}</Badge></td>
           <td style={{ whiteSpace: 'nowrap' }}><Btn s onClick={() => onEdit(c.code)}>{canEdit ? '编辑' : '查看'}</Btn>
             {canEdit && (c.status === '启用' ? <Btn s onClick={() => quick(c.code, '停用')}>停用</Btn> : <Btn s onClick={() => quick(c.code, '启用')}>启用</Btn>)}</td>

@@ -11,6 +11,10 @@ from .validation import RefIndex, effective_ask
 
 def chunk_title(c: Chunk) -> str:
     if c.cells:
+        # JSONB 不保留键顺序：按知识库表头第一列取标题
+        h = (c.document.kb.headers or []) if c.document is not None and c.document.kb is not None else []
+        if h and h[0] in c.cells:
+            return str(c.cells.get(h[0]) or "")
         return str(next(iter(c.cells.values()), "") or "")
     return c.content
 

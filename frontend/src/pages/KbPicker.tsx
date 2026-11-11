@@ -46,7 +46,8 @@ export default function KbPicker({ code, selected, onClose, onOk }: { code: stri
         return [<tr key={d.doc_id} style={{ background: '#f9fafb' }}><td><input type="checkbox" checked={!!sel[key(whole)]} onChange={e => toggle(whole, e.target.checked)} /></td>
           <td className="muted">{d.name}</td><td><b>整篇文档</b> <span className="muted">（{items.filter(c => c.doc_id === d.doc_id).length} 条，适合作为校验集）</span></td><td></td></tr>,
         ...cs.map(c => {
-          const title = c.cells ? String(Object.values(c.cells)[0] || '') : c.content
+          const h0 = kb.headers?.[0]
+          const title = c.cells ? String((h0 && c.cells[h0]) || Object.values(c.cells)[0] || '') : c.content
           const r: Ref = { kb_id: kbId, doc_id: d.doc_id, chunk_id: c.chunk_id, usage: 'reference', label: `${kb.name} / ${d.name} / #${c.order} ${title.slice(0, 18)}`, valid: true }
           return <tr key={c.chunk_id}><td><input type="checkbox" className="pkc" checked={!!sel[key(r)]} onChange={e => toggle(r, e.target.checked)} /></td>
             <td className="muted">{d.name}</td><td style={{ whiteSpace: 'pre-wrap' }}>{c.content.slice(0, 90)}</td><td><TagBadges tags={c.effective_tags} /></td></tr>
