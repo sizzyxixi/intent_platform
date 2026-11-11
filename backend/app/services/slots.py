@@ -50,7 +50,7 @@ def _validate(data: dict, creating: bool) -> dict:
     if creating or "type" in data:
         t = data.get("type") or "文本"
         if t not in SLOT_TYPES:
-            errs.append({"field": "type", "message": "类型应为 文本 / 数字 / 日期 / 枚举"})
+            errs.append({"field": "type", "message": "类型应为 文本 / 数字 / 日期 / 枚举 / 文件 / 图片"})
         out["type"] = t
     if "options" in data or creating:
         out["options"] = split_list(data.get("options") or [])

@@ -17,20 +17,22 @@ from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import SessionLocal
 from .models import (ApiKey, Chunk, Document, ImportRecord, Intent, IntentLog, KnowledgeBase, Setting, SlotDef, Space,
-                     Tool, User, Category, McpServer)
+                     Tool, User, Category, McpServer, SkillPackage)
 from .security import hash_password, new_api_token, token_hash, token_hint
 from .services.common import TZ_CN, parse_local, utcnow
 from .services.parsers import content_hash
 from .services.search import backend
+from .services import skills as skill_svc
 
 SEED_FILE = Path(__file__).resolve().parents[1] / "seed" / "demo_state.json"
 PREFIX = {"cs": "B", "mc": "M"}
 FINAL = {"转人工": "handoff_human", "交给通用助手": "general_assistant", "告知无法处理": "decline"}
-TOOL_TYPE = {"API 接口": "http", "MCP 工具": "mcp", "CLI 命令": "cli", "技能/工作流": "skill"}
+TOOL_TYPE = {"API 接口": "http", "MCP 工具": "mcp", "CLI 命令": "cli", "技能": "skill", "工作流": "workflow",
+             "技能/工作流": "skill"}
 KB_TYPE = {"表格": "表格知识库", "图文": "图文知识库-富文本"}
 USAGE = {"参考": "reference", "校验": "validate"}
 TABLES = ["intent_logs", "intents", "slots", "categories", "chunks", "documents", "knowledge_bases",
-          "tools", "mcp_servers", "import_records", "api_keys", "audit_logs", "idempotency_records", "rate_counters", "settings",
+          "skill_packages", "tools", "mcp_servers", "import_records", "api_keys", "audit_logs", "idempotency_records", "rate_counters", "settings",
           "spaces", "users"]
 
 
@@ -63,7 +65,7 @@ def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
                      max_slot_ask=rc["max_slot_ask"], tool_retry=rc["tool_retry"], final_action=fa,
                      clarify_prompt=rc["clarify_prompt"],
                      final_message=rc.get("final_msg") if fa == "decline" else None, position=pos,
-                     levels=["大类", "问题桶", "意图"]))
+                     levels=(st.get("levels") or {}).get(sp["id"]) or ["大类", "问题桶", "意图"]))
         db.flush()
         for i, l1 in enumerate(trees.get(sp["id"]) or data["GEN_TREE"]):
             a = Category(space_id=sp["id"], parent_id=None, depth=1, code=l1["c"], name=l1["n"], position=i)
@@ -98,54 +100,98 @@ def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
         db.flush()
         chunk_pks += [c.id for d in k.documents for c in d.chunks]
     backend().reindex(db, chunk_pks)
-    # 工具
-    mcp_servers: dict = {}
-    renamed: dict[str, str] = {}
+    # 工具：先建 MCP 服务（demo 的 mcpServers，含凭据列表），再建工具
+    servers: dict[str, McpServer] = {}
+    for pos, v in enumerate(st.get("mcpServers") or []):
+        creds = []
+        for c in v.get("creds") or []:
+            o = {"location": c.get("loc") or "header", "name": c["name"], "env": c.get("env") or ""}
+            if c.get("scheme"):
+                o["scheme"] = c["scheme"]
+            creds.append(o)
+        env = {}
+        for line in str(v.get("env") or "").splitlines():
+            if "=" in line:
+                k, _, val = line.partition("=")
+                env[k.strip()] = val.strip()
+        sv = McpServer(name=v["name"], display_name=v.get("disp") or v["name"], description=v.get("desc") or "",
+                       transport=v.get("transport") or "streamable_http",
+                       url=(v.get("url") or "").replace("https://intent.example.com", base) or None,
+                       command=v.get("command") or None, args=[x for x in str(v.get("args") or "").split() if x], env=env,
+                       credentials=creds, example_data=bool(v.get("exampleSync")),
+                       source="builtin" if v.get("builtin") else "external", owner=v.get("owner") or "", position=pos,
+                       server_info={}, last_sync_at=parse_local(v.get("lastSyncAt")), last_sync_by=v.get("lastSyncBy") or None,
+                       last_sync_source=("示例数据" if v.get("exampleSync") else (v.get("lastSyncSrc") or None)))
+        db.add(sv)
+        servers[sv.name] = sv
+    db.flush()
+    skill_pkgs = []
     for pos, t in enumerate(st["tools"]):
         typ = TOOL_TYPE[t["type"]]
-        params = [{"name": p["n"], "type": p.get("type") or "string", "required": bool(p.get("req")),
-                   "description": p.get("desc") or ""} for p in t.get("params") or []]
+        params = []
+        for p in t.get("params") or []:
+            o = {"name": p["n"], "type": p.get("type") or "string", "required": bool(p.get("req")), "description": p.get("desc") or ""}
+            if p.get("def"):
+                o["default"] = str(p["def"])
+            params.append(o)
         url = (t.get("url") or "").replace("https://intent.example.com", base)
-        server = (t.get("server") or "").replace("https://intent.example.com", base)
+        server = None
         if typ == "http":
             cfg = {"url": url, "method": t.get("method") or "GET", "auth": t.get("auth") or "无",
                    "output_example": t.get("out") or ""}
         elif typ == "mcp":
-            # 一个 Server URL 归为一个 MCP 服务；子工具名 = {服务名}.{远端工具名}（与迁移 0003 的规则一致）
-            builtin = bool(t.get("builtin"))
-            key = (server, builtin)
-            if key not in mcp_servers:
-                sname = "intent_platform" if builtin else (server.rstrip("/").rsplit("/", 1)[-1].lower() or "mcp")
-                host_path = server.split("://", 1)[-1]
-                mcp_servers[key] = McpServer(
-                    name=sname, display_name="意图管理平台（平台内置 MCP）" if builtin else host_path,
-                    description="" , transport="streamable_http", url=server, args=[], env={},
-                    auth="Bearer Token" if builtin else (t.get("auth") if t.get("auth") in ("Bearer Token", "API Key") else "无"),
-                    auth_header="X-API-Key" if (not builtin and t.get("auth") == "API Key") else None,
-                    source="builtin" if builtin else "external", owner=t.get("owner") or "", position=pos,
-                    server_info={})
-                db.add(mcp_servers[key])
-                db.flush()
-            sv = mcp_servers[key]
-            remote = t.get("toolName") or t["name"]
-            renamed[t["name"]] = f"{sv.name}.{remote}"
+            server = t.get("srv")
+            remote = t.get("toolName") or t["name"].split(".", 1)[-1]
             cfg = {"mcp_tool": remote, "title": "", "input_schema": json.loads(t["schema"]) if t.get("schema") else None,
-                   "annotations": {}, "output_example": t.get("out") or "", "confirm_required": False}
+                   "annotations": {}, "output_example": t.get("out") or "", "confirm_required": bool(t.get("confirm"))}
         elif typ == "cli":
             cfg = {"bin": t.get("bin") or "", "command_template": t.get("cmd") or "", "auth": t.get("cliAuth") or "无",
                    "login_command": t.get("login") or "", "install": t.get("install") or "",
                    "verified_version": t.get("cliVer") or "",
                    "output_format": "json" if (t.get("outFmt") or "JSON").upper() == "JSON" else "text",
                    "confirm_required": bool(t.get("confirm")), "output_description": t.get("out") or ""}
+        elif typ == "workflow":
+            plat = t.get("wfPlatform") or "generic"
+            cfg = {"platform": plat, "response_mode": "streaming" if t.get("wfMode") == "stream" else "blocking",
+                   "timeout_sec": float(t["wfTimeout"]) if t.get("wfTimeout") else None,
+                   "confirm_required": bool(t.get("confirm")), "auth_env": t.get("wfAuthEnv") or None,
+                   "output_mapping": [m for m in t.get("wfOutMap") or [] if m.get("from") and m.get("as")],
+                   "params_locked": plat != "generic", "output_description": t.get("out") or ""}
+            if plat == "dify":
+                cfg.update({"base_url": t.get("wfBase") or "https://api.dify.ai/v1",
+                            "user": {"mode": "session"} if t.get("wfUserMode") == "session" else {"mode": "constant", "value": t.get("wfUserConst") or "intent-bot"}})
+            elif plat == "coze":
+                cfg.update({"region": t.get("wfRegion") or "coze.cn", "workflow_id": t.get("wfId") or "",
+                            "workflow_version": t.get("wfVersion") or None, "is_async": bool(t.get("wfAsync")),
+                            "bot_id": t.get("wfBotId") or None, "app_id": t.get("wfAppId") or None, "ext": None})
+            else:
+                cfg.update({"url": t.get("wfUrl") or "", "method": t.get("wfMethod") or "POST", "auth": t.get("wfAuth") or "无"})
         else:
-            cfg = {"skill_id": t.get("skillId") or "", "platform": t.get("platform") or "",
-                   "output_description": t.get("out") or ""}
-        db.add(Tool(name=renamed.get(t["name"], t["name"]), type=typ, server=mcp_servers[key].name if typ == "mcp" else None,
-                    display_name=t["disp"], description=t["desc"], params=params,
+            params = []
+            md = t.get("skillMd") or f"---\nname: {t['disp']}\ndescription: {t['desc']}\n---\n"
+            md = "---\nname: " + t["disp"] + "\ndescription: " + json.dumps(t["desc"], ensure_ascii=False) + "\n---\n" + md.split("\n---\n", 1)[-1]
+            files = {"SKILL.md": md}
+            for f in t.get("skillFiles") or []:
+                if f["path"] != "SKILL.md":
+                    files[f["path"]] = f"# {f['path']}\n\n演示数据：{t['disp']} 的技能文件占位内容。\n"
+            pk = skill_svc.build_from_texts(files)
+            skill_pkgs.append((t["name"], pk))
+            cfg = {}
+        db.add(Tool(name=t["name"], type=typ, server=server, display_name=t["disp"], description=t["desc"], params=params,
                     source="builtin" if t.get("builtin") else "external", maintenance=bool(t.get("maint")),
                     space_scoped=t.get("scope") == "space", endpoints=t.get("rest") or [], mcp_tools=t.get("mcp") or [],
+                    enabled=t.get("enabled") is not False, remote_missing=bool(t.get("missing")),
                     config=cfg, owner=t.get("owner") or "", position=pos, updated_at=_t(t.get("updated"))))
     db.flush()
+    for name, pk in skill_pkgs:
+        pkg = SkillPackage(tool_name=name, version=1, created_by="种子数据", **pk)
+        db.add(pkg)
+        db.flush()
+        tl = db.get(Tool, name)
+        tl.config = skill_svc.config_of(pkg)
+        tl.description = pkg.description
+    renamed: dict[str, str] = {}
+    skills = {n for n, _ in skill_pkgs}
     # 意图
     for pos, it in enumerate(st["intents"].values()):
         logs = [(_t(x["at"]), x["by"], x["msg"]) for x in it.get("log") or []]
@@ -157,8 +203,8 @@ def seed(db: Session, data: dict, with_keys: bool = True) -> dict:
                           for s in it.get("slots") or []],
                    kb_refs=[{"kb_id": r["kb"], "doc_id": r["doc"], "chunk_id": r["chunk"],
                              "usage": USAGE.get(r.get("usage") or "参考", "reference")} for r in it.get("kbRefs") or []],
-                   tools=[{"tool": renamed.get(b["name"], b["name"]), "param_map": {k: {"source": v.get("src") or "槽位", "value": str(v.get("v") or "")}
-                                                            for k, v in (b.get("map") or {}).items()}}
+                   tools=[{"tool": renamed.get(b["name"], b["name"]), "param_map": {} if b["name"] in skills else
+                           {k: {"source": v.get("src") or "槽位", "value": str(v.get("v") or "")} for k, v in (b.get("map") or {}).items()}}
                           for b in it.get("tools") or []],
                    status=it["status"], owner=it.get("owner") or "", position=pos,
                    created_at=min((a for a, _, _ in logs), default=upd), updated_at=upd)

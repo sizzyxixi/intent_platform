@@ -3,7 +3,7 @@ import { api, errLines } from '../api'
 import { useSession } from '../session'
 import { Btn, ErrBox, Modal, toast } from '../ui'
 
-const TYPES = ['文本', '数字', '日期', '枚举']
+const TYPES = ['文本', '数字', '日期', '枚举', '文件', '图片']
 
 export function SlotForm({ slot, onClose, onDone, inline }: { slot: any | null; onClose: () => void; onDone: (s: any) => void; inline?: boolean }) {
   const { space } = useSession()
@@ -30,6 +30,7 @@ export function SlotForm({ slot, onClose, onDone, inline }: { slot: any | null; 
     <div className="grid g2">
       <div className="f"><label>类型</label><select id="slT" value={f.type} onChange={set('type')}>{TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
       {f.type === '枚举' && <div className="f"><label>可选值 *（逗号分隔）</label><input type="text" id="slO" value={f.options} onChange={set('options')} placeholder="如 红,黑,白" /></div>}
+      {(f.type === '文件' || f.type === '图片') && <div className="muted" style={{ alignSelf: 'end', paddingBottom: 12 }}>值为文件链接；工具的文件入参只能映射到文件 / 图片槽位</div>}
     </div>
     <div className="f"><label>默认追问话术 *</label><input type="text" id="slA" value={f.default_ask} onChange={set('default_ask')} placeholder="如：请问要什么颜色？" style={{ width: '100%' }} /></div>
     <div className="muted">意图里可覆盖追问话术；留空则继承这里的默认值。</div>

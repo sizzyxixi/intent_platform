@@ -6,11 +6,14 @@ import KbPicker from './KbPicker'
 import { SlotForm } from './Slots'
 import { Tax, leaves } from '../taxonomy'
 import { McpPicker } from './McpServers'
+import { TypeTag, isFileParam, pTypeLabel } from './ToolEdit'
 
 type Slot = { name: string; required: boolean; ask: string }
 type Ref = { kb_id: string; doc_id: string; chunk_id: string; usage: string; label?: string; valid?: boolean }
 type Bind = { tool: string; param_map: Record<string, { source: string; value: string }> }
 const CTX = ['session_id', 'buyer_id', 'order_id', 'sku']
+const FILE_SLOT = ['文件', '图片']
+const PICK_TYPES: [string, string][] = [['http', 'API 接口'], ['mcp', 'MCP'], ['cli', 'CLI 命令'], ['skill', '技能'], ['workflow', '工作流'], ['builtin', '平台内置']]
 
 export default function IntentEditor({ code, onClose, onSaved }: { code: string; onClose: () => void; onSaved: () => void }) {
   const { space, canEdit, reloadSpaces } = useSession()
@@ -20,6 +23,8 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   const [pick, setPick] = useState(false)
   const [slotNew, setSlotNew] = useState(false)
   const [toolSel, setToolSel] = useState('')
+  const [toolQ, setToolQ] = useState('')
+  const [pickTy0, setPickTy] = useState(() => sessionStorage.getItem('pickToolType') || '')
   const [mcpPick, setMcpPick] = useState<string | null>(null)
   const body = useRef<HTMLDivElement>(null)
   const [slots, reloadSlots] = useAsync(() => api.get(`/spaces/${space.id}/slots`), [space.id])
@@ -65,20 +70,25 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   }
   const bindOf = (t: any): Bind => {
     const map: Bind['param_map'] = {}
-    t.params.forEach((p: any) => {
-      const s = E.slots.find((x: Slot) => x.name === p.name)
+    if (t.type !== 'skill') t.params.forEach((p: any) => {
+      const s = E.slots.find((x: Slot) => x.name === p.name && (!isFileParam(p) || FILE_SLOT.includes(slotDef(x.name)?.type)))
       map[p.name] = s ? { source: '槽位', value: s.name } : p.name === 'session_id' ? { source: '上下文', value: 'session_id' } : { source: '槽位', value: '' }
     })
     return { tool: t.name, param_map: map }
   }
+  const servers: any[] = Object.values(tools.filter((t: any) => t.type === 'mcp' && t.server).reduce((m: any, t: any) => {
+    (m[t.server] ||= { ...t.mcp_server, tools: [] }).tools.push(t); return m }, {}))
+  const bound = new Set(E.tools.map((b: Bind) => b.tool))
+  const groups: Record<string, any[]> = { http: [], mcp: [], cli: [], skill: [], workflow: [], builtin: [] }
+  tools.filter((t: any) => t.type !== 'mcp' && !t.maintenance && !bound.has(t.name)).forEach((t: any) => { (t.source === 'builtin' ? groups.builtin : groups[t.type])?.push(t) })
+  servers.forEach((v: any) => { const avail = v.tools.filter((t: any) => t.enabled && !t.remote_missing && !bound.has(t.name)).length; if (avail) groups.mcp.push({ ...v, avail }) })
+  const pickTy = pickTy0 && groups[pickTy0]?.length ? pickTy0 : (PICK_TYPES.find(([k]) => groups[k]?.length)?.[0] || '')
   const addTool = () => {
     if (!toolSel) { toast('请先选择工具'); return }
     if (toolSel.startsWith('srv:')) { setMcpPick(toolSel.slice(4)); return }
-    set('tools', [...E.tools, bindOf(toolOf(toolSel))]); setToolSel(''); toast(`已关联 ${toolSel}，请确认入参映射`)
+    const t = toolOf(toolSel)
+    set('tools', [...E.tools, bindOf(t)]); setToolSel(''); toast(t.type === 'skill' ? `已关联技能 ${toolSel}` : `已关联 ${toolSel}，请确认入参映射`)
   }
-  const pickTool = (v: string) => { setToolSel(v); if (v.startsWith('srv:')) setMcpPick(v.slice(4)) }
-  const servers: any[] = Object.values(tools.filter((t: any) => t.type === 'mcp' && t.server).reduce((m: any, t: any) => {
-    (m[t.server] ||= { ...t.mcp_server, tools: [] }).tools.push(t); return m }, {}))
   const setMap = (ti: number, p: string, src: string, v: string) => {
     const tl = E.tools.map((b: Bind, i: number) => i !== ti ? b : { ...b, param_map: { ...b.param_map, [p]: { source: src, value: v } } })
     set('tools', tl)
@@ -136,26 +146,52 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
           {E.tools.map((b: Bind, ti: number) => {
             const tl = toolOf(b.tool)
             if (!tl) return <div key={ti} className="err">工具 {b.tool} 未在工具中心注册 <a onClick={() => set('tools', E.tools.filter((_: any, j: number) => j !== ti))}>移除</a></div>
-            return <div key={b.tool} className="sec" style={{ background: '#fafcff' }}>
-              <div className="row"><b>{tl.display_name}</b><span className="mono">{tl.name}</span><Badge c="b">{tl.type_label}</Badge>{tl.type === 'mcp' && <span className="tg">{tl.mcp_server.display_name}</span>}{tl.confirm_required && <Badge c="y">写操作需确认</Badge>}
-                {tl.remote_missing ? <Badge c="r">远端已消失，请更换</Badge> : tl.type === 'mcp' && !tl.enabled ? <Badge c="r">已停用</Badge> : null}<span className="muted">{tl.description}</span><span className="sp" />
+            const kindCls = ({ skill: 'skill', workflow: 'wf', mcp: 'mcp', cli: 'cli' } as any)[tl.type] || 'api'
+            const isWf = tl.type === 'workflow'
+            return <div key={b.tool} className={'bound-tool is-' + kindCls} data-bound={b.tool}>
+              <div className="row"><b>{tl.display_name}</b><span className="mono">{tl.name}</span>{tl.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <TypeTag type={tl.type} />}{tl.type === 'mcp' && <span className="tg">{tl.mcp_server.display_name}</span>}{tl.confirm_required && <Badge c="y">写操作需确认</Badge>}
+                {tl.remote_missing ? <Badge c="r">远端已消失，请更换</Badge> : tl.type === 'mcp' && !tl.enabled ? <Badge c="r">已停用</Badge> : null}<span className="sp" />
                 {canEdit && <a onClick={() => set('tools', E.tools.filter((_: any, j: number) => j !== ti))}>移除</a>}</div>
-              <table style={{ marginTop: 6 }}><thead><tr><th>入参</th><th>类型</th><th>必填</th><th>取值来源</th><th>值</th></tr></thead><tbody>
-                {tl.params.map((p: any) => { const m = b.param_map[p.name] || { source: '槽位', value: '' }; return <tr key={p.name}>
-                  <td className="mono">{p.name}</td><td className="muted">{p.type}</td><td>{p.required ? <Badge c="r">必填</Badge> : <span className="muted">选填</span>}</td>
-                  <td><select value={m.source} disabled={ro} onChange={e => setMap(ti, p.name, e.target.value, e.target.value === '上下文' ? 'session_id' : '')}>{['槽位', '常量', '上下文'].map(x => <option key={x}>{x}</option>)}</select></td>
-                  <td>{m.source === '槽位' ? <select value={m.value} disabled={ro} onChange={e => setMap(ti, p.name, '槽位', e.target.value)}><option value="">— 选择槽位 —</option>
-                    {E.slots.filter((s: Slot) => s.name).map((s: Slot) => <option key={s.name}>{s.name}</option>)}</select>
-                    : m.source === '上下文' ? <select value={m.value} disabled={ro} onChange={e => setMap(ti, p.name, '上下文', e.target.value)}>{CTX.map(x => <option key={x}>{x}</option>)}</select>
-                      : <input type="text" value={m.value} disabled={ro} placeholder="固定值" onChange={e => setMap(ti, p.name, '常量', e.target.value)} />}</td></tr> })}
-              </tbody></table></div>
+              {tl.description && <div className="muted" style={{ margin: '4px 0' }}>{tl.description}</div>}
+              {tl.type === 'skill' ? <>
+                <div className="note" style={{ margin: '6px 0' }}>本意图抽取的槽位会作为上下文交给 AI，无需在此做入参映射。输出格式在意图的回复要求中约定。</div>
+                {tl.skill?.files?.length ? <><div className="muted">技能文件（v{tl.skill.version}）</div><ul className="mono" style={{ margin: '4px 0', paddingLeft: 18, fontSize: 12 }}>{tl.skill.files.map((f: any) => <li key={f.path}>{f.path}</li>)}</ul></>
+                  : <div className="err">该技能尚未上传技能包，请先在工具中心上传</div>}</>
+              : <>
+                {isWf && <div className="muted" style={{ margin: '4px 0 6px' }}>入参来自已同步的工作流定义。必填项须映射或已有默认值；文件类入参只能映射到「文件 / 图片」槽位。</div>}
+                {!tl.params.length ? <div className="muted">无入参</div> :
+                <table style={{ marginTop: 6 }}><thead><tr><th>入参</th><th>类型</th><th>必填</th>{isWf && <th>默认值</th>}<th>取值来源</th><th>值</th></tr></thead><tbody>
+                  {tl.params.map((p: any) => { const m = b.param_map[p.name] || { source: '槽位', value: '' }; const file = isFileParam(p)
+                    const slotList = E.slots.filter((s: Slot) => s.name && (!file || FILE_SLOT.includes(slotDef(s.name)?.type)))
+                    return <tr key={p.name}>
+                    <td className="mono">{p.name}</td><td className="muted">{pTypeLabel(p.type)}</td><td>{p.required ? <Badge c="r">必填</Badge> : <span className="muted">选填</span>}</td>
+                    {isWf && <td className="mono muted">{p.default || '—'}</td>}
+                    <td><select value={m.source} disabled={ro} onChange={e => setMap(ti, p.name, e.target.value, e.target.value === '上下文' ? 'session_id' : '')}>{['槽位', '常量', '上下文'].map(x => <option key={x}>{x}</option>)}</select></td>
+                    <td>{m.source === '槽位' ? <select value={m.value} disabled={ro} onChange={e => setMap(ti, p.name, '槽位', e.target.value)}>
+                      <option value="">{file ? (slotList.length ? '— 选择文件/图片槽位 —' : '— 暂无文件/图片槽位 —') : p.default ? '— 不映射，用默认值 —' : '— 选择槽位 —'}</option>
+                      {slotList.map((s: Slot) => <option key={s.name} value={s.name}>{s.name}{file ? `（${slotDef(s.name)?.type}）` : ''}</option>)}
+                      {m.value && !slotList.some((s: Slot) => s.name === m.value) && <option value={m.value}>{m.value}（不可用）</option>}</select>
+                      : m.source === '上下文' ? <select value={m.value} disabled={ro} onChange={e => setMap(ti, p.name, '上下文', e.target.value)}>{CTX.map(x => <option key={x}>{x}</option>)}</select>
+                        : <input type="text" value={m.value} disabled={ro} placeholder={p.default ? '默认 ' + p.default : '固定值'} onChange={e => setMap(ti, p.name, '常量', e.target.value)} />}</td></tr> })}
+                </tbody></table>}</>}
+            </div>
           })}
-          {canEdit && <div className="row"><select id="eTool" value={toolSel} onChange={e => pickTool(e.target.value)}><option value="">— 选择工具 —</option>
-            {tools.filter((t: any) => t.type !== 'mcp' && !t.maintenance && !E.tools.some((x: Bind) => x.tool === t.name)).map((t: any) =>
-              <option key={t.name} value={t.name}>{t.display_name}（{t.name}{t.source === 'builtin' ? ' · 平台内置' : ''}）</option>)}
-            {servers.length > 0 && <optgroup label="MCP 服务（选择后下钻到具体工具）">{servers.map((v: any) =>
-              <option key={v.name} value={'srv:' + v.name}>{v.display_name}（{v.name} · {v.tools.filter((t: any) => t.enabled && !t.remote_missing).length} 个可用工具）▸</option>)}</optgroup>}</select>
-            <Btn s id="toolAdd" onClick={addTool}>＋ 关联</Btn><span className="muted">工具由技术在「工具中心」注册，所有空间通用；MCP 服务需下钻选择具体工具；维护类平台内置工具不可选</span></div>}
+          {canEdit && (() => {
+            const items: any[] = pickTy === 'mcp' ? groups.mcp : (groups[pickTy] || [])
+            const k = toolQ.trim().toLowerCase()
+            const shown = items.filter((x: any) => !k || (pickTy === 'mcp' ? [x.name, x.display_name] : [x.name, x.display_name, x.description]).some((s: string) => (s || '').toLowerCase().includes(k)))
+            return <><div className="row" id="ePicker" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <select id="eToolType" value={pickTy} onChange={e => { setPickTy(e.target.value); sessionStorage.setItem('pickToolType', e.target.value); setToolSel(''); setToolQ('') }}>
+                <option value="">— 选择类型 —</option>
+                {PICK_TYPES.filter(([k2]) => groups[k2]?.length).map(([k2, l]) => <option key={k2} value={k2}>{l}（{groups[k2].length}）</option>)}</select>
+              <select id="eTool" value={toolSel} disabled={!pickTy} onChange={e => setToolSel(e.target.value)}>
+                <option value="">{pickTy === 'mcp' ? '— 选择 MCP 服务 —' : '— 选择工具 —'}</option>
+                {pickTy === 'mcp' ? shown.map((v: any) => <option key={v.name} value={'srv:' + v.name}>{v.display_name}（{v.name} · {v.avail} 个可用工具）▸</option>)
+                  : shown.map((t: any) => <option key={t.name} value={t.name}>{t.display_name}（{t.name}）</option>)}</select>
+              {items.length > 5 && <input type="text" id="eToolQ" value={toolQ} onChange={e => setToolQ(e.target.value)} placeholder="筛选" style={{ width: 140 }} />}
+              <Btn s id="toolAdd" onClick={addTool}>＋ 关联</Btn></div>
+              <div className="muted" style={{ marginTop: 4 }}>先选类型再选工具。技能无需映射入参；工作流按已同步入参映射（必填须映射或有默认值）；MCP 先选服务，再点「关联」下钻多选子工具；维护类平台内置工具不可选</div></>
+          })()}
         </div>
 
         <SingleTest code={code} draft={() => ({ code, ...payload() })} />
@@ -207,7 +243,7 @@ function TestResult({ r }: { r: any; code: string }) {
       <tr><th style={{ width: 90 }}>槽位</th><td>{r.slots.length ? r.slots.map((s: any, i: number) => <span key={s.name}>{i > 0 && '，'}{s.name}={s.value ? <b>{s.value}</b> : <span className="muted">缺失</span>}</span>) : <span className="muted">无</span>}</td></tr>
       <tr><th>参考知识</th><td id="tRef">{r.reference.length ? r.reference.map((x: any, i: number) => <div key={i}>· {x.label}：<span className="muted">{x.preview}</span></div>) : <span className="muted">无</span>}</td></tr>
       <tr><th>将执行的校验</th><td id="tChk">{r.validate.length ? <>{r.validate.map((x: any, i: number) => <div key={i}>· {x.label}：<span className="muted">{x.preview}</span></div>)}<div className="muted">生成结果需逐条比对以上校验知识，不通过则改写或拦截</div></> : <span className="muted">无</span>}</td></tr>
-      <tr><th>调用工具</th><td id="tTool">{r.tools.length ? <>{r.tools.map((t: any) => <div key={t.tool}>{t.registered ? <><Badge c="b">{({ http: 'API 接口', mcp: 'MCP 工具', cli: 'CLI 命令', skill: '技能/工作流' } as any)[t.type]}</Badge> <span className="mono">{t.tool}({t.args.map((a: any) => `${a.name}=${a.value}`).join(', ')})</span></> : `${t.tool}（未注册）`}</div>)}
+      <tr><th>调用工具</th><td id="tTool">{r.tools.length ? <>{r.tools.map((t: any) => <div key={t.tool}>{t.registered ? <><Badge c="b">{({ http: 'API 接口', mcp: 'MCP 工具', cli: 'CLI 命令', skill: '技能', workflow: '工作流' } as any)[t.type]}</Badge> <span className="mono">{t.tool}({t.args.map((a: any) => `${a.name}=${a.value}`).join(', ')})</span></> : `${t.tool}（未注册）`}</div>)}
         <div className="muted">失败自动重试 {r.tool_retry} 次，仍失败 → 最终动作：{r.final_text}</div></> : <span className="muted">无</span>}</td></tr>
       <tr><th>处理</th><td id="tDec"><b>{r.decision}</b></td></tr>
     </tbody></table>

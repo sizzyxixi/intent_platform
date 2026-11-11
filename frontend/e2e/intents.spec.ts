@@ -49,6 +49,7 @@ test('新建意图 → 启用校验失败 → 补齐后启用', async ({ page })
   await page.click('#pkOk')
   await expect(page.locator('#eRefs tr')).toHaveCount(1)
   // 关联工具
+  await page.selectOption('#eToolType', 'http')
   await page.selectOption('#eTool', 'query_stock')
   await page.click('#toolAdd')
   await page.click('#eCheck')

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
-  version: 0.6.0
+  version: 0.15.0
   description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
 
     给 AI 的总规则：
@@ -24,7 +24,10 @@ info:
 
     - 所有写请求都带 Idempotency-Key；单次最多 100 条；每个 Key 每分钟最多 60 次请求。
 
-    - 工具类型：http（API 接口）/ mcp（MCP 工具）/ cli（CLI 命令）/ skill（技能·工作流）。AI 只读工具目录，不注册、不调用工具。
+    - 工具类型：http（API 接口）/ mcp（MCP 工具）/ cli（CLI 命令）/ skill（技能）/ workflow（工作流）。AI 只读工具目录，不注册、不调用工具。
+
+
+    - v0.15 起：skill 为含 SKILL.md 的技能包（无入参，槽位作为上下文交给 AI，可用 GET /api/v1/tools/{name}/skill-package 下载）；workflow 对接 Dify / Coze / 通用 HTTP 工作流；MCP 服务鉴权改为凭据列表 mcp_server.credentials（位置 + 名称 + 环境变量名，不含密钥值），auth 字段保留兼容；槽位类型新增 文件 / 图片。
 
     - v0.6 起 MCP 按「服务 → 子工具」登记：子工具名为 {服务名}.{远端工具名}，Tool.server 为服务名，Tool.mcp_server 由 0.5 的 URL 字符串改为连接信息对象（URL 在 mcp_server.url）；runtime-config 新增 mcp_servers（只含被用到的服务，密钥只给环境变量名 auth.token_env）。
 
@@ -877,7 +880,7 @@ paths:
       - 工具
       operationId: listTools
       summary: 工具目录
-      description: '何时用：整理意图时了解有哪些已注册工具（全平台通用；含平台内置工具）（API 接口 / MCP 工具 / CLI 命令 / 技能·工作流）及其入参，以便在槽位中准备好工具需要的参数（如 sku、order_id）。
+      description: '何时用：整理意图时了解有哪些已注册工具（全平台通用；含平台内置工具）（API 接口 / MCP 工具 / CLI 命令 / 技能 / 工作流）及其入参，以便在槽位中准备好工具需要的参数（如 sku、order_id）。
 
 
         何时不用：AI 不能注册或调用工具；工具与意图的绑定由运营在平台上完成，执行在 Bot 侧。
@@ -909,6 +912,44 @@ paths:
           - external
           - builtin
         description: 按来源筛选
+  /api/v1/tools/{name}/skill-package:
+    get:
+      tags:
+      - 工具
+      operationId: downloadSkillPackage
+      summary: 下载技能包（zip）
+      description: 返回 type=skill 工具的技能包 zip（路径相对包根，含 SKILL.md）。默认最新版本，可用 version 指定。响应头 X-Skill-Version 为版本号。全局接口，不需要 X-Space-Id。
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        example: gen_image_skill
+      - name: version
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: 技能包
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /api/v1/runtime-config:
     get:
       tags:
@@ -921,7 +962,7 @@ paths:
 
         Bot 用法（完整流程见 AI 接入说明第 5 节）：识别 → 按 recognition.threshold 判定命中，否则列出 ≥ candidate_min 的候选澄清（最多 max_clarify 次）→ 缺必填槽位用 slots[].ask 追问（每个最多 max_slot_ask 次）→ 检索参考知识、生成后用 validation_sets 逐条校验 → 调用工具（失败重试 tool_retry 次）→ 任一环节超限或失败执行 recognition.final_action。
 
-        工具执行规则（平台只登记，执行在 Bot）：http=按 method + url 发请求，入参按 input_schema 组装为 query（GET）或 JSON body，鉴权凭据由 Bot 侧托管；mcp=连接 mcp_server 调用 tools/call，name=mcp_tool，arguments=入参；cli=在 Bot 运行环境中用 cli.bin 执行 cli.command_template，把 {参数名} 替换为入参值，选填参数为空时连同其前面的 --选项 一起省略，执行前按 cli.install 安装并按 cli.login_command 完成鉴权，output_format=json 时解析 stdout 为 JSON，confirm_required=true 时先向用户确认；skill=在 platform 上运行 skill_id，inputs=入参。
+        工具执行规则（平台只登记，执行在 Bot）：http=按 method + url 发请求，入参按 input_schema 组装为 query（GET）或 JSON body，鉴权凭据由 Bot 侧托管；mcp=连接 mcp_server 调用 tools/call，name=mcp_tool，arguments=入参；cli=在 Bot 运行环境中用 cli.bin 执行 cli.command_template，把 {参数名} 替换为入参值，选填参数为空时连同其前面的 --选项 一起省略，执行前按 cli.install 安装并按 cli.login_command 完成鉴权，output_format=json 时解析 stdout 为 JSON，confirm_required=true 时先向用户确认；skill=下载 skill.download_path 的技能包（按 skill.version 缓存），把 SKILL.md 交给 AI，本意图抽取的槽位作为上下文，不做入参映射，输出格式按意图回复要求；workflow=按 workflow.platform 调用：dify 为 POST {base_url}/workflows/run（body: inputs、response_mode、user），coze 为 POST https://api.coze.cn|com/v1/workflow/run（streaming 时 /v1/workflow/stream_run；body: workflow_id、parameters 及可选 workflow_version、is_async、bot_id、app_id、ext），generic 为按 url + method 发送 {inputs}；凭据从 workflow.auth_env 指定的环境变量读取，以 Bearer 放在 Authorization；output_mapping 把返回字段（如 data.outputs.result）映射为结果名；confirm_required=true 时先向用户确认。mcp 服务的凭据按 mcp_server.credentials 逐条放到请求头（scheme=Bearer 时加 Bearer 前缀）、URL 参数或 stdio 环境变量，值取自各自的 env。
 
         '
       parameters:
@@ -1026,16 +1067,7 @@ paths:
                   tools:
                   - tool: gen_image_skill
                     type: skill
-                    param_map:
-                      task:
-                        source: 常量
-                        value: main
-                      product_image:
-                        source: 槽位
-                        value: product_image
-                      platform:
-                        source: 槽位
-                        value: platform
+                    param_map: {}
                 validation_sets:
                 - kb_id: kb_ban
                   kb_name: 违禁词库
@@ -1078,13 +1110,18 @@ paths:
                   display_name: 生图技能
                   type: skill
                   description: 按商品图与平台规范生成电商主图/海报（示例技能）
-                  params:
-                  - name: product_image
-                    type: string
-                    required: true
-                  skill_id: skill_img_main_v2
-                  platform: Moonclaw 技能平台
+                  params: []
                   source: external
+                  skill:
+                    name: 生图技能
+                    version: 1
+                    description: 按商品图与平台规范生成电商主图/海报（示例技能）
+                    files:
+                    - path: SKILL.md
+                      size: 412
+                    - path: scripts/generate.py
+                      size: 280
+                    download_path: /api/v1/tools/gen_image_skill/skill-package
                 - name: xclaw_product_detail
                   display_name: 西之月商品详情
                   type: cli
@@ -1858,10 +1895,17 @@ components:
                 - string
                 - number
                 - boolean
+                - file
+                - file_list
+                - string[]
+                description: file / file_list 为文件链接（意图里只能映射到「文件 / 图片」类型的槽位）；string[] 为字符串数组
               required:
                 type: boolean
               description:
                 type: string
+              default:
+                type: string
+                description: 默认值（workflow 必填入参有默认值时可不映射）
         type:
           type: string
           enum:
@@ -1869,7 +1913,8 @@ components:
           - mcp
           - cli
           - skill
-          description: http=API 接口（HTTP）；mcp=MCP 工具；cli=CLI 命令；skill=技能/工作流。平台只登记，执行在 Bot。
+          - workflow
+          description: http=API 接口（HTTP）；mcp=MCP 工具（某个 MCP 服务的子工具）；cli=CLI 命令；skill=技能（含 SKILL.md 的技能包，无入参）；workflow=工作流（Dify / Coze / 通用 HTTP）。平台只登记，执行在 Bot。
         server:
           type: string
           nullable: true
@@ -1878,15 +1923,6 @@ components:
         url:
           type: string
           description: type=http
-        skill_id:
-          type: string
-          description: type=skill
-        platform:
-          type: string
-          description: type=skill，技能/工作流所属平台
-        output_description:
-          type: string
-          description: type=skill
         mcp_server:
           $ref: '#/components/schemas/McpServerConn'
         mcp_tool:
@@ -1894,7 +1930,7 @@ components:
           description: type=mcp，远端 MCP 服务里的原始工具名（tools/call 的 name）
         input_schema:
           type: object
-          description: type=mcp 时为注册的 inputSchema；其他类型（http / cli / skill）由 params 生成。意图里的入参映射（槽位 / 常量 / 上下文）对四种类型一致
+          description: type=mcp 时为远端 inputSchema；http / cli / workflow 由 params 生成（file 为 format=uri、x-type=file）。skill 没有 input_schema。
         auth:
           type: string
           enum:
@@ -1975,14 +2011,150 @@ components:
           - search_knowledge
         confirm_required:
           type: boolean
-          description: type=mcp，写操作需确认：Bot 调用前须向用户确认
+          description: 写操作需确认：Bot 调用前须向用户确认（mcp / cli / workflow）
         enabled:
           type: boolean
           description: type=mcp，子工具是否启用
         remote_missing:
           type: boolean
           description: type=mcp，最近一次同步时远端已不存在但仍被意图使用（标红待处理）
-      description: 工具全平台通用，不区分业务空间。
+        skill:
+          type: object
+          description: type=skill 时返回。技能没有入参映射：本意图抽取的槽位作为上下文交给 AI，输出格式写在意图的回复要求里
+          required:
+          - name
+          - version
+          - description
+          - files
+          properties:
+            name:
+              type: string
+              description: SKILL.md 前置元数据 name
+            version:
+              type: integer
+              description: 技能包版本，每次重新上传 +1
+            description:
+              type: string
+              description: SKILL.md 前置元数据 description（工具描述与之一致，只读）
+            files:
+              type: array
+              items:
+                type: object
+                required:
+                - path
+                - size
+                properties:
+                  path:
+                    type: string
+                    example: scripts/generate.py
+                  size:
+                    type: integer
+            download_path:
+              type: string
+              nullable: true
+              example: /api/v1/tools/gen_image_skill/skill-package
+              description: 技能包 zip 下载地址（需 工具:读 权限）
+        workflow:
+          type: object
+          description: type=workflow 时返回（不含任何密钥值）
+          required:
+          - platform
+          - response_mode
+          - output_mapping
+          - confirm_required
+          properties:
+            platform:
+              type: string
+              enum:
+              - dify
+              - coze
+              - generic
+            response_mode:
+              type: string
+              enum:
+              - blocking
+              - streaming
+            auth_env:
+              type: string
+              nullable: true
+              example: DIFY_APP_KEY
+              description: Bot 侧保存密钥的环境变量名
+            timeout_sec:
+              type: number
+              description: 可选，超时秒数；不给则用 Bot 默认
+            confirm_required:
+              type: boolean
+            output_mapping:
+              type: array
+              items:
+                type: object
+                required:
+                - from
+                - as
+                properties:
+                  from:
+                    type: string
+                    example: data.outputs.result
+                  as:
+                    type: string
+                    example: result
+            base_url:
+              type: string
+              example: https://api.dify.ai/v1
+              description: platform=dify；POST {base_url}/workflows/run
+            user:
+              type: object
+              description: platform=dify；mode=constant 时 value 为固定 user，mode=session 时用会话用户
+              properties:
+                mode:
+                  type: string
+                  enum:
+                  - constant
+                  - session
+                value:
+                  type: string
+            region:
+              type: string
+              enum:
+              - coze.cn
+              - coze.com
+              description: platform=coze
+            workflow_id:
+              type: string
+              description: platform=coze
+            workflow_version:
+              type: string
+              description: platform=coze，可选
+            is_async:
+              type: boolean
+              description: platform=coze，异步运行（Bot 需轮询结果）
+            bot_id:
+              type: string
+            app_id:
+              type: string
+            ext:
+              type: object
+              description: platform=coze，可选
+            url:
+              type: string
+              description: platform=generic
+            method:
+              type: string
+              enum:
+              - POST
+              - GET
+              - PUT
+              description: platform=generic
+            auth:
+              type: string
+              enum:
+              - 无
+              - API Key
+              - Bearer Token
+              description: platform=generic
+            output_description:
+              type: string
+      description: 工具目录（外部工具 + 平台内置工具）。
     RuntimeConfig:
       type: object
       required:
@@ -2065,6 +2237,7 @@ components:
                       - mcp
                       - cli
                       - skill
+                      - workflow
                     param_map:
                       type: object
                       additionalProperties:
@@ -2219,6 +2392,8 @@ components:
           - 数字
           - 日期
           - 枚举
+          - 文件
+          - 图片
         options:
           type: array
           items:
@@ -2249,6 +2424,8 @@ components:
           - 数字
           - 日期
           - 枚举
+          - 文件
+          - 图片
         options:
           type: array
           items:
@@ -2479,8 +2656,8 @@ components:
       - name
       - display_name
       - transport
-      - auth
-      description: MCP 服务连接信息。第三方 MCP 通常一个服务打包多项能力，平台按「服务 → 子工具」两级登记；不含任何密钥明文，鉴权只给环境变量名。
+      - credentials
+      description: MCP 服务连接信息。第三方 MCP 通常一个服务打包多项能力，平台按「服务 → 子工具」两级登记；不含任何密钥值，凭据只给位置、名称和环境变量名，URL 中的密钥参数会被去掉。
       properties:
         name:
           type: string
@@ -2522,6 +2699,7 @@ components:
               - Bearer Token
               - API Key
               - 环境变量
+              - URL 参数
             header:
               type: string
               example: Authorization
@@ -2532,3 +2710,36 @@ components:
               type: string
               example: MCP_COMPLIANCE_TOKEN
               description: Bot 运行环境中保存密钥的环境变量名
+            query:
+              type: string
+            env:
+              type: string
+          description: 已废弃（兼容 v0.6）：第一条凭据的摘要；新接入请读 credentials
+        credentials:
+          type: array
+          description: 鉴权凭据。Bot 按顺序把环境变量 env 的值放到对应位置：header=请求头（scheme=Bearer 时值为 "Bearer <值>"）；query=URL 参数；env=stdio 进程的环境变量
+          items:
+            type: object
+            required:
+            - location
+            - name
+            - env
+            properties:
+              location:
+                type: string
+                enum:
+                - header
+                - query
+                - env
+              name:
+                type: string
+                example: secret-key
+                description: 请求头名 / URL 参数名 / 环境变量名
+              env:
+                type: string
+                example: SELLERSPRITE_SECRET_KEY
+                description: Bot 运行环境中保存密钥的环境变量名
+              scheme:
+                type: string
+                enum:
+                - Bearer

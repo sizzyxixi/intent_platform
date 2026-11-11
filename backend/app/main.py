@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     s = get_settings()
-    app = FastAPI(title="意图管理平台", version="0.5.0", lifespan=lifespan,
+    app = FastAPI(title="意图管理平台", version="0.15.0", lifespan=lifespan,
                   docs_url="/api/docs" if s.env != "production" else None, redoc_url=None,
                   openapi_url="/api/openapi.json" if s.env != "production" else None)
     if s.cors_origins:

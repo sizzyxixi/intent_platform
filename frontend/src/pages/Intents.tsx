@@ -86,7 +86,8 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
 }
 
 function NewIntent({ tax, root, onClose, onDone }: { tax: Tax; root: string; onClose: () => void; onDone: (c: string) => void }) {
-  const { space } = useSession()
+  const { space, go } = useSession()
+  const goTax = () => { onClose(); go('#/intents/cfg'); setTimeout(() => document.getElementById('lvCard')?.scrollIntoView({ block: 'start' }), 120) }
   const opts = leaves(tax)
   const [p, setP] = useState(String(opts.find(o => String(o.root.id) === root)?.id || opts[0]?.id || ''))
   const [code, setCode] = useState('')
@@ -99,8 +100,8 @@ function NewIntent({ tax, root, onClose, onDone }: { tax: Tax; root: string; onC
     catch (e) { setErr(errLines(e)) }
   }
   return <Modal title="新建意图" onClose={onClose} foot={<><Btn onClick={onClose}>取消</Btn><Btn p id="newIntentDo" onClick={ok}>创建草稿并编辑</Btn></>}>
-    <div className="muted" style={{ marginBottom: 8 }}>空间：{space.name}</div>
-    {tax.category_levels > 0 && <div className="f"><label>所属分类（{tax.levels.slice(0, -1).join(' / ')}）</label><select id="niP" value={p} onChange={e => setP(e.target.value)}>{opts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></div>}
+    <div className="muted" style={{ marginBottom: 8 }}>空间：{space.name}{tax.category_levels === 0 && <a id="niTax" onClick={goTax} style={{ marginLeft: 8 }}>管理分类</a>}</div>
+    {tax.category_levels > 0 && <div className="f"><label>所属分类（{tax.levels.slice(0, -1).join(' / ')}）<a id="niTax" onClick={goTax} style={{ fontWeight: 'normal', marginLeft: 8 }}>管理分类</a></label><select id="niP" value={p} onChange={e => setP(e.target.value)}>{opts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></div>}
     <div className="f"><label>编码（唯一，如 {eg}）</label><input type="text" id="niC" value={code} onChange={e => setCode(e.target.value)} placeholder={eg} /></div>
     <div className="f"><label>名称</label><input type="text" id="niN" value={name} onChange={e => setName(e.target.value)} /></div>
     <ErrBox lines={err} />

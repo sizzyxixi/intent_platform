@@ -346,6 +346,19 @@ def list_tools(source: str | None = Query(None, pattern="^(external|builtin)$"),
     return [tool_svc.api_dict(t) for t in tool_svc.list_tools(db, source)]
 
 
+@router.get("/tools/{name}/skill-package")
+def skill_package(name: str, version: int | None = Query(None, ge=1), ctx: KeyCtx = Depends(api_key(R_TOOL)),
+                  db: Session = Depends(get_db)):
+    """下载技能包（zip，路径相对包根，含 SKILL.md）。Bot 按运行时配置里 tools[].skill.version 缓存。"""
+    from ...services import skills as skill_svc
+    t = tool_svc.get(db, name)
+    if t.type != "skill":
+        raise bad_request(f"工具 {name} 不是技能", "NOT_A_SKILL")
+    pkg, data = skill_svc.archive(db, name, version)
+    return Response(data, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{name}-v{pkg.version}.zip"', "X-Skill-Version": str(pkg.version)})
+
+
 # ---------------- 运行时配置 ----------------
 @router.get("/runtime-config")
 def runtime_config(request: Request, since_version: int | None = Query(None, ge=0),

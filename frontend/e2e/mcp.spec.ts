@@ -12,20 +12,23 @@ test('MCP：注册服务 → 在线同步 → 意图下钻绑定 → 远端变�
   await login(page)
   await page.goto('/#/tools/list')
   // 种子里的 MCP 能力已迁移为「服务 → 子工具」
-  await expect(page.locator('#toolTbl tr.srvrow')).toHaveCount(4)
-  await page.click('#mcpNew')
+  await expect(page.locator('#toolTbl tr.srvrow')).toHaveCount(5)
+  await page.click('#toolNew')
+  await page.selectOption('#tTy', 'mcp')
   await page.fill('#mN', 'shop')
   await page.fill('#mD', '商城 MCP（测试）')
   await page.fill('#mDs', '订单查询 / 取消、帮助中心搜索')
   await page.fill('#mU', MCP + '/mcp')
-  await page.click('#mSave')
-  // 新登记的服务自动打开同步
-  await expect(page.getByTestId('mcpSync')).toBeVisible()
+  await page.click('#toolSave')
+  // 保存后抽屉里直接出现同步面板
+  await expect(page.locator('#syPanel')).toBeVisible()
   await page.click('#syRun')
   await expect(page.locator('#syDiff')).toContainText('新增 3')
   await expect(page.locator('#syDiff')).toContainText('mini-mcp')
   await page.click('#syApply')
-  await expect(page.getByTestId('mcpSync')).toHaveCount(0)
+  await expect(page.locator('#syDiff')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('toolEdit')).toHaveCount(0)
   const sub = page.locator('#toolTbl tr.subrow')
   await expect(page.locator('#toolTbl tr[data-tool^="shop."]')).toHaveCount(3)
   // annotations.destructiveHint → 默认勾选「写操作需确认」
@@ -44,7 +47,9 @@ test('MCP：注册服务 → 在线同步 → 意图下钻绑定 → 远端变�
   await page.fill('#fQ', 'B.STOCK.AVAIL'); await page.click('#fApply')
   await page.locator('#intentTbl tbody tr').first().locator('button', { hasText: '编辑' }).click()
   await expect(page.getByTestId('intentEditor')).toBeVisible()
+  await page.selectOption('#eToolType', 'mcp')
   await page.selectOption('#eTool', 'srv:shop')
+  await page.click('#toolAdd')
   const pick = page.getByTestId('mcpPick')
   await expect(pick).toBeVisible()
   await expect(pick.locator('.pickrow')).toHaveCount(2) // search_faq 已停用，不可选
@@ -58,11 +63,11 @@ test('MCP：注册服务 → 在线同步 → 意图下钻绑定 → 远端变�
   await page.click('#mpOk')
   await expect(pick).toHaveCount(0)
   for (const t of ['shop.lookup_order', 'shop.cancel_order']) {
-    const card = page.locator('div.sec div.sec', { hasText: t })
+    const card = page.locator(`[data-bound="${t}"]`)
     await expect(card).toBeVisible()
     await card.locator('tbody tr', { hasText: 'order_no' }).locator('select').nth(1).selectOption('sku')
   }
-  await expect(page.locator('div.sec div.sec', { hasText: 'shop.cancel_order' })).toContainText('写操作需确认')
+  await expect(page.locator('[data-bound="shop.cancel_order"]')).toContainText('写操作需确认')
   await page.click('#eSave')
   await expect(page.getByTestId('intentEditor')).toHaveCount(0)
 

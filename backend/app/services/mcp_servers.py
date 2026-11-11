@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -23,7 +24,11 @@ from .common import Actor, iso, utcnow
 from .mcp_client import fetch_tools
 
 TRANSPORTS = {"streamable_http": "Streamable HTTP", "sse": "SSE（旧版）", "stdio": "stdio（本地进程）"}
-AUTHS = ("无", "Bearer Token", "API Key", "环境变量")
+CRED_LOCATIONS = {"header": "请求头", "query": "URL 参数", "env": "环境变量"}
+# URL 里出现这些参数视为密钥：保存时从 URL 移除，值转存为该凭据的加密密钥
+SECRET_QUERY_KEYS = ("secret-key", "secret_key", "token", "api_key", "apikey", "api-key", "key", "access_token")
+HEADER_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+QUERY_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
 SERVER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9_\-.]{1,64}$")
 ENV_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
@@ -34,9 +39,44 @@ def tool_name(server: str, remote: str) -> str:
     return f"{server}.{remote}"
 
 
-def token_env(sv: McpServer) -> str:
-    """Bot 侧存放该服务凭据的环境变量名（运行时配置只给变量名，不给明文）。"""
-    return sv.auth_env if sv.auth == "环境变量" and sv.auth_env else f"MCP_{sv.name.upper()}_TOKEN"
+def creds(sv: McpServer) -> list[dict]:
+    return [dict(c) for c in (sv.credentials or [])]
+
+
+def token_env(sv: McpServer) -> str | None:
+    """兼容旧字段 auth.token_env：第一条凭据的环境变量名。"""
+    cs = creds(sv)
+    return cs[0]["env"] if cs else None
+
+
+def _secrets(sv: McpServer) -> dict[str, str]:
+    """平台侧保存的密钥 {凭据名称: 值}。兼容旧格式（单个字符串 = 第一条凭据的密钥）。"""
+    if not sv.secret_encrypted:
+        return {}
+    raw = decrypt_secret(sv.secret_encrypted) or ""
+    try:
+        j = json.loads(raw)
+        if isinstance(j, dict):
+            return {str(k): str(v) for k, v in j.items() if v}
+    except ValueError:
+        pass
+    cs = creds(sv)
+    return {cs[0]["name"]: raw} if cs and raw else {}
+
+
+def strip_url_secrets(url: str, cred_list: list[dict]) -> tuple[str, dict[str, str]]:
+    """去掉 URL 中的密钥参数，返回 (干净的 URL, {参数名: 值})。"""
+    if not url:
+        return url, {}
+    parts = urlsplit(url)
+    drop = {c["name"] for c in cred_list if c.get("location") == "query"} | set(SECRET_QUERY_KEYS)
+    keep, taken = [], {}
+    for k, v in parse_qsl(parts.query, keep_blank_values=True):
+        if k in drop or k.lower() in SECRET_QUERY_KEYS:
+            taken[k] = v
+        else:
+            keep.append((k, v))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(keep), parts.fragment)), taken
 
 
 def server_tools(db: Session, name: str) -> list[Tool]:
@@ -50,28 +90,48 @@ def get(db: Session, name: str) -> McpServer:
     return sv
 
 
+def creds_out(sv: McpServer) -> list[dict]:
+    out = []
+    for c in creds(sv):
+        o = {"location": c["location"], "name": c["name"], "env": c["env"]}
+        if c.get("scheme"):
+            o["scheme"] = c["scheme"]
+        out.append(o)
+    return out
+
+
+def _legacy_auth(sv: McpServer) -> dict:
+    cs = creds(sv)
+    if not cs:
+        return {"type": "无"}
+    c = cs[0]
+    if c["location"] == "env":
+        return {"type": "环境变量", "env": c["name"], "token_env": c["env"]}
+    if c.get("scheme") == "Bearer":
+        return {"type": "Bearer Token", "header": c["name"], "scheme": "Bearer", "token_env": c["env"]}
+    if c["location"] == "header":
+        return {"type": "API Key", "header": c["name"], "token_env": c["env"]}
+    return {"type": "URL 参数", "query": c["name"], "token_env": c["env"]}
+
+
 def conn_dict(sv: McpServer) -> dict:
-    """连接信息（不含任何凭据明文）。"""
+    """连接信息（不含任何凭据值）：credentials 只给位置、名称和 Bot 侧环境变量名。"""
     d = {"name": sv.name, "display_name": sv.display_name, "transport": sv.transport}
     if sv.transport == "stdio":
         d.update({"command": sv.command, "args": list(sv.args or []), "env": dict(sv.env or {})})
     else:
-        d["url"] = sv.url
-    auth = {"type": sv.auth}
-    if sv.auth == "Bearer Token":
-        auth.update({"header": "Authorization", "scheme": "Bearer", "token_env": token_env(sv)})
-    elif sv.auth == "API Key":
-        auth.update({"header": sv.auth_header or "X-API-Key", "token_env": token_env(sv)})
-    elif sv.auth == "环境变量":
-        auth.update({"env": sv.auth_env, "token_env": token_env(sv)})
-    d["auth"] = auth
+        d["url"] = strip_url_secrets(sv.url or "", creds(sv))[0]
+    d["credentials"] = creds_out(sv)
+    d["auth"] = _legacy_auth(sv)  # 兼容 v0.6 的单一鉴权字段，新接入请读 credentials
     return d
 
 
 def admin_dict(db: Session, sv: McpServer, with_tools: bool = True) -> dict:
     d = conn_dict(sv)
+    sec = _secrets(sv)
+    d["credentials"] = [{**c, "has_secret": c["name"] in sec} for c in d["credentials"]]
     d.update({"description": sv.description, "transport_label": TRANSPORTS.get(sv.transport, sv.transport),
-              "auth_header": sv.auth_header, "auth_env": sv.auth_env, "has_secret": bool(sv.secret_encrypted),
+              "has_secret": bool(sec), "example_data": bool(sv.example_data),
               "source": sv.source, "owner": sv.owner, "server_info": sv.server_info or {},
               "last_sync_at": iso(sv.last_sync_at), "last_sync_by": sv.last_sync_by,
               "last_sync_source": sv.last_sync_source})
@@ -122,24 +182,89 @@ def _validate(data: dict, creating: bool, sv: McpServer | None = None) -> dict:
         if not isinstance(env, dict) or not all(ENV_NAME_RE.match(str(k)) and isinstance(v, str) for k, v in env.items()):
             errs.append({"field": "env", "message": "环境变量名为大写字母 / 数字 / 下划线，值为字符串"})
         url = None
-    auth = data.get("auth") or "无"
-    if auth not in AUTHS:
-        errs.append({"field": "auth", "message": "鉴权方式为 无 / Bearer Token / API Key / 环境变量"})
-    header = str(data.get("auth_header") or "").strip() or None
-    aenv = str(data.get("auth_env") or "").strip() or None
-    if auth == "API Key" and header and not re.match(r"^[A-Za-z0-9-]{1,64}$", header):
-        errs.append({"field": "auth_header", "message": "请求头名只能是英文 / 数字 / 横线"})
-    if auth == "环境变量":
-        if tr != "stdio":
-            errs.append({"field": "auth", "message": "「环境变量」只用于 stdio 服务"})
-        if not aenv or not ENV_NAME_RE.match(aenv):
-            errs.append({"field": "auth_env", "message": "请填写凭据环境变量名（大写，如 GITHUB_TOKEN）"})
+    cred_list, secrets_in = _parse_creds(data, tr, name, errs)
+    warnings = []
+    if url:
+        clean, taken = strip_url_secrets(url, cred_list)
+        if taken:
+            for k, v in taken.items():
+                c = next((x for x in cred_list if x["location"] == "query" and x["name"] == k), None)
+                if not c:
+                    c = {"location": "query", "name": k, "env": _env_name(name, k)}
+                    cred_list.append(c)
+                if v and not secrets_in.get(k):
+                    secrets_in[k] = v
+            warnings.append("服务地址里的密钥参数 " + "、".join(taken) + " 已从 URL 移除，改为「URL 参数」凭据（Bot 侧读环境变量"
+                            + "、".join(next(x["env"] for x in cred_list if x["name"] == k) for k in taken) + "）")
+            url = clean
     if errs:
         raise unprocessable("MCP 服务校验不通过", details={"errors": errs})
     return {"name": name, "display_name": data["display_name"].strip(), "description": str(data.get("description") or "").strip(),
-            "transport": tr, "url": url, "command": command, "args": args, "env": env, "auth": auth,
-            "auth_header": (header or "X-API-Key") if auth == "API Key" else None,
-            "auth_env": aenv if auth == "环境变量" else None, "owner": data["owner"].strip()}
+            "transport": tr, "url": url, "command": command, "args": args, "env": env, "credentials": cred_list,
+            "owner": data["owner"].strip(), "_secrets": secrets_in, "_warnings": warnings}
+
+
+def _env_name(server: str, cred: str) -> str:
+    return re.sub(r"[^A-Z0-9_]", "_", f"MCP_{server}_{cred}".upper())[:64]
+
+
+def _parse_creds(data: dict, tr: str, server: str, errs: list) -> tuple[list[dict], dict[str, str]]:
+    """credentials: [{location, name, env, scheme?, secret?}]；兼容 v0.6 的 auth / auth_header / auth_env / secret。"""
+    raw = data.get("credentials")
+    secrets: dict[str, str] = {}
+    if raw is None and data.get("auth") not in (None, "", "无"):
+        a, tok = data.get("auth"), _env_name(server or "x", "token")
+        if a == "Bearer Token":
+            raw = [{"location": "header", "name": "Authorization", "env": tok, "scheme": "Bearer"}]
+        elif a == "API Key":
+            raw = [{"location": "header", "name": data.get("auth_header") or "X-API-Key", "env": tok}]
+        elif a == "环境变量":
+            raw = [{"location": "env", "name": data.get("auth_env") or "", "env": data.get("auth_env") or ""}]
+        else:
+            errs.append({"field": "auth", "message": "鉴权方式为 无 / Bearer Token / API Key / 环境变量（建议改用 credentials）"})
+            raw = []
+        if data.get("secret") and raw:
+            raw[0]["secret"] = data["secret"]
+    out, seen = [], set()
+    if not isinstance(raw or [], list):
+        errs.append({"field": "credentials", "message": "credentials 应为数组"})
+        return [], {}
+    for i, c in enumerate(raw or []):
+        c = c or {}
+        loc = c.get("location") or c.get("loc") or "header"
+        n = str(c.get("name") or "").strip()
+        e = str(c.get("env") or "").strip()
+        f = f"credentials[{i}]"
+        if loc not in CRED_LOCATIONS:
+            errs.append({"field": f + ".location", "message": "位置为 header（请求头）/ query（URL 参数）/ env（环境变量，仅 stdio）"})
+            continue
+        if loc == "env" and tr != "stdio":
+            errs.append({"field": f + ".location", "message": "「环境变量」位置只用于 stdio 服务"})
+        if loc in ("header", "query") and tr == "stdio":
+            errs.append({"field": f + ".location", "message": "stdio 服务的凭据请用「环境变量」位置"})
+        rx = HEADER_RE if loc == "header" else QUERY_RE if loc == "query" else ENV_NAME_RE
+        if not rx.match(n):
+            errs.append({"field": f + ".name", "message": f"第 {i + 1} 条凭据请填写" + ("请求头名（英文 / 数字 / 横线）" if loc == "header" else "参数名" if loc == "query" else "环境变量名（大写）")})
+        if not ENV_NAME_RE.match(e):
+            errs.append({"field": f + ".env", "message": f"第 {i + 1} 条凭据请填写 Bot 侧环境变量名（大写字母 / 数字 / 下划线）"})
+        if (loc, n.lower() if loc == "header" else n) in seen:
+            errs.append({"field": f + ".name", "message": f"凭据 {n} 重复"})
+        seen.add((loc, n.lower() if loc == "header" else n))
+        scheme = "Bearer" if (c.get("scheme") == "Bearer" or (loc == "header" and n.lower() == "authorization" and c.get("scheme") != "")) else None
+        o = {"location": loc, "name": n, "env": e}
+        if scheme and loc == "header":
+            o["scheme"] = scheme
+        out.append(o)
+        if c.get("secret"):
+            secrets[n] = str(c["secret"])
+    return out, secrets
+
+
+def _store_secrets(sv: McpServer, new: dict[str, str], clear: bool = False) -> None:
+    cur = {} if clear else _secrets(sv)
+    names = {c["name"] for c in creds(sv)}
+    cur = {k: v for k, v in {**cur, **new}.items() if k in names and v}
+    sv.secret_encrypted = encrypt_secret(json.dumps(cur, ensure_ascii=False)) if cur else None
 
 
 def create(db: Session, data: dict, actor: Actor) -> McpServer:
@@ -147,9 +272,10 @@ def create(db: Session, data: dict, actor: Actor) -> McpServer:
     if db.get(McpServer, v["name"]):
         raise conflict(f"服务名 {v['name']} 已存在", "MCP_SERVER_EXISTS")
     pos = (db.scalar(select(func.max(McpServer.position))) or 0) + 1
-    sv = McpServer(source="external", position=pos, server_info={}, **v)
-    if data.get("secret"):
-        sv.secret_encrypted = encrypt_secret(str(data["secret"]))
+    secrets, warnings = v.pop("_secrets"), v.pop("_warnings")
+    sv = McpServer(source="external", position=pos, server_info={}, example_data=False, **v)
+    _store_secrets(sv, secrets)
+    sv.warnings = warnings  # type: ignore[attr-defined]
     db.add(sv)
     db.flush()
     audit.record(db, actor, "mcp.create", "mcp_server", sv.name, f"注册 MCP 服务 {sv.display_name}（{sv.name}）", None,
@@ -164,14 +290,13 @@ def update(db: Session, name: str, data: dict, actor: Actor) -> McpServer:
     if data.get("name") and data["name"] != name:
         raise unprocessable("服务名注册后不可修改")
     v = _validate({**data, "name": name}, False, sv)
+    secrets, warnings = v.pop("_secrets"), v.pop("_warnings")
     before = conn_dict(sv)
     for k, val in v.items():
         if k != "name":
             setattr(sv, k, val)
-    if data.get("secret"):
-        sv.secret_encrypted = encrypt_secret(str(data["secret"]))
-    if data.get("clear_secret"):
-        sv.secret_encrypted = None
+    _store_secrets(sv, secrets, clear=bool(data.get("clear_secret")))
+    sv.warnings = warnings  # type: ignore[attr-defined]
     sv.updated_at = utcnow()
     after = conn_dict(sv)
     if before != after:
@@ -239,15 +364,25 @@ def normalize_tools(raw: list) -> list[dict]:
     return out
 
 
-def _headers(sv: McpServer) -> dict:
-    sec = decrypt_secret(sv.secret_encrypted) if sv.secret_encrypted else None
-    if not sec:
-        return {}
-    if sv.auth == "Bearer Token":
-        return {"Authorization": f"Bearer {sec}"}
-    if sv.auth == "API Key":
-        return {sv.auth_header or "X-API-Key": sec}
-    return {}
+def connection(sv: McpServer) -> tuple[str | None, dict, dict]:
+    """在线同步用：(带 URL 参数凭据的地址, 请求头, stdio 环境变量)。只使用平台上保存的密钥；没保存的凭据不发送。"""
+    sec = _secrets(sv)
+    headers, query, env = {}, [], dict(sv.env or {})
+    for c in creds(sv):
+        v = sec.get(c["name"])
+        if not v:
+            continue
+        if c["location"] == "header":
+            headers[c["name"]] = f"Bearer {v}" if c.get("scheme") == "Bearer" else v
+        elif c["location"] == "query":
+            query.append((c["name"], v))
+        else:
+            env[c["name"]] = v
+    url = sv.url
+    if url and query:
+        p = urlsplit(url)
+        url = urlunsplit((p.scheme, p.netloc, p.path, urlencode(parse_qsl(p.query) + query), p.fragment))
+    return url, headers, env
 
 
 def fetch_remote(sv: McpServer, actor: Actor) -> tuple[dict, list[dict]]:
@@ -260,13 +395,12 @@ def fetch_remote(sv: McpServer, actor: Actor) -> tuple[dict, list[dict]]:
                               "STDIO_SYNC_DISABLED")
         if actor.role != "admin":
             raise forbidden("stdio 服务的在线同步只有管理员可以执行", "ROLE_FORBIDDEN")
-        env = dict(sv.env or {})
-        if sv.auth == "环境变量" and sv.auth_env and sv.secret_encrypted:
-            env[sv.auth_env] = decrypt_secret(sv.secret_encrypted) or ""
+        _, _, env = connection(sv)
         init, tools = fetch_tools("stdio", command=sv.command, args=list(sv.args or []), env=env,
                                   timeout=get_settings().mcp_timeout_seconds)
     else:
-        init, tools = fetch_tools(sv.transport, url=sv.url, headers=_headers(sv), timeout=get_settings().mcp_timeout_seconds)
+        url, headers, _ = connection(sv)
+        init, tools = fetch_tools(sv.transport, url=url, headers=headers, timeout=get_settings().mcp_timeout_seconds)
     info = {"protocol_version": init.get("protocolVersion"), "server_info": init.get("serverInfo") or {}}
     return info, tools
 
@@ -390,6 +524,7 @@ def apply(db: Session, sv: McpServer, body: dict, actor: Actor) -> dict:
     downgraded = intent_svc.recheck_enabled(db, users, actor.name, f"MCP 服务 {sv.name} 同步")
     src = body.get("source") if body.get("source") in ("在线同步", "手动导入") else "手动导入"
     sv.last_sync_at, sv.last_sync_by, sv.last_sync_source = now, actor.name, src
+    sv.example_data = False
     if isinstance(body.get("server_info"), dict) and body["server_info"]:
         sv.server_info = body["server_info"]
     audit.record(db, actor, "mcp.sync", "mcp_server", sv.name,

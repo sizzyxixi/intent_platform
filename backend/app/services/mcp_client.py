@@ -19,7 +19,7 @@ import httpx
 from ..errors import ApiError
 
 PROTOCOL_VERSION = "2025-06-18"
-CLIENT_INFO = {"name": "intent-platform", "version": "0.6.0"}
+CLIENT_INFO = {"name": "intent-platform", "version": "0.15.0"}
 MAX_PAGES = 50
 
 

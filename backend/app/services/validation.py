@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Category, Chunk, Document, McpServer, SlotDef, Space, Tool
-from .common import INTENT_CODE_RE
+from .common import FILE_SLOT_TYPES, INTENT_CODE_RE
 
 
 class RefIndex:
@@ -130,6 +130,14 @@ def validate(it: dict, idx: RefIndex) -> list[str]:
             e.append(f"工具 {t.name} 在 MCP 服务 {t.server} 最近一次同步中已不存在，请更换工具")
         elif not t.enabled:
             e.append(f"工具 {t.name} 已停用")
+        if t.type == "skill":
+            c = t.config or {}
+            if not c.get("package_id") or not c.get("files"):
+                e.append(f"工具 {t.name} 的技能包未上传或未能解析 SKILL.md")
+            continue  # 技能没有入参映射：槽位作为上下文交给 AI
+        if t.type == "workflow":
+            from .workflows import missing_fields
+            e += [f"工具 {t.name} {m}" for m in missing_fields(t.config or {})]
         pm = b.get("param_map") or {}
         known = {p["name"] for p in t.params}
         for k in pm:
@@ -137,8 +145,17 @@ def validate(it: dict, idx: RefIndex) -> list[str]:
                 e.append(f"工具 {t.name} 没有入参「{k}」")
         for p in t.params:
             m = pm.get(p["name"])
-            if p.get("required") and (not m or not str(m.get("value") or "").strip()):
+            mapped = bool(m and str(m.get("value") or "").strip())
+            if t.type == "workflow":
+                if p.get("required") and not mapped and not str(p.get("default") or "").strip():
+                    e.append(f"工作流 {t.name} 的必填入参「{p['name']}」需配置映射或默认值")
+            elif p.get("required") and not mapped:
                 e.append(f"工具 {t.name} 的必填入参「{p['name']}」未配置映射")
-            if m and m.get("source") == "槽位" and m.get("value") and m["value"] not in slot_names:
-                e.append(f"工具 {t.name} 入参「{p['name']}」映射的槽位「{m['value']}」不存在")
+            if m and m.get("source") == "槽位" and m.get("value"):
+                if m["value"] not in slot_names:
+                    e.append(f"工具 {t.name} 入参「{p['name']}」映射的槽位「{m['value']}」不存在")
+                elif p.get("type") in ("file", "file_list") and defs.get(m["value"]) is not None \
+                        and defs[m["value"]].type not in FILE_SLOT_TYPES:
+                    e.append(f"工具 {t.name} 的文件入参「{p['name']}」只能映射到「文件 / 图片」类型的槽位（当前「{m['value']}」是"
+                             f"{defs[m['value']].type}）")
     return e

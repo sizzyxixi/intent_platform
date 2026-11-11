@@ -235,7 +235,7 @@ def test_kb_admin(admin):
 
 def test_tools_admin(admin):
     ts = admin.get("/api/admin/tools").json()
-    assert len(ts) == 29
+    assert len(ts) == 33  # 含卖家精灵 4 个示例子工具
     qs = next(t for t in ts if t["name"] == "query_stock")
     assert qs["used_by"] and qs["type_label"] == "API 接口"
     r = admin.put("/api/admin/tools/pf_read_intents", json={"display_name": "x"})

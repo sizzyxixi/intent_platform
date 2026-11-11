@@ -1,0 +1,173 @@
+import { expect, test } from '@playwright/test'
+import path from 'path'
+import { login, watchErrors } from './helpers'
+
+// v0.15：分类入口、统一的注册工具（MCP 凭据 / 技能包 / 工作流）、意图里两级选择工具
+const MCP = `http://127.0.0.1:${process.env.E2E_MCP_PORT || 8766}`
+const out = (n: string) => `../screenshots/v15_${n}.png`
+const settle = async (page: any) => { await expect(page.locator('#toast')).not.toHaveClass(/show/, { timeout: 6000 }); await page.waitForTimeout(200) }
+
+const DIFY = { user_input_form: [
+  { 'text-input': { label: '商品标题', variable: 'title', required: true } },
+  { select: { label: '风格', variable: 'style', required: true, options: ['简约', '复古'], default: '简约' } },
+  { file: { label: '商品图', variable: 'image', required: true } },
+  { 'file-list': { label: '参考图', variable: 'refs', required: false } }] }
+const COZE = { code: 0, data: { input: { parameters: { input: { type: 'string', required: true, description: '待翻译文本' },
+  target_language: { type: 'string', required: false, default_value: 'en', description: '目标语言' },
+  img: { type: 'string', assist_type: 2, required: false, description: '配图' } } },
+  output: { parameters: { output: { type: 'string' } } } } }
+
+test('v15：新建意图 → 管理分类 → 分类层级设置', async ({ page }) => {
+  await login(page)
+  await page.click('#newIntent')
+  await page.click('#niTax')
+  await expect(page.locator('#lvCard')).toBeVisible()
+  await expect(page).toHaveURL(/#\/intents\/cfg/)
+  await page.waitForTimeout(400)
+  await page.screenshot({ path: out('分类层级设置') })
+})
+
+test('v15：工具列表 + 注册 MCP（凭据预设 / URL 去密钥 / 内嵌同步）', async ({ page, request }) => {
+  const errs = watchErrors(page)
+  await request.post(MCP + '/_reset')
+  await login(page)
+  await page.goto('/#/tools/list')
+  await expect(page.locator('h2', { hasText: '工具中心' })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('不区分业务空间，')
+  await expect(page.locator('#toolTF')).toContainText(/MCP [5-9]/)
+  await expect(page.locator('#toolTF')).toContainText('技能 3')
+  await expect(page.locator('#toolTF')).toContainText('工作流 1')
+  await expect(page.locator('tr[data-server="sellersprite"]')).toContainText('示例数据')
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: out('工具列表') })
+
+  await page.click('#toolNew')
+  await page.selectOption('#tTy', 'mcp')
+  await page.fill('#mN', 'demo_shop')
+  await page.fill('#mD', '演示商城 MCP')
+  await page.fill('#mDs', '订单查询 / 帮助中心')
+  await page.fill('#mU', MCP + '/mcp?api_key=plain-secret')
+  await page.locator('[data-preset="appid"]').click()
+  await expect(page.locator('#crN1')).toHaveValue('X-App-Key')
+  await page.click('#toolSave')
+  // URL 中的密钥被移除并转为 URL 参数凭据
+  await expect(page.getByTestId('toolEdit').locator('.err')).toContainText('api_key')
+  await expect(page.locator('#mU')).toHaveValue(MCP + '/mcp')
+  await expect(page.locator('#crN2')).toHaveValue('api_key')
+  await expect(page.locator('#syPanel')).toBeVisible()
+  await page.click('#syRun')
+  await expect(page.locator('#syDiff')).toContainText('新增 3')
+  await settle(page)
+  await page.locator('#mCreds').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: out('注册工具-MCP') })
+  await page.click('#syApply')
+  await page.keyboard.press('Escape')
+  await expect(page.locator('#toolTbl tr[data-tool^="demo_shop."]')).toHaveCount(3)
+  expect(errs).toEqual([])
+})
+
+test('v15：技能（文件夹上传 SKILL.md）与工作流（Dify / Coze）', async ({ page }) => {
+  const errs = watchErrors(page)
+  await login(page)
+  await page.goto('/#/tools/list')
+  // 技能
+  await page.click('#toolNew')
+  await page.selectOption('#tTy', 'skill')
+  await page.locator('#skDir').setInputFiles(path.resolve('e2e/fixtures/poster-skill'))
+  await expect(page.locator('#skFiles')).toContainText('SKILL.md')
+  await expect(page.locator('#skFiles')).toContainText('scripts/layout.py')
+  await expect(page.locator('#tN')).toHaveValue('poster_maker')
+  await expect(page.locator('#tDs')).toHaveValue('根据商品信息与平台规范生成促销海报文案和版式说明')
+  await expect(page.locator('#tDs')).toHaveAttribute('readonly', '')
+  await page.fill('#tD', '促销海报')
+  await settle(page)
+  await page.screenshot({ path: out('技能上传') })
+  await page.click('#toolSave')
+  await expect(page.getByTestId('toolEdit')).toHaveCount(0)
+  await expect(page.locator('tr[data-tool="poster_maker"]')).toContainText('技能包 v1 · 3 个文件')
+
+  // 工作流 · Dify
+  await page.click('#toolNew')
+  await page.selectOption('#tTy', 'workflow')
+  await page.fill('#tN', 'dify_poster')
+  await page.fill('#tD', 'Dify 海报')
+  await page.fill('#tDs', '调用 Dify 工作流生成商品海报')
+  await page.selectOption('#wUserMode', 'session')
+  await page.click('#wfSync')
+  await page.getByTestId('wfSync').getByRole('button', { name: '粘贴 JSON' }).click()
+  await page.fill('#wsRaw', JSON.stringify(DIFY))
+  await page.click('#wsRun')
+  await expect(page.locator('#wParams')).toContainText('文件列表')
+  await page.click('#wCf')
+  await page.getByRole('button', { name: '＋ 添加映射' }).click()
+  await page.fill('#omF0', 'data.outputs.poster_url'); await page.fill('#omA0', 'poster_url')
+  await settle(page)
+  await page.locator('#wParams').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: out('工作流-Dify') })
+  await page.click('#toolSave')
+  await expect(page.getByTestId('toolEdit')).toHaveCount(0)
+  await expect(page.locator('tr[data-tool="dify_poster"]')).toContainText('写操作需确认')
+
+  // 工作流 · Coze
+  await page.click('#toolNew')
+  await page.selectOption('#tTy', 'workflow')
+  await page.fill('#tN', 'coze_translate')
+  await page.fill('#tD', 'Coze 翻译')
+  await page.fill('#tDs', '调用 Coze 工作流翻译商品文案')
+  await page.selectOption('#wPlat', 'coze')
+  await expect(page.locator('#wEnv')).toHaveValue('COZE_PAT')
+  await page.fill('#wId', '7428000000000000001')
+  await page.selectOption('#wMode', 'streaming')
+  await page.click('#wfSync')
+  await page.getByTestId('wfSync').getByRole('button', { name: '粘贴 JSON' }).click()
+  await page.fill('#wsRaw', JSON.stringify(COZE))
+  await page.click('#wsRun')
+  await expect(page.locator('#omF0')).toHaveValue('data.output')
+  await page.locator('#wAdv summary').click()
+  await page.click('#wAsync')
+  await page.fill('#wExt', '{"channel":"intent"}')
+  await settle(page)
+  await page.locator('#wParams').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: out('工作流-Coze') })
+  await page.click('#toolSave')
+  await expect(page.getByTestId('toolEdit')).toHaveCount(0)
+  const row = page.locator('tr[data-tool="coze_translate"]')
+  await expect(row).toContainText('Coze · coze.cn · 7428000000000000001 · 流式')
+  await row.getByRole('button', { name: '测试调用' }).click()
+  await page.getByTestId('toolTest').locator('input').first().fill('夏季连衣裙')
+  await page.click('#ttRun')
+  await expect(page.locator('#ttOut')).toContainText('https://api.coze.cn/v1/workflow/stream_run')
+  await page.keyboard.press('Escape')
+  expect(errs).toEqual([])
+})
+
+test('v15：意图编辑 · 两级选择工具（类型 → 工具）+ 技能 / 工作流卡片', async ({ page }) => {
+  const errs = watchErrors(page)
+  await login(page)
+  await page.selectOption('#spSel', 'mc')
+  await page.fill('#fQ', 'M.DESIGN.MAIN'); await page.click('#fApply')
+  await page.locator('#intentTbl tbody tr').first().locator('button', { hasText: '编辑' }).click()
+  const ed = page.getByTestId('intentEditor')
+  await expect(ed).toBeVisible()
+  await expect(ed.locator('[data-bound="gen_image_skill"]')).toContainText('无需在此做入参映射')
+  await expect(ed.locator('[data-bound="gen_image_skill"]')).toContainText('SKILL.md')
+  // 类型下拉只显示有可选工具的类型，并带数量
+  const ty = page.locator('#eToolType')
+  await expect(ty.locator('option', { hasText: /^工作流（\d+）$/ })).toHaveCount(1)
+  await ty.selectOption('workflow')
+  await page.selectOption('#eTool', 'dub_subtitle_skill')
+  await page.click('#toolAdd')
+  const wf = ed.locator('[data-bound="dub_subtitle_skill"]')
+  await expect(wf).toContainText('默认值')
+  await ty.selectOption('mcp')
+  await expect(page.locator('#eTool option', { hasText: '卖家精灵' })).toHaveCount(1)
+  await ty.selectOption('http')
+  await expect(page.locator('#eToolQ')).toBeVisible() // 多于 5 个时出现筛选
+  await page.fill('#eToolQ', '库存')
+  await settle(page)
+  await wf.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: out('意图编辑-关联工具二级') })
+  // 记住上次选择的类型
+  expect(await page.evaluate(() => sessionStorage.getItem('pickToolType'))).toBe('http')
+  expect(errs).toEqual([])
+})

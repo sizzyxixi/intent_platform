@@ -123,7 +123,7 @@ def test_search_tag_filter(full_key):
 
 def test_tools(bot):
     ts = check(bot.get("/api/v1/tools"))
-    assert len(ts) == 29
+    assert len(ts) == 33
     b = check(bot.get("/api/v1/tools?source=builtin"))
     assert len(b) == 8 and sum(1 for t in b if t["maintenance"]) == 3
     cli = [t for t in ts if t["type"] == "cli"]

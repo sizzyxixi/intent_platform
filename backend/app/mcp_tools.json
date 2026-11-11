@@ -257,7 +257,7 @@
  },
  {
   "name": "list_tools",
-  "description": "列出全部工具（外部：API 接口 / MCP 工具 / CLI 命令 / 技能·工作流；以及平台内置工具）及入参，用于在意图中准备对应槽位。全局，不区分空间。只读；不能注册或调用工具。",
+  "description": "列出全部工具（外部：API 接口 / MCP 工具 / CLI 命令 / 技能 / 工作流；以及平台内置工具）及入参，用于在意图中准备对应槽位。全局，不区分空间。只读；不能注册或调用工具。",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -277,7 +277,8 @@
       "http",
       "mcp",
       "cli",
-      "skill"
+      "skill",
+      "workflow"
      ]
     }
    }

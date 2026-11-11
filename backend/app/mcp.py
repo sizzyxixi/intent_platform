@@ -158,7 +158,7 @@ async def mcp(request: Request, ctx: KeyCtx = Depends(api_key(None)), db: Sessio
     if method == "initialize":
         return JSONResponse(_rpc(mid, {"protocolVersion": params.get("protocolVersion") or PROTOCOL,
                                        "capabilities": {"tools": {"listChanged": False}},
-                                       "serverInfo": {"name": "intent-platform", "version": "0.5.0"}}))
+                                       "serverInfo": {"name": "intent-platform", "version": "0.15.0"}}))
     if method == "ping":
         return JSONResponse(_rpc(mid, {}))
     if method == "tools/list":

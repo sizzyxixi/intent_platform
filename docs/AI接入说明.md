@@ -6,11 +6,11 @@
 ## 1. 平台是什么
 
 意图管理平台是**通用的意图与知识管理平台**，服务多个 Bot 和智能体（如 1688 智能客服、Moonclaw 跨境智能体）。
-- **业务空间**：每个 Bot / 智能体对应一个空间。意图、意图分类、槽位、意图导入记录、运行时配置及其版本按空间隔离；**知识库和工具全平台通用，不区分空间**，任何空间的意图都能关联。
+- **业务空间**：每个 Bot / 智能体对应一个空间。意图、意图分类、槽位、意图导入记录、运行时配置及其版本按空间隔离；**知识库和工具在平台级统一登记**，任何空间的意图都能关联。
 - **意图**：用户想办的一件事，比如「问是否有现货」「生成产品主图」。每个意图有编码、名称、分类路径、意图描述、例句、槽位（处理前要拿到的信息），以及由运营关联的知识和工具。
 - **分类层级（v0.6 起按空间动态配置）**：每个空间在「空间设置」里自定义层数和每层名称，最后一层固定是意图，上面有 0～5 层分类。例如 1688 智能客服是「大类 → 问题桶 → 意图」，别的空间可能是「业务线 → 场景 → 子场景 → 意图」。意图必须挂在**最末一层分类**下；分类路径用 `category_path` 表示（从第一层到最末层）。**不要假设固定是两层分类**，每次先读 `GET /api/v1/taxonomy`。
 - **空间设置**：每个空间一份，统一规定识别阈值、澄清、槽位追问次数、工具失败重试和最终动作（转人工 / 交给通用助手 / 告知无法处理）。意图上**不再配置兜底条件**（见第 5 节）。
-- **工具**：技术在平台「工具中心」登记的外部能力，共 4 种类型：`http`（API 接口）、`mcp`（MCP 工具）、`cli`（CLI 命令）、`skill`（技能/工作流）。MCP 按「**MCP 服务 → 子工具**」两级登记：一个第三方 MCP 服务通常包含一批工具，平台同步它的 tools/list，意图只关联其中具体的子工具（工具名形如 `{服务名}.{远端工具名}`，如 `compliance.check_ip_risk`）。平台只登记，**执行在 Bot / 智能体侧**（见第 12 节）。本说明里的接口本身也作为「平台内置」工具登记在工具中心（见第 13 节）。
+- **工具**：技术在平台「工具中心」登记的外部能力，共 5 种类型：`http`（API 接口）、`mcp`（MCP 工具）、`cli`（CLI 命令）、`skill`（技能：含 SKILL.md 的技能包）、`workflow`（工作流：Dify / Coze / 通用 HTTP）。MCP 按「**MCP 服务 → 子工具**」两级登记：一个第三方 MCP 服务通常包含一批工具，平台同步它的 tools/list，意图只关联其中具体的子工具（工具名形如 `{服务名}.{远端工具名}`，如 `compliance.check_ip_risk`）。平台只登记，**执行在 Bot / 智能体侧**（见第 12 节）。本说明里的接口本身也作为「平台内置」工具登记在工具中心（见第 13 节）。
 - **槽位**：按空间维护的槽位列表（如 `platform`、`site`、`sku`），每个空间一份、互不可见；意图只能从本空间的槽位里选。
 - **知识库**：分「表格知识库」和「图文知识库-富文本」，导入后构建为知识切片。知识库和切片带适用范围标签（平台 / 站点 / 语言 / 类目）。意图关联知识时要标明用途：**参考**或**校验**。
 - **状态**：草稿 / 启用 / 停用。只有运营可以启用；Bot 只使用启用的意图。
@@ -50,7 +50,7 @@
 
 - **按空间**：槽位属于某个空间，其他空间看不到；同一个英文名在不同空间是两份独立的槽位。
 - **先读后用**：写意图前 `GET /api/v1/slots`，按英文名、显示名和含义匹配本空间已有槽位。例如本空间已有 `qty` 就用 `qty`，不要写 `quantity`、`num`、`count`；已有 `sku` 就不要写「商品」「链接」。**不要新建同义槽位**（MVP 平台不做同义名自动归一，需要你自己避免）。
-- 槽位字段只有 4 项：英文名 + 显示名、类型（文本 / 数字 / 日期 / 枚举）、可选值（仅枚举）、默认追问话术。
+- 槽位字段只有 4 项：英文名 + 显示名、类型（文本 / 数字 / 日期 / 枚举 / 文件 / 图片）、可选值（仅枚举）、默认追问话术。文件 / 图片槽位的值是文件链接，工具的 file / file_list 入参只能映射到这两类槽位。
 - 确实没有合适的槽位时，可以 `POST /api/v1/slots` 在本空间新建：`name` 小写英文 + 下划线；必填 `display_name`、`type`、`default_ask`；枚举类型要给 `options`。本空间已有同名槽位返回 409。
 - 在 batchUpsert 里写了本空间不存在的槽位名时，平台会在本空间自动新建为「文本」槽位（默认追问「请补充{name}」），并在 `new_slots` 列出，请提醒运营去「意图管理 › 槽位」补全显示名和追问话术。所以写入前务必用英文名并先查重。
 - `PUT /api/v1/slots/{name}` 只用于补全显示名、类型、可选值或默认追问话术，英文名不能改。不要调用 `DELETE /api/v1/slots/{name}`（被意图使用的槽位会被拒绝删除，返回 409 `SLOT_IN_USE`）。
@@ -388,7 +388,7 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
   },
   {
     "name": "list_tools",
-    "description": "列出全部工具（外部：API 接口 / MCP 工具 / CLI 命令 / 技能·工作流；以及平台内置工具）及入参，用于在意图中准备对应槽位。全局，不区分空间。只读；不能注册或调用工具。",
+    "description": "列出全部工具（外部：API 接口 / MCP 工具 / CLI 命令 / 技能 / 工作流；以及平台内置工具）及入参，用于在意图中准备对应槽位。全局，不区分空间。只读；不能注册或调用工具。",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -408,7 +408,8 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
             "http",
             "mcp",
             "cli",
-            "skill"
+            "skill",
+            "workflow"
           ]
         }
       }
@@ -440,23 +441,26 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
 
 > 运营的 AI 工具整理意图时只需了解工具入参（`GET /api/v1/tools`），**不注册、不调用工具**。本节给读取 `GET /api/v1/runtime-config` 的 Bot 看。
 
-平台只登记工具和意图里的入参映射，执行在 Bot。四种类型的入参映射规则相同：`param_map` 中每个入参的 `source` 取 `槽位`（用识别到的槽位值）、`常量`（固定值）或 `上下文`（如 session_id、buyer_id、order_id、sku）；必填入参缺值时先按槽位追问，不要带空值执行。
+平台只登记工具和意图里的入参映射，执行在 Bot。http / mcp / cli / workflow 的入参映射规则相同（skill 没有入参映射，见下表）：`param_map` 中每个入参的 `source` 取 `槽位`（用识别到的槽位值）、`常量`（固定值）或 `上下文`（如 session_id、buyer_id、order_id、sku）；必填入参缺值时先按槽位追问，不要带空值执行。
 
 | type | 平台登记的字段 | Bot 怎么执行 |
 |---|---|---|
 | `http`（API 接口） | `method`、`url`、`auth`、`input_schema` | 按 method + url 发请求；GET 把入参放 query，其他放 JSON body；凭据由 Bot 侧密钥托管提供，平台不下发密钥 |
 | `mcp`（MCP 子工具） | `server`（服务名）、`mcp_server`（连接信息：`transport`、`url` 或 `command`/`args`/`env`、`auth`）、`mcp_tool`（远端工具名）、`input_schema`（同步自远端的 inputSchema）、`confirm_required` | 按 `mcp_server` 连接（同一服务只建一个会话），调用 `tools/call`，`name`=mcp_tool，`arguments`=入参；`confirm_required=true` 时先向用户确认再调用 |
 | `cli`（CLI 命令） | `cli.bin`、`cli.command_template`、`cli.auth`、`cli.login_command`、`cli.install`、`cli.verified_version`、`cli.output_format`、`cli.confirm_required`、`input_schema` | 在 Bot 的运行环境里执行：未安装时按 `install` 安装；未登录或返回 `AUTH_REQUIRED` 时按 `login_command` 引导完成授权（不要向用户索要账号密码、cookie、token）；把模板里的 `{参数名}` 替换为入参值，**选填参数为空时连同它前面的 `--选项` 一起省略**，值含空格时加引号；以参数数组方式执行，不拼接 shell 字符串；`output_format=json` 时把 stdout 解析为 JSON；`confirm_required=true` 时先向用户确认再执行 |
-| `skill`（技能/工作流） | `skill_id`、`platform`、`output_description`、`input_schema` | 在对应平台运行该技能或工作流，`inputs`=入参 |
+| `skill`（技能） | `skill.name`、`skill.version`、`skill.description`、`skill.files`、`skill.download_path`（无 `input_schema`） | 用 `GET /api/v1/tools/{name}/skill-package` 下载技能包（zip，按 `version` 缓存，重新上传会 +1），把 SKILL.md 交给 AI 执行；**不做入参映射**，本意图抽取的槽位作为上下文一并交给 AI；输出格式按意图的回复要求 |
+| `workflow`（工作流） | `workflow.platform`（dify / coze / generic）、`workflow.response_mode`、`workflow.auth_env`、`workflow.timeout_sec`、`workflow.output_mapping`、`workflow.confirm_required`、平台字段、`input_schema` | **dify**：`POST {base_url}/workflows/run`，body `{"inputs": 入参, "response_mode": ..., "user": ...}`，`user.mode=session` 时用会话用户、`constant` 时用 `user.value`；**coze**：`POST https://api.{region}/v1/workflow/run`（streaming 用 `/v1/workflow/stream_run`），body `{"workflow_id", "parameters": 入参}`，按需加 `workflow_version`、`is_async`、`bot_id`、`app_id`、`ext`；**generic**：按 `url` + `method` 发送 `{"inputs": 入参}`。凭据取环境变量 `auth_env`，放在 `Authorization: Bearer ...`；`file` / `file_list` 入参传文件链接；必填入参未映射时用 `input_schema` 里的 `default`；按 `output_mapping` 从返回里取值（如 `data.outputs.result` → `result`）；`confirm_required=true` 时先向用户确认 |
 
-**MCP 服务与密钥**：runtime-config 顶层的 `mcp_servers` 列出已启用意图用到的 MCP 服务（只含被用到的服务；`tools` 里也只含被用到的子工具）。平台**不下发密钥**，`auth.token_env` 给出 Bot 运行环境里应保存密钥的环境变量名，例如：
+**MCP 服务与密钥**：runtime-config 顶层的 `mcp_servers` 列出已启用意图用到的 MCP 服务（只含被用到的服务；`tools` 里也只含被用到的子工具）。平台**不下发密钥**，`credentials` 逐条给出凭据的位置、名称和 Bot 运行环境里保存密钥的环境变量名（URL 里的密钥参数已被去掉），例如：
 
 ```json
-{"name": "compliance", "transport": "streamable_http", "url": "https://mcp.example.com/compliance",
- "auth": {"type": "API Key", "header": "X-API-Key", "token_env": "MCP_COMPLIANCE_TOKEN"}}
+{"name": "shop", "transport": "streamable_http", "url": "https://mcp.example.com/mcp",
+ "credentials": [{"location": "header", "name": "X-App-Id", "env": "MCP_APP_ID"},
+                 {"location": "header", "name": "X-App-Key", "env": "MCP_APP_KEY"},
+                 {"location": "query", "name": "api_key", "env": "MCP_API_KEY"}]}
 ```
 
-Bot 用 `X-API-Key: ${MCP_COMPLIANCE_TOKEN}` 连接；`Bearer Token` 类型用 `Authorization: Bearer ${token_env}`；stdio 服务按 `command` + `args` 在 Bot 机器上启动，`auth.type=环境变量` 时把 `token_env` 的值放进进程环境变量 `auth.env`。
+Bot 按顺序处理：`location=header` 放请求头（`scheme=Bearer` 时值为 `Bearer ${env}`）；`location=query` 追加为 URL 参数；`location=env`（stdio 服务）把 `${env}` 的值放进进程环境变量 `name`，并按 `command` + `args` 在 Bot 机器上启动。旧字段 `auth`（第一条凭据的摘要，含 `token_env`）仍保留以兼容 v0.6，新接入请读 `credentials`。
 
 CLI 示例（Moonclaw 空间，命令来自西之月开放平台 CLI 文档 https://open.westmonth.com/cli）：
 

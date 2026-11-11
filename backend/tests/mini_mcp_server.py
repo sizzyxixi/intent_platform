@@ -74,7 +74,17 @@ class H(BaseHTTPRequestHandler):
 
     def _authed(self) -> bool:
         tok = os.environ.get("MINI_MCP_TOKEN")
-        if tok and self.headers.get("Authorization") != f"Bearer {tok}":
+        bad = bool(tok and self.headers.get("Authorization") != f"Bearer {tok}")
+        hk = os.environ.get("MINI_MCP_HEADER")  # 形如 secret-key=abc
+        if hk:
+            k, _, v = hk.partition("=")
+            bad = bad or self.headers.get(k) != v
+        qk = os.environ.get("MINI_MCP_QUERY")  # 形如 api_key=xyz
+        if qk:
+            from urllib.parse import parse_qs
+            k, _, v = qk.partition("=")
+            bad = bad or (parse_qs(urlparse(self.path).query).get(k) or [None])[0] != v
+        if bad:
             self._send(401, b'{"error":"unauthorized"}')
             return False
         return True

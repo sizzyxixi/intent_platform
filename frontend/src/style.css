@@ -95,3 +95,17 @@ pre.code{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;fo
 .subrow td{background:#fbfcfe}.subrow td:first-child{padding-left:30px}.subrow.missing td{background:#fef2f2}
 .rm-used td{background:#fef2f2}
 .pickrow{display:flex;gap:8px;align-items:flex-start;padding:6px 4px;border-bottom:1px solid #f1f5f9;cursor:pointer}.pickrow input{margin-top:3px}
+#intentTbl td.muted{white-space:nowrap}
+#toolTbl td:nth-child(4){max-width:280px;}
+
+.b-o{background:#fff7ed;color:#c2410c;border-color:#fed7aa}
+.bound-tool{border:1px solid #e5e7eb;border-left:3px solid #94a3b8;padding:8px 10px;margin:0 0 8px;background:#fff}
+.bound-tool.is-skill{border-left-color:#047857}
+.bound-tool.is-wf{border-left-color:#d97706}
+.bound-tool.is-mcp{border-left-color:#6d28d9}
+.bound-tool.is-api{border-left-color:#1d4ed8}
+.bound-tool.is-cli{border-left-color:#4b5563}
+.adv{margin:10px 0;border:1px solid #e5e7eb;padding:6px 10px;background:#fafafa}
+.adv>summary{cursor:pointer;color:#4b5563;font-weight:600}
+.adv .f{margin-top:8px}
+.cred-presets a{margin-right:10px}

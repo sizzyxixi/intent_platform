@@ -65,7 +65,11 @@ def _bind_intent(admin, tools):
 
 def test_seed_migrated_servers(admin):
     ss = {s["name"]: s for s in admin.get("/api/admin/mcp-servers").json()}
-    assert set(ss) == {"compliance", "image", "pod", "intent_platform"}
+    assert set(ss) == {"compliance", "image", "pod", "intent_platform", "sellersprite"}
+    sp = ss["sellersprite"]
+    assert sp["example_data"] is True and sp["url"] == "https://mcp.sellersprite.com/mcp"
+    assert sp["credentials"] == [{"location": "header", "name": "secret-key", "env": "SELLERSPRITE_SECRET_KEY", "has_secret": False}]
+    assert sorted(t["mcp_tool"] for t in sp["tools"]) == ["asin_detail", "competitor_lookup", "keyword_miner", "product_research"]
     assert [t["name"] for t in ss["compliance"]["tools"]] == ["compliance.check_banned_words", "compliance.check_ip_risk"]
     assert ss["compliance"]["tool_count"] == 2 and ss["intent_platform"]["source"] == "builtin"
     t = next(t for t in admin.get("/api/admin/tools").json() if t["name"] == "compliance.check_ip_risk")
@@ -119,6 +123,7 @@ def test_sync_http_diff_and_removed_in_use(admin, mini_url, full_key):
     shop = next(s for s in rc["mcp_servers"] if s["name"] == "shop")
     assert shop["url"].endswith("/mcp") and shop["auth"] == {"type": "Bearer Token", "header": "Authorization",
                                                              "scheme": "Bearer", "token_env": "MCP_SHOP_TOKEN"}
+    assert shop["credentials"] == [{"location": "header", "name": "Authorization", "env": "MCP_SHOP_TOKEN", "scheme": "Bearer"}]
     names = [t["name"] for t in rc["tools"]]
     assert "shop.lookup_order" in names and "shop.cancel_order" in names and "shop.search_faq" not in names
     lk = next(t for t in rc["tools"] if t["name"] == "shop.lookup_order")

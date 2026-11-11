@@ -1,4 +1,4 @@
-"""工具中心：外部工具（http / mcp / cli / skill）登记与平台内置工具。平台只登记，执行在 Bot。"""
+"""工具中心：外部工具（http / mcp / cli / skill / workflow）登记与平台内置工具。平台只登记，执行在 Bot。"""
 import json
 import re
 import shlex
@@ -11,30 +11,62 @@ from ..errors import conflict, forbidden, not_found, unprocessable
 from ..models import Tool
 from ..security import encrypt_secret
 from . import intents as intent_svc
+from . import skills as skill_svc
+from . import workflows as wf_svc
 from . import spaces as space_svc
 from .common import TOOL_NAME_RE, Actor, iso, utcnow
 
-TYPE_LABEL = {"http": "API 接口", "mcp": "MCP 工具", "cli": "CLI 命令", "skill": "技能/工作流"}
+TYPE_LABEL = {"http": "API 接口", "mcp": "MCP 工具", "cli": "CLI 命令", "skill": "技能", "workflow": "工作流"}
 HTTP_AUTH = ("无", "API Key", "Bearer Token", "OAuth2")
 CLI_AUTH = ("无", "CLI 内置登录（OAuth）", "环境变量 Token")
-PARAM_TYPES = ("string", "number", "boolean")
+PARAM_TYPES = ("string", "number", "boolean", "file", "file_list", "string[]")
+PARAM_TYPE_LABEL = {"file": "文件", "file_list": "文件列表"}
 PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def param_schema(p: dict) -> dict:
+    t = p.get("type") or "string"
+    if t == "file":
+        sch = {"type": "string", "format": "uri", "x-type": "file"}
+    elif t == "file_list":
+        sch = {"type": "array", "items": {"type": "string", "format": "uri"}, "x-type": "file_list"}
+    elif t == "string[]":
+        sch = {"type": "array", "items": {"type": "string"}}
+    else:
+        sch = {"type": t}
+    if p.get("description"):
+        sch["description"] = p["description"]
+    if p.get("default") not in (None, ""):
+        sch["default"] = p["default"]
+    return sch
 
 
 def input_schema(t: Tool) -> dict:
     if t.type == "mcp" and t.config.get("input_schema"):
         return t.config["input_schema"]
-    props = {p["name"]: {"type": p["type"], **({"description": p["description"]} if p.get("description") else {})}
-             for p in t.params}
+    props = {p["name"]: param_schema(p) for p in t.params}
     return {"type": "object", "properties": props, "required": [p["name"] for p in t.params if p.get("required")]}
+
+
+def _param_out(p: dict) -> dict:
+    o = {"name": p["name"], "type": p["type"], "required": bool(p.get("required"))}
+    if p.get("description"):
+        o["description"] = p["description"]
+    if p.get("default") not in (None, ""):
+        o["default"] = p["default"]
+    return o
+
+
+def skill_download_path(name: str) -> str:
+    return f"/api/v1/tools/{name}/skill-package"
 
 
 def api_dict(t: Tool) -> dict:
     c = t.config or {}
     d = {"name": t.name, "display_name": t.display_name, "type": t.type, "description": t.description,
-         "params": [{"name": p["name"], "type": p["type"], "required": bool(p.get("required")),
-                     **({"description": p["description"]} if p.get("description") else {})} for p in t.params],
-         "source": t.source, "input_schema": input_schema(t)}
+         "params": [_param_out(p) for p in t.params], "source": t.source}
+    if t.type != "skill":
+        d["input_schema"] = input_schema(t)
     if t.type == "http":
         d.update({"method": c.get("method", "GET"), "url": c.get("url", ""), "auth": c.get("auth", "无")})
     elif t.type == "mcp":
@@ -46,9 +78,14 @@ def api_dict(t: Tool) -> dict:
         d["cli"] = {k: c.get(k) for k in ("bin", "command_template", "auth", "login_command", "install",
                                          "verified_version", "output_format", "confirm_required",
                                          "output_description")}
+        d["confirm_required"] = bool(c.get("confirm_required"))
     elif t.type == "skill":
-        d.update({"skill_id": c.get("skill_id", ""), "platform": c.get("platform", ""),
-                  "output_description": c.get("output_description", "")})
+        d["skill"] = {"name": c.get("skill_name") or t.name, "version": int(c.get("version") or 0),
+                      "description": t.description, "files": list(c.get("files") or []),
+                      "download_path": skill_download_path(t.name) if c.get("package_id") else None}
+    elif t.type == "workflow":
+        d["workflow"] = wf_svc.export(c)
+        d["confirm_required"] = bool(c.get("confirm_required"))
     if t.source == "builtin":
         d.update({"maintenance": t.maintenance, "space_scoped": t.space_scoped, "endpoints": list(t.endpoints or []),
                   "mcp_tools": list(t.mcp_tools or [])})
@@ -65,6 +102,8 @@ def admin_dict(t: Tool, users: list | None = None, spaces: dict | None = None) -
     c = t.config or {}
     if t.type in ("http", "mcp"):
         d["output_example"] = c.get("output_example", "")
+    if t.type in ("skill", "workflow"):
+        d["config"] = dict(c)
     if users is not None:
         d["used_by"] = [{"code": u.code, "name": u.name, "space": u.space_id,
                          "space_name": (spaces or {}).get(u.space_id, u.space_id), "status": u.status} for u in users]
@@ -97,9 +136,13 @@ def _params(raw) -> tuple[list[dict], list[dict]]:
         seen.add(n)
         typ = p.get("type") or "string"
         if typ not in PARAM_TYPES:
-            errs.append({"field": f"params[{i}].type", "message": "参数类型为 string / number / boolean"})
-        out.append({"name": n, "type": typ, "required": bool(p.get("required")),
-                    "description": str(p.get("description") or "").strip()})
+            errs.append({"field": f"params[{i}].type", "message": "参数类型为 string / number / boolean / file / file_list / string[]"})
+        o = {"name": n, "type": typ, "required": bool(p.get("required")),
+             "description": str(p.get("description") or "").strip()}
+        dv = p.get("default")
+        if dv not in (None, ""):
+            o["default"] = str(dv)
+        out.append(o)
     return out, errs
 
 
@@ -117,11 +160,15 @@ def validate_payload(data: dict, creating: bool, existing: Tool | None = None) -
     errs: list[dict] = []
     t = data.get("type") or (existing.type if existing else "")
     if t not in TYPE_LABEL:
-        errs.append({"field": "type", "message": "工具类型应为 http / mcp / cli / skill"})
+        errs.append({"field": "type", "message": "工具类型应为 http / mcp / cli / skill / workflow"})
+    if existing and data.get("type") and data["type"] != existing.type:
+        errs.append({"field": "type", "message": "工具类型注册后不可修改"})
     name = (data.get("name") or (existing.name if existing else "")).strip()
     if creating and (not TOOL_NAME_RE.match(name) or len(name) > 64):
         errs.append({"field": "name", "message": "工具名为小写英文/数字/下划线，以字母开头"})
     for f, label in (("display_name", "显示名"), ("description", "描述"), ("owner", "负责人")):
+        if f == "description" and t == "skill":
+            continue  # 技能描述来自 SKILL.md，只读
         if not str(data.get(f) or "").strip():
             errs.append({"field": f, "message": f"{label}必填"})
     cfg_in = data.get("config") or {}
@@ -146,7 +193,7 @@ def validate_payload(data: dict, creating: bool, existing: Tool | None = None) -
                 errs.append({"field": "config.output_example", "message": "出参示例必须是合法 JSON"})
         cfg = {"url": url, "method": m, "auth": a, "output_example": oe}
     elif t == "mcp":
-        errs.append({"field": "type", "message": "MCP 工具请在「注册 MCP 服务」里登记服务后同步工具，不能单独注册或改成 MCP 类型"})
+        errs.append({"field": "type", "message": "MCP 请以服务登记（POST /mcp-servers）后同步子工具，不能单独注册 MCP 工具"})
     elif t == "cli":
         b = str(cfg_in.get("bin") or "").strip()
         tpl = str(cfg_in.get("command_template") or "").strip()
@@ -175,17 +222,26 @@ def validate_payload(data: dict, creating: bool, existing: Tool | None = None) -
                "output_format": of, "confirm_required": bool(cfg_in.get("confirm_required")),
                "output_description": str(cfg_in.get("output_description") or "").strip()}
     elif t == "skill":
-        sid = str(cfg_in.get("skill_id") or "").strip()
-        plat = str(cfg_in.get("platform") or "").strip()
-        if not sid:
-            errs.append({"field": "config.skill_id", "message": "技能或工作流 ID 必填"})
-        if not plat:
-            errs.append({"field": "config.platform", "message": "所属平台必填"})
-        cfg = {"skill_id": sid, "platform": plat, "output_description": str(cfg_in.get("output_description") or "").strip()}
+        params = []
+        cfg = {"package_id": cfg_in.get("package_id")}
+    elif t == "workflow":
+        cfg = wf_svc.validate_config(cfg_in, errs)
     if errs:
         raise unprocessable("工具校验不通过", details={"errors": errs})
     return {"name": name, "type": t, "display_name": data["display_name"].strip(),
-            "description": data["description"].strip(), "owner": data["owner"].strip(), "params": params, "config": cfg}
+            "description": str(data.get("description") or "").strip(), "owner": data["owner"].strip(), "params": params,
+            "config": cfg}
+
+
+def _apply_skill(db: Session, t: Tool, package_id, creating: bool) -> None:
+    """技能：有新包就挂上成为新版本，描述取 SKILL.md；没传新包则保持当前版本。"""
+    cur = int((t.config or {}).get("version") or 0)
+    if package_id in (None, "") and not creating and (t.config or {}).get("package_id"):
+        return
+    pkg = skill_svc.attach(db, t.name, package_id, cur)
+    t.config = skill_svc.config_of(pkg)
+    t.description = pkg.description
+    t.params = []
 
 
 def create(db: Session, data: dict, actor: Actor) -> Tool:
@@ -194,9 +250,12 @@ def create(db: Session, data: dict, actor: Actor) -> Tool:
         raise conflict(f"工具名 {v['name']} 已存在", "TOOL_EXISTS")
     pos = (db.scalar(select(func.max(Tool.position)).where(Tool.source == "external")) or 0) + 1
     t = Tool(source="external", maintenance=False, space_scoped=False, endpoints=[], mcp_tools=[], position=pos, **v)
-    if data.get("secret"):
+    if data.get("secret") and t.type == "http":
         t.secret_encrypted = encrypt_secret(str(data["secret"]))
     db.add(t)
+    db.flush()
+    if t.type == "skill":
+        _apply_skill(db, t, v["config"].get("package_id"), True)
     audit.record(db, actor, "tool.create", "tool", t.name, f"注册工具 {t.display_name}（{t.name}）", None,
                  {"type": t.type})
     return t
@@ -213,9 +272,14 @@ def update(db: Session, name: str, data: dict, actor: Actor) -> Tool:
     v = validate_payload({**data, "name": name}, False, t)
     before = admin_dict(t)
     old_req = {p["name"] for p in t.params if p.get("required")}
-    for k in ("type", "display_name", "description", "owner", "params", "config"):
+    for k in ("display_name", "owner"):
         setattr(t, k, v[k])
-    if data.get("secret"):
+    if t.type == "skill":
+        _apply_skill(db, t, v["config"].get("package_id"), False)
+    else:
+        for k in ("description", "params", "config"):
+            setattr(t, k, v[k])
+    if data.get("secret") and t.type == "http":
         t.secret_encrypted = encrypt_secret(str(data["secret"]))
     if data.get("clear_secret"):
         t.secret_encrypted = None
@@ -287,6 +351,8 @@ def render_cli(template: str, values: dict) -> list[str]:
 
 def preview(t: Tool, values: dict, space_id: str | None = None) -> dict:
     """测试调用：校验必填并生成将要发出的请求（平台不执行，执行在 Bot）。"""
+    values = {**{p["name"]: p["default"] for p in t.params if p.get("default") not in (None, "")},
+              **{k: v for k, v in (values or {}).items() if v not in (None, "")}}
     missing = [p["name"] for p in t.params if p.get("required") and values.get(p["name"]) in (None, "")]
     if missing:
         raise unprocessable("必填入参未填写：" + "、".join(missing), "PARAM_REQUIRED", missing=missing)
@@ -302,6 +368,8 @@ def preview(t: Tool, values: dict, space_id: str | None = None) -> dict:
                 raise unprocessable(f"入参 {p['name']} 应为数字", "PARAM_TYPE")
         elif p["type"] == "boolean":
             v = str(v).lower() in ("1", "true", "yes", "是")
+        elif p["type"] in ("file_list", "string[]") and isinstance(v, str):
+            v = [x.strip() for x in re.split(r"[,，\n]", v) if x.strip()]
         args[p["name"]] = v
     c = t.config or {}
     out: dict = {"type": t.type, "executed": False,
@@ -333,7 +401,12 @@ def preview(t: Tool, values: dict, space_id: str | None = None) -> dict:
                           "login_command": c.get("login_command"), "install": c.get("install"),
                           "confirm_required": c.get("confirm_required"), "output_format": c.get("output_format")}
         out["response_example"] = c.get("output_description") or None
-    else:
-        out["request"] = {"platform": c.get("platform"), "skill_id": c.get("skill_id"), "inputs": args}
+    elif t.type == "workflow":
+        out["request"] = wf_svc.request_preview(c, args)
         out["response_example"] = c.get("output_description") or None
+    else:
+        out["request"] = {"skill": c.get("skill_name") or t.name, "version": c.get("version"),
+                          "files": [f["path"] for f in c.get("files") or []],
+                          "note": "技能没有入参映射：本意图抽取的槽位作为上下文交给 AI，输出格式由意图的回复要求约定。"}
+        out["response_example"] = None
     return out

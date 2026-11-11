@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
@@ -12,7 +12,7 @@ from ...deps import SCOPES, Role, require
 from ...errors import bad_request, not_found
 from ...models import ImportRecord, McpServer, Space
 from ...services import intents as intent_svc, keys as key_svc, knowledge as kb_svc, tools as tool_svc
-from ...services import mcp_servers as mcp_svc
+from ...services import mcp_servers as mcp_svc, skills as skill_svc, workflows as wf_svc
 from ...services.common import iso
 from .common import json_body
 
@@ -166,10 +166,45 @@ def list_tools(source: str | None = None, actor=Depends(VIEW), db: Session = Dep
     return [tool_svc.admin_dict(t, intent_svc.users_of_tool(db, t.name), sp) for t in tool_svc.list_tools(db, source)]
 
 
+@router.post("/skill-packages", status_code=201)
+async def upload_skill_package(request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
+    """上传技能包：multipart files（文件夹上传时文件名为相对路径；可附带同序的 paths 字段）或单个 .zip。返回解析结果，暂存 24 小时。"""
+    form = await request.form()
+    ups = [f for f in form.getlist("files") if hasattr(f, "read")]
+    paths = [str(x) for x in form.getlist("paths")]
+    files = []
+    for i, f in enumerate(ups):
+        name = paths[i] if i < len(paths) and paths[i] else (f.filename or "file")
+        files.append((name, await f.read()))
+    pkg = skill_svc.stage(db, files, actor)
+    db.commit()
+    return skill_svc.staged_dict(pkg)
+
+
 @router.get("/tools/{name}")
 def get_tool(name: str, actor=Depends(VIEW), db: Session = Depends(get_db)):
     t = tool_svc.get(db, name)
-    return tool_svc.admin_dict(t, intent_svc.users_of_tool(db, name), kb_svc.space_names(db))
+    d = tool_svc.admin_dict(t, intent_svc.users_of_tool(db, name), kb_svc.space_names(db))
+    if t.type == "skill":
+        pkg = skill_svc.current(db, t)
+        d["skill_md"] = pkg.skill_md if pkg else ""
+        d["skill_versions"] = skill_svc.versions(db, name)
+    return d
+
+
+@router.get("/tools/{name}/skill-package")
+def download_skill_package(name: str, version: int | None = Query(None, ge=1), actor=Depends(VIEW),
+                           db: Session = Depends(get_db)):
+    pkg, data = skill_svc.archive(db, name, version)
+    return Response(data, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{name}-v{pkg.version}.zip"', "X-Skill-Version": str(pkg.version)})
+
+
+@router.post("/workflows/sync-inputs")
+async def sync_workflow_inputs(request: Request, actor=Depends(EDIT)):
+    """读取工作流平台的入参定义（Dify GET /parameters、Coze GET /v1/workflows/{id}），或解析粘贴的返回 JSON。不保存密钥。"""
+    b = await json_body(request)
+    return await run_in_threadpool(wf_svc.sync_inputs, b.get("config") or {}, b.get("secret") or None, b.get("raw_json"))
 
 
 @router.post("/tools", status_code=201)
@@ -214,15 +249,17 @@ def get_mcp_server(name: str, actor=Depends(VIEW), db: Session = Depends(get_db)
 @router.post("/mcp-servers", status_code=201)
 async def create_mcp_server(request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
     sv = mcp_svc.create(db, await json_body(request), actor)
+    warnings = getattr(sv, "warnings", [])
     db.commit()
-    return mcp_svc.admin_dict(db, sv)
+    return {**mcp_svc.admin_dict(db, sv), "warnings": warnings}
 
 
 @router.put("/mcp-servers/{name}")
 async def update_mcp_server(name: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
     sv = mcp_svc.update(db, name, await json_body(request), actor)
+    warnings = getattr(sv, "warnings", [])
     db.commit()
-    return mcp_svc.admin_dict(db, sv)
+    return {**mcp_svc.admin_dict(db, sv), "warnings": warnings}
 
 
 @router.delete("/mcp-servers/{name}")

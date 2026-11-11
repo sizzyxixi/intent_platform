@@ -1,10 +1,15 @@
-# 意图管理平台（生产版 v0.6）
+# 意图管理平台（生产版 v0.15）
 
-基于 demo（`intent-platform/index.html` + `src3/`）开发的生产可用版本。界面、交互和种子数据以 demo 为准，接口严格按 `docs/openapi.yaml` 0.6.0 实现。
+基于 demo（`intent-platform/index.html` + `src3/`）开发的生产可用版本。界面、交互和种子数据以 demo 为准，接口严格按 `docs/openapi.yaml` 0.15.0 实现。
 
-- **意图管理**：意图列表（左侧第一层分类筛选，列按层级名生成）/ 槽位 / 空间设置（含分类层级：0～5 层分类 + 意图，层数与名称按空间配置，插入 / 删除层级先预览再确认）/ 导入记录。按业务空间（`cs` 1688 智能客服、`mc` Moonclaw）隔离意图和槽位。
+- **意图管理**：意图列表（左侧第一层分类筛选，列按层级名生成）/ 槽位 / 空间设置（含分类层级：0～5 层分类 + 意图，层数与名称按空间配置，插入 / 删除层级先预览再确认）/ 导入记录。「新建意图」弹窗有「管理分类」入口直达分类层级设置。槽位类型含文件 / 图片。按业务空间（`cs` 1688 智能客服、`mc` Moonclaw）隔离意图和槽位。
 - **知识库**：全平台通用。可新建知识库、导入文档（异步构建）、编辑切片和标签、检索。
-- **工具中心**：工具目录分 4 类（API 接口 / MCP / CLI / 技能），内置 8 个平台工具。MCP 按「服务 → 子工具」登记：注册服务后在线同步（Streamable HTTP / SSE / stdio，initialize + tools/list）或手动粘贴 tools/list JSON，先看差异再确认；子工具可单独启停、标记写操作需确认；意图里下钻选择具体子工具。「接入与密钥」页管理 API Key，并提供 REST、MCP 接入说明和运行时配置下载。
+- **工具中心**：一个「注册工具」表单，类型切换为 API 接口 / MCP / CLI 命令 / 技能 / 工作流（「平台内置」是来源筛选，内置 8 个平台工具）。
+  - **MCP**：按「服务 → 子工具」登记；凭据是「位置（请求头 / URL 参数 / stdio 环境变量）+ 名称 + 环境变量名」列表，带通用预设（Bearer Token、API Key 请求头、App ID + App Key、URL 参数）；URL 里的密钥参数保存时自动移除并转为凭据。保存后抽屉内直接在线同步（initialize + tools/list）或粘贴 tools/list JSON，先看差异再确认；子工具可单独启停、标记写操作需确认。
+  - **技能**：上传含 SKILL.md 的文件夹或 .zip（服务端解析），name / description 取自前置元数据（描述只读）；重新上传即新版本，历史版本可下载；技能没有入参。
+  - **工作流**：Dify（基址 + 应用 Key 环境变量，`POST {基址}/workflows/run`，user 常量或会话用户）、Coze（区域、工作流 ID、令牌环境变量、run / stream_run、可选 workflow_version，高级里 is_async / bot_id / app_id / ext）、通用 HTTP；入参从平台同步（临时密钥在线读取或粘贴 JSON，默认只读，可微调）；可选输出字段映射。
+  - 意图里两级选择工具（类型 → 工具，>5 个可筛选，MCP 下钻多选子工具）；技能不做入参映射，工作流必填入参须映射或有默认值，文件入参只能映射到文件 / 图片槽位。
+  - 「接入与密钥」页管理 API Key，并提供 REST、MCP 接入说明和运行时配置下载。
 - **用户与审计**（仅管理员）：账号分 admin / editor / viewer 三种角色；所有写操作都记审计日志。
 
 ## 技术栈
@@ -111,7 +116,8 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 3. **运行时配置**：Bot 定时请求 `GET /api/v1/runtime-config?since_version=<本地版本>`。
    - 版本未变：返回 304。
    - 版本有变：返回本空间已启用意图（含 `category_path`）、分类层级 `taxonomy`、槽位定义、recognition（阈值/澄清/追问/重试/最终动作）、校验集全文、用到的工具，以及用到的 MCP 服务 `mcp_servers`。
-   - MCP 服务的密钥不下发：`mcp_servers[].auth.token_env` 是 Bot 侧应设置的环境变量名（默认 `MCP_{服务名大写}_TOKEN`）。
+   - MCP 服务的密钥不下发：`mcp_servers[].credentials[]` 给出每条凭据的位置、名称和 Bot 侧环境变量名（`auth.token_env` 保留兼容）。
+   - 技能：`tools[].skill` 给出版本和文件列表，技能包用 `GET /api/v1/tools/{name}/skill-package`（工具:读）下载；工作流：`tools[].workflow` 给出平台、调用方式、`auth_env`、输出映射。
    - 拉到新版本后应清空意图识别缓存。意图启用、停用、编辑，分类 / 层级调整，空间设置变更，MCP 同步或子工具启停影响已启用意图，都会让该空间的 version +1。
 4. **MCP**：地址为 `POST {IP_PUBLIC_BASE_URL}/mcp`（JSON-RPC 2.0，非流式），请求头与 REST 相同。
    - 支持的方法：`initialize`、`tools/list`、`tools/call`。
@@ -123,6 +129,17 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
        "headers": { "Authorization": "Bearer ipk_xxx", "X-Space-Id": "cs" } } } }
    ```
 5. 通过接口或 MCP 写入的意图一律为草稿，并在「导入记录」中显示来源为「AI 工具（API）」。启用只能在控制台操作。
+
+## 升级到 v0.15
+
+`alembic upgrade head` 执行 `0004_tool_types_v15`：
+
+- MCP 服务：`auth / auth_header / auth_env` 转为 `credentials` 列表（Bearer → `Authorization` + Bearer 前缀，API Key → 对应请求头，环境变量 → stdio env），环境变量名沿用原来的 `MCP_{服务名}_TOKEN`；原密钥保留并对应到第一条凭据；新增 `example_data`。
+- 新建 `skill_packages` 表（技能包文件、SKILL.md、版本、zip 归档）。
+- 旧的「技能/工作流」（skill_id + platform）工具转为**技能**类型、入参清空，原字段保存在 `config.legacy`；意图里对这些工具的入参映射被清空。**这些技能需要在工具中心重新上传 SKILL.md 技能包**（未上传前列表显示「待上传技能包」，绑定它们的意图再次保存/启用时校验不通过）。真正的工作流请按 Dify / Coze / 通用 HTTP 重新登记为「工作流」。
+- 支持 `alembic downgrade 0003`。
+
+接口兼容：`McpServerConn.auth` 继续输出（第一条凭据摘要）；创建 / 更新 MCP 服务仍接受旧的 `auth` + `secret` 写法。`Tool.skill_id / platform` 已移除，改为 `Tool.skill` / `Tool.workflow`。
 
 ## 升级到 v0.6
 
@@ -152,7 +169,8 @@ CI 配置见 `.github/workflows/ci.yml`：在 postgres 服务上跑 pytest、前
 ## 已知限制
 
 - 单句测试用例句的二元组相似度模拟识别（返回 `simulated: true`），分数与 Bot 实际使用的模型不同，只用来自查例句是否合理。
-- 工具「测试调用」只生成请求预览（`executed: false`），平台不执行外部工具；实际执行在 Bot 侧。MCP 在线同步是平台唯一主动连接外部服务的地方（只调 initialize / tools/list，不调 tools/call）。
-- MCP 在线同步会让平台服务器访问登记的地址，部署时请用出站网络策略限制可访问的范围（平台未内置地址白名单）。
+- 工具「测试调用」只生成请求预览（`executed: false`），平台不执行外部工具；实际执行在 Bot 侧。平台主动连接外部服务只有两处：MCP 在线同步（只调 initialize / tools/list，不调 tools/call）和工作流「在线读取入参」（Dify `GET /parameters`、Coze `GET /v1/workflows/{id}`，密钥由操作人临时输入、不保存；平台不读取服务器环境变量）。
+- 种子里的 `sellersprite` MCP 服务只有 4 个示例子工具（标「示例数据」），需要真实凭据在线同步才能拿到完整列表；示例技能的技能包内容（除 SKILL.md 外）是占位文件。
+- MCP 在线同步和工作流在线读取入参会让平台服务器访问登记的地址，部署时请用出站网络策略限制可访问的范围（平台未内置地址白名单）。
 - 知识构建在后端进程内用后台任务完成，进程重启时会把卡在「构建中」的任务标为失败，需要重新导入。超大文件建议以后改用独立队列（如 Celery/RQ）。
 - 图片（png/jpg/webp）不做 OCR，导入后显示「构建失败」并给出原因。

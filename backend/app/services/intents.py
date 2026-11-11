@@ -180,6 +180,10 @@ def check_structure(db: Session, it_data: dict, idx: RefIndex) -> list[str]:
             e.append(f"工具未注册：{n}")
         elif t.maintenance:
             e.append(f"工具 {n} 是维护类平台内置工具，不能在意图中使用")
+        elif t.type == "skill":
+            for b in it_data["tools"]:
+                if b["tool"] == n:
+                    b["param_map"] = {}  # 技能没有入参映射
     if len(set(tnames)) != len(tnames):
         e.append("工具重复关联")
     return e

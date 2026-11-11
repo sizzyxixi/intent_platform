@@ -106,7 +106,6 @@ export default function App() {
             </select>
             {sess.isAdmin && <Btn onClick={() => setNewSp(true)} id="spNew">＋ 新建空间</Btn>}</div>}
           {page === 'kb' && <span className="muted">知识库全平台通用，不区分业务空间</span>}
-          {page === 'tools' && <span className="muted">工具中心全平台通用，不区分业务空间</span>}
         </div>
         <div className="content" id="content">
           {page === 'intents' && <IntentsPage key={space.id} tab={sub || 'list'} />}

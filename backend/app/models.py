@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text,
+    BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text,
     UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
@@ -66,7 +66,7 @@ class SlotDef(Base):
     space_id: Mapped[str] = mapped_column(ForeignKey("spaces.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(64))
     display_name: Mapped[str] = mapped_column(String(100))
-    type: Mapped[str] = mapped_column(String(8))  # 文本/数字/日期/枚举
+    type: Mapped[str] = mapped_column(String(8))  # 文本/数字/日期/枚举/文件/图片
     options: Mapped[list] = mapped_column(JSONB, default=list)
     default_ask: Mapped[str] = mapped_column(Text, default="")
     position: Mapped[int] = mapped_column(Integer, default=0)
@@ -178,10 +178,12 @@ class McpServer(Base):
     command: Mapped[str | None] = mapped_column(Text, nullable=True)
     args: Mapped[list] = mapped_column(JSONB, default=list)
     env: Mapped[dict] = mapped_column(JSONB, default=dict)  # 非敏感环境变量（stdio）
-    auth: Mapped[str] = mapped_column(String(20), default="无")  # 无 / Bearer Token / API Key / 环境变量
-    auth_header: Mapped[str | None] = mapped_column(String(64), nullable=True)  # API Key 的请求头名
-    auth_env: Mapped[str | None] = mapped_column(String(64), nullable=True)  # stdio：凭据放进哪个环境变量
+    # 鉴权凭据：[{location: header/query/env, name, env, scheme?}]。导出给 Bot 只给位置、名称和环境变量名，不含密钥值
+    credentials: Mapped[list] = mapped_column(JSONB, default=list)
+    # 平台侧在线同步用的密钥（可选，只写不读）：加密后的 JSON {凭据名称: 密钥}
     secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 当前工具清单是示例数据（未做过真实同步）
+    example_data: Mapped[bool] = mapped_column(Boolean, default=False)
     source: Mapped[str] = mapped_column(String(10), default="external")  # external / builtin
     owner: Mapped[str] = mapped_column(String(100), default="")
     position: Mapped[int] = mapped_column(Integer, default=0)
@@ -197,7 +199,7 @@ class Tool(Base):
     __tablename__ = "tools"
     # MCP 子工具的 name = {服务名}.{远端工具名}
     name: Mapped[str] = mapped_column(String(120), primary_key=True)
-    type: Mapped[str] = mapped_column(String(8))  # http / mcp / cli / skill
+    type: Mapped[str] = mapped_column(String(8))  # http / mcp / cli / skill / workflow
     display_name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str] = mapped_column(Text)
     params: Mapped[list] = mapped_column(JSONB, default=list)  # [{name,type,required,description}]
@@ -214,13 +216,35 @@ class Tool(Base):
     server_ref: Mapped[McpServer | None] = relationship()
     # 类型特有字段：http{url,method,auth,output_example} mcp{mcp_tool,title,input_schema,annotations,output_example,confirm_required}
     # cli{bin,command_template,auth,login_command,install,verified_version,output_format,confirm_required,output_description}
-    # skill{skill_id,platform,output_description}
+    # skill{version,package_id,skill_name,files,source}（技能包内容在 skill_packages）
+    # workflow{platform,response_mode,timeout_sec,confirm_required,auth_env,output_mapping,params_locked,...平台字段}
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner: Mapped[str] = mapped_column(String(100), default="")
     position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())
+
+
+class SkillPackage(Base):
+    """技能包（含 SKILL.md 的文件夹，打包为 zip 保存）。tool_name 为空表示刚上传、尚未保存到工具的暂存包。"""
+    __tablename__ = "skill_packages"
+    __table_args__ = (Index("uq_skill_packages_tool_version", "tool_name", "version", unique=True,
+                            postgresql_where=text("tool_name IS NOT NULL")),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tool_name: Mapped[str | None] = mapped_column(ForeignKey("tools.name", ondelete="CASCADE"), nullable=True, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    name: Mapped[str] = mapped_column(String(100))  # SKILL.md 前置元数据 name
+    description: Mapped[str] = mapped_column(Text)  # SKILL.md 前置元数据 description
+    skill_md: Mapped[str] = mapped_column(Text)
+    files: Mapped[list] = mapped_column(JSONB, default=list)  # [{path, size}]
+    source: Mapped[str] = mapped_column(String(10), default="folder")  # folder / zip
+    original_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    sha256: Mapped[str] = mapped_column(String(64))
+    archive: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())
 
 
 class ImportRecord(Base):
