@@ -164,12 +164,24 @@ def get_import(import_id: str, actor=Depends(VIEW), db: Session = Depends(get_db
 def list_tools(source: str | None = None, actor=Depends(VIEW), db: Session = Depends(get_db)):
     sp = kb_svc.space_names(db)
     usage = intent_svc.tool_usage(db)
+    fp = (source, tool_svc.fingerprint(db))
+    if _TOOL_CACHE.get("fp") != fp:
+        rows = []
+        for t in tool_svc.list_tools(db, source):
+            d = tool_svc.admin_dict(t)
+            d.pop("input_schema", None)  # 列表不带（与 params 重复，工具多时体积翻倍）；详情接口仍返回
+            rows.append(d)
+        _TOOL_CACHE.update(fp=fp, rows=rows)
     out = []
-    for t in tool_svc.list_tools(db, source):
-        d = tool_svc.admin_dict(t, usage.get(t.name, []), sp)
-        d.pop("input_schema", None)  # 列表不带（与 params 重复，工具多时体积翻倍）；详情接口仍返回
-        out.append(d)
+    for d in _TOOL_CACHE["rows"]:
+        users = usage.get(d["name"], [])
+        out.append({**d, "used_by": [{"code": u.code, "name": u.name, "space": u.space_id,
+                                      "space_name": sp.get(u.space_id, u.space_id), "status": u.status} for u in users]})
     return out
+
+
+# 工具列表缓存（进程内）：工具 / MCP 服务表没变化时不再整表读取；使用情况每次现查
+_TOOL_CACHE: dict = {}
 
 
 @router.post("/skill-packages", status_code=201)

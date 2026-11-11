@@ -37,9 +37,10 @@ class RefIndex:
             return False
         return r.get("chunk_id") == "*" or r.get("chunk_id") in d
 
-    def tools(self) -> dict[str, Tool]:
+    def tools(self) -> "LazyTools":
+        """按名字按需查询工具（工具多达数千个时不整表加载）。"""
         if self._tools is None:
-            self._tools = {t.name: t for t in self.db.scalars(select(Tool))}
+            self._tools = LazyTools(self.db)
         return self._tools
 
     def servers(self) -> set[str]:
@@ -159,3 +160,26 @@ def validate(it: dict, idx: RefIndex) -> list[str]:
                     e.append(f"工具 {t.name} 的文件入参「{p['name']}」只能映射到「文件 / 图片」类型的槽位（当前「{m['value']}」是"
                              f"{defs[m['value']].type}）")
     return e
+
+
+class LazyTools:
+    """只实现校验 / 运行时用到的 get：按名字查询并缓存（含查不到的结果）。"""
+
+    def __init__(self, db):
+        self.db, self._m = db, {}
+
+    def preload(self, names) -> None:
+        need = [n for n in dict.fromkeys(names) if n and n not in self._m]
+        for i in range(0, len(need), 500):
+            part = need[i:i + 500]
+            found = {t.name: t for t in self.db.scalars(select(Tool).where(Tool.name.in_(part)))}
+            for n in part:
+                self._m[n] = found.get(n)
+
+    def get(self, name, default=None):
+        if name not in self._m:
+            self.preload([name])
+        return self._m.get(name) or default
+
+    def __contains__(self, name) -> bool:
+        return self.get(name) is not None

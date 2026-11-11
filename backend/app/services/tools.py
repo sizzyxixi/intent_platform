@@ -3,7 +3,7 @@ import json
 import re
 import shlex
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .. import audit
@@ -115,11 +115,31 @@ def admin_dict(t: Tool, users: list | None = None, spaces: dict | None = None) -
     return d
 
 
+LIST_BATCH = 500
+
+
 def list_tools(db: Session, source: str | None = None) -> list[Tool]:
-    stmt = select(Tool)
-    if source:
-        stmt = stmt.where(Tool.source == source)
-    return list(db.scalars(stmt.order_by(Tool.position, Tool.name)))
+    """全部工具。按工具名分批读取（每批 LIST_BATCH 条），远程数据库上避免单次传输过大被断开。"""
+    out: list[Tool] = []
+    last = ""
+    while True:
+        stmt = select(Tool).where(Tool.name > last)
+        if source:
+            stmt = stmt.where(Tool.source == source)
+        part = list(db.scalars(stmt.order_by(Tool.name).limit(LIST_BATCH)))
+        out += part
+        if len(part) < LIST_BATCH:
+            break
+        last = part[-1].name
+    out.sort(key=lambda t: (t.position, t.name))
+    return out
+
+
+def fingerprint(db: Session) -> tuple:
+    """工具表 + MCP 服务表的变化指纹（行数 + 最大事务号），用于列表缓存失效。"""
+    return tuple(db.execute(text(
+        "SELECT (SELECT count(*) FROM tools), (SELECT coalesce(max(xmin::text::bigint), 0) FROM tools),"
+        " (SELECT count(*) FROM mcp_servers), (SELECT coalesce(max(xmin::text::bigint), 0) FROM mcp_servers)")).one())
 
 
 def get(db: Session, name: str) -> Tool:

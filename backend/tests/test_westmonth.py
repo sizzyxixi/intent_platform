@@ -128,3 +128,17 @@ def test_seed_without_demo_tools():
 def seed_mod_data():
     import json
     return json.loads(seed_mod.SEED_FILE.read_text(encoding="utf-8"))
+
+
+def test_list_tools_batched_and_cache_invalidates(tokens, admin, monkeypatch):
+    monkeypatch.setattr(tool_svc, "LIST_BATCH", 7)
+    with SessionLocal() as db:
+        got = [t.name for t in tool_svc.list_tools(db)]
+        want = [t.name for t in db.scalars(select(Tool).order_by(Tool.position, Tool.name))]
+        assert got == want and len(got) > 7
+    n1 = len(admin.get("/api/admin/tools").json())
+    with SessionLocal() as db:
+        wm.import_westmonth(db, {**CAT, "commands": CAT["commands"][:3]}, {})
+        db.commit()
+    lst = admin.get("/api/admin/tools").json()
+    assert len(lst) == n1 + 3  # 缓存随表变化失效
