@@ -4,6 +4,8 @@ import re
 import shlex
 
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
 
 from .. import audit
@@ -119,7 +121,7 @@ LIST_BATCH = 0  # 0 = 取配置 tool_list_batch（测试可直接改这个值）
 
 
 def list_tools(db: Session, source: str | None = None) -> list[Tool]:
-    """全部工具。按工具名分批读取（每批 LIST_BATCH 条），远程数据库上避免单次传输过大被断开。"""
+    """全部工具（只读，返回的对象已脱离会话）。按工具名分批读取，远程数据库上避免单次传输过大被断开；断开时重试该批。"""
     from ..config import get_settings
     batch = LIST_BATCH or get_settings().tool_list_batch
     out: list[Tool] = []
@@ -128,7 +130,16 @@ def list_tools(db: Session, source: str | None = None) -> list[Tool]:
         stmt = select(Tool).where(Tool.name > last)
         if source:
             stmt = stmt.where(Tool.source == source)
-        part = list(db.scalars(stmt.order_by(Tool.name).limit(batch)))
+        for attempt in range(6):  # 远程数据库连接中途断开时，回滚换新连接重试这一批
+            try:
+                part = list(db.scalars(stmt.order_by(Tool.name).limit(batch).options(selectinload(Tool.server_ref))))
+                for t in part:  # 只读结果脱离会话，后续某批出错回滚时不会被作废重载
+                    db.expunge(t)
+                break
+            except OperationalError:
+                db.rollback()
+                if attempt == 5:
+                    raise
         out += part
         if len(part) < batch:
             break
