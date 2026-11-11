@@ -190,8 +190,11 @@ def purge_examples(db: Session, by: str = "西之月接入") -> dict:
 
 # ---------------- 导入 ----------------
 def import_westmonth(db: Session, catalog: dict, skills: dict[str, bytes], by: str = "西之月接入",
-                     prune: bool = True) -> dict:
-    """幂等：按快照新建 / 更新西之月工具；快照里已不存在、且未被意图使用的旧西之月工具会删除（prune）。"""
+                     prune: bool = True, commit_every: int | None = None) -> dict:
+    """幂等：按快照新建 / 更新西之月工具；快照里已不存在、且未被意图使用的旧西之月工具会删除（prune）。
+    commit_every：每写入这么多条就提交一次（远程数据库时避免单个超大事务；中断后重跑会从断点继续）。"""
+    if commit_every:
+        db.expire_on_commit = False  # 分批提交后不逐行重新加载
     ver = catalog.get("cli_version") or ""
     names = tool_names(catalog["commands"])
     want: dict[str, dict] = {}
@@ -200,6 +203,7 @@ def import_westmonth(db: Session, catalog: dict, skills: dict[str, bytes], by: s
         v = tool_svc.validate_payload(p, True)  # 走与控制台相同的校验
         want[v["name"]] = v
     existing = {t.name: t for t in db.scalars(select(Tool).where(Tool.owner == OWNER))}
+    taken = set(db.scalars(select(Tool.name)))  # 一次取全部工具名，避免逐个查询
     pos = db.scalar(select(func.max(Tool.position)).where(Tool.source == "external")) or 0
     created = updated = 0
     # 技能
@@ -208,7 +212,7 @@ def import_westmonth(db: Session, catalog: dict, skills: dict[str, bytes], by: s
         info = skill_svc.parse_upload([(sk + ".zip", skills[sk])])
         name = skill_tool_name(info["name"])
         skill_names.append(name)
-        t = existing.get(name) or db.get(Tool, name)
+        t = existing.get(name) or (db.get(Tool, name) if name in taken else None)
         if t is not None and t.type != "skill":
             raise SystemExit(f"工具名 {name} 已被非技能工具占用")
         cur = skill_svc.current(db, t) if t else None
@@ -231,23 +235,30 @@ def import_westmonth(db: Session, catalog: dict, skills: dict[str, bytes], by: s
         t.config = skill_svc.config_of(pkg)
         t.description = pkg.description
         t.updated_at = utcnow()
+    if commit_every:
+        db.commit()
     # CLI 命令
-    rows = []
+    pending = 0
     for name, v in want.items():
         t = existing.get(name)
         if t is None:
-            if db.get(Tool, name) is not None:
+            if name in taken:
                 raise SystemExit(f"工具名 {name} 已存在且不属于 {OWNER}")
             pos += 1
-            rows.append(Tool(source="external", maintenance=False, space_scoped=False, endpoints=[], mcp_tools=[],
-                             position=pos, **v))
+            db.add(Tool(source="external", maintenance=False, space_scoped=False, endpoints=[], mcp_tools=[],
+                        position=pos, **v))
             created += 1
+            pending += 1
         elif any(getattr(t, k) != v[k] for k in ("display_name", "description", "params", "config")):
             for k in ("display_name", "description", "params", "config"):
                 setattr(t, k, v[k])
             t.updated_at = utcnow()
             updated += 1
-    db.add_all(rows)
+            pending += 1
+        if pending and pending % (commit_every or 1000) == 0:
+            db.flush()
+            if commit_every:
+                db.commit()
     db.flush()
     removed, kept = [], []
     if prune:
@@ -286,6 +297,7 @@ def main(argv=None) -> int:
     p.add_argument("--yes", action="store_true")
     i = sub.add_parser("import")
     i.add_argument("--no-prune", action="store_true")
+    i.add_argument("--batch", type=int, default=300, help="每多少条提交一次（默认 300）")
     sub.add_parser("status")
     a = ap.parse_args(argv)
     if a.cmd == "refresh-fixture":
@@ -315,7 +327,7 @@ def main(argv=None) -> int:
             print(json.dumps(res, ensure_ascii=False, indent=1))
             return 0
         cat, skills = load_fixture()
-        res = import_westmonth(db, cat, skills, prune=not a.no_prune)
+        res = import_westmonth(db, cat, skills, prune=not a.no_prune, commit_every=a.batch)
         db.commit()
         print(json.dumps(res, ensure_ascii=False, indent=1))
     return 0
