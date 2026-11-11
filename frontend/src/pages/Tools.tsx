@@ -84,13 +84,13 @@ function ToolList() {
           {packs.map(([k, l, n]) => <option key={k} value={k}>{l}（{n}）</option>)}</select>}
         <input type="text" id="toolQ" value={q} onChange={e => setQ(e.target.value)} placeholder="搜索工具名 / 描述 / 命令" style={{ width: 240 }} />
         <span className="muted">{ts.length + ss.length} 个</span></div></div>
-    <div className="card tblwrap" style={{ padding: 0 }}><table id="toolTbl" className="fixed"><colgroup><col style={{ width: 220 }} /><col style={{ width: 92 }} /><col style={{ width: 92 }} /><col /><col style={{ width: 210 }} /><col style={{ width: 130 }} /><col style={{ width: 112 }} /><col style={{ width: 96 }} /></colgroup><thead><tr><th>工具</th><th>类型</th><th>来源</th><th>描述</th><th>接入</th><th>入参</th><th>被意图使用</th><th>操作</th></tr></thead><tbody>
+    <div className="card tblwrap" style={{ padding: 0 }}><table id="toolTbl" className="fixed"><colgroup><col style={{ width: 190 }} /><col style={{ width: 80 }} /><col style={{ width: 64 }} /><col /><col style={{ width: 180 }} /><col style={{ width: 110 }} /><col style={{ width: 90 }} /><col style={{ width: 92 }} /></colgroup><thead><tr><th>工具</th><th>类型</th><th>来源</th><th>描述</th><th>接入</th><th>入参</th><th>被意图使用</th><th>操作</th></tr></thead><tbody>
       {ts.slice(0, lim).map((t: any) => <tr key={t.name} data-tool={t.name}><td><b>{t.display_name}</b><div className="mono">{t.name}</div></td><td><TypeTag type={t.type} />{t.confirm_required && <div style={{ marginTop: 4 }}><Badge c="y">写操作需确认</Badge></div>}</td>
         <td>{srcCell(t)}</td>
         <td className="muted"><div className="clamp3" title={t.description}>{t.description}</div></td><td><End t={t} /></td><td>{paramCell(t)}</td>
         <td>{usedBy(t.used_by)}</td>
         <td><Btn s onClick={() => setTest(t)}>测试调用</Btn> {t.source === 'builtin' ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>平台提供<br />不可编辑 / 删除</div>
-          : canEdit && <><Btn s onClick={() => setEdit({ tool: t })}>编辑</Btn><div style={{ marginTop: 4, textAlign: 'right' }}><a style={{ color: '#dc2626', fontSize: 12 }} onClick={() => del(t)}>删除</a></div></>}</td></tr>)}
+          : canEdit && <><Btn s onClick={() => setEdit({ tool: t })}>编辑</Btn><div style={{ marginTop: 4 }}><a style={{ color: '#dc2626', fontSize: 12 }} onClick={() => del(t)}>删除</a></div></>}</td></tr>)}
       {ts.length > lim && <tr id="toolMore"><td colSpan={8} className="muted" style={{ textAlign: 'center' }}>已显示 {lim} / {ts.length} 个，可用上方搜索或命令包缩小范围 · <a onClick={() => setLim(lim + PAGE)}>再显示 {Math.min(PAGE, ts.length - lim)} 个</a></td></tr>}
       {ss.map((v: any) => { const sub = subs(v); const on = !!open[v.name]; const users = new Set(sub.flatMap((t: any) => (t.used_by || []).map((u: any) => u.code))); return [
         <tr key={'s' + v.name} className="srvrow" data-server={v.name}><td onClick={() => setOpen({ ...open, [v.name]: !on })}><span className="caret">{on ? '▾' : '▸'}</span><b>{v.display_name}</b><div className="mono" style={{ paddingLeft: 14 }}>{v.name}</div></td>
@@ -100,7 +100,7 @@ function ToolList() {
           <td><div className="muted" style={{ fontSize: 11 }}>{v.transport_label} · {credText(v)}</div><div className="mono" style={{ fontSize: 11 }}>{serverEnd(v)}</div><div className="muted" style={{ fontSize: 11 }}>同步：{syncText(v)}</div></td>
           <td className="muted">按工具</td><td>{users.size ? <span>{users.size} 个意图</span> : <span className="muted">未使用</span>}</td>
           <td>{v.source === 'builtin' ? <div className="muted" style={{ fontSize: 11 }}>平台提供<br />不可编辑 / 同步</div>
-            : canEdit && <><Btn s onClick={() => setEdit({ server: v })}>同步工具</Btn><div style={{ marginTop: 4, textAlign: 'right', fontSize: 12 }}><a onClick={() => setEdit({ server: v })}>编辑</a>　<a style={{ color: '#dc2626' }} onClick={() => delSrv(v)}>删除</a></div></>}</td></tr>,
+            : canEdit && <><Btn s onClick={() => setEdit({ server: v })}>同步工具</Btn><div style={{ marginTop: 4, fontSize: 12 }}><a onClick={() => setEdit({ server: v })}>编辑</a>　<a style={{ color: '#dc2626' }} onClick={() => delSrv(v)}>删除</a></div></>}</td></tr>,
         ...(on ? sub.length ? sub.map((t: any) => <tr key={t.name} className={'subrow' + (t.remote_missing ? ' missing' : '')} data-tool={t.name}>
           <td><b>{t.display_name}</b><div className="mono">{t.name}</div>{t.remote_missing && <Badge c="r">远端已消失</Badge>}</td>
           <td><TypeTag type="mcp" /></td>
