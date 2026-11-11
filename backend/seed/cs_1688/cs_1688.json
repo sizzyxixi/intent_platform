@@ -1,0 +1,1853 @@
+{
+ "doc": {
+  "source": "意图工具调用映射维护表_v1.xlsx",
+  "version": "2026-11-07 01:45 Asia/Shanghai · v1",
+  "notes": {
+   "版本": "2026-11-07 01:45 Asia/Shanghai · v1",
+   "用途": "智能回复 Router：意图识别后决定调哪些工具；无工具结果禁止编库存/价/交期",
+   "意图桶来源": "全量 CRM 高转化分桶（17 类）+ 台账 10 类意图对照",
+   "工具原则": "先工具后语言；并行可多工具；成交类工具（改价/锁仓）需置信度≥0.85 或人确认",
+   "首批五工具（设计稿）": "get_stock_eta · get_price_quote · apply_discount/change_price · ship_urge/track_ship · refund_or_aftersale",
+   "维护规则": "1) 新增意图必须补本表一行 2) 改工具入参/失败策略同步改「工具字典」 3) 禁止列变更需过合规 4) 置信度阈值与线上一致",
+   "覆盖": "15/17 桶有主工具；空会话/其他仅澄清或转人工",
+   "不做承诺": "映射≠90%转化；工具失败必须澄清或转人工"
+  },
+  "tools": [
+   {
+    "tool_id": "get_stock_eta",
+    "工具名": "查库存/交期",
+    "能力": "SKU 现货数、可卖、预计到货、截单发货日",
+    "必要入参": "shop_id, offer_id 或 sku_id",
+    "可选入参": "qty, warehouse",
+    "成功返回(必须进首句的字段)": "有无货, stock_qty 或 eta_date, cutoff_ship_rule",
+    "失败策略": "澄清规格/链；禁止「估计有货」",
+    "是否成交类": "否",
+    "授权/硬门": "返回值不可空口改",
+    "状态": "planned"
+   },
+   {
+    "tool_id": "get_price_quote",
+    "工具名": "报价/阶梯价",
+    "能力": "按量单价、包邮门槛、活动价",
+    "必要入参": "shop_id, offer_id/sku_id, qty",
+    "可选入参": "buyer_level, coupon",
+    "成功返回(必须进首句的字段)": "unit_price, currency, tier_note",
+    "失败策略": "先问数量再报价；禁止瞎报",
+    "是否成交类": "否",
+    "授权/硬门": "价必须来自价库/规则",
+    "状态": "planned"
+   },
+   {
+    "tool_id": "apply_change_price",
+    "工具名": "改价/申请优惠",
+    "能力": "售中改价、议价落地",
+    "必要入参": "order_id 或预单上下文, target_price, qty",
+    "可选入参": "reason, auth_level",
+    "成功返回(必须进首句的字段)": "applied 或 pending_auth, final_price",
+    "失败策略": "超授权→转主管；禁止口头承诺已改",
+    "是否成交类": "是",
+    "授权/硬门": "金额∈授权区间；人确认发送",
+    "状态": "planned"
+   },
+   {
+    "tool_id": "lock_or_hold_stock",
+    "工具名": "锁库存/占仓",
+    "能力": "拍前占仓、截单前提醒",
+    "必要入参": "sku_id, qty, hold_until",
+    "可选入参": "order_id",
+    "成功返回(必须进首句的字段)": "hold_ok, hold_until",
+    "失败策略": "失败则给替代或到货日",
+    "是否成交类": "是",
+    "授权/硬门": "占仓超时释放",
+    "状态": "planned"
+   },
+   {
+    "tool_id": "ship_urge_track",
+    "工具名": "催发/物流轨迹",
+    "能力": "发货日、运单、物流节点",
+    "必要入参": "order_id",
+    "可选入参": "buyer_id",
+    "成功返回(必须进首句的字段)": "ship_date 或 tracking_no, latest_status",
+    "失败策略": "无单号先澄清订单；禁止「尽快发」空话",
+    "是否成交类": "否",
+    "授权/硬门": "状态必须来自物流接口",
+    "状态": "planned"
+   },
+   {
+    "tool_id": "aftersale_refund",
+    "工具名": "退换补发",
+    "能力": "退款进度、补发、换货路径",
+    "必要入参": "order_id, aftersale_type",
+    "可选入参": "evidence_urls",
+    "成功返回(必须进首句的字段)": "action_plan, case_id 或 status",
+    "失败策略": "规则外→转人工",
+    "是否成交类": "条件是",
+    "授权/硬门": "符合平台超时/售后规则",
+    "状态": "planned"
+   },
+   {
+    "tool_id": "get_spec_media",
+    "工具名": "规格/实拍/资质",
+    "能力": "参数、毛重、实拍图、证照",
+    "必要入参": "offer_id",
+    "可选入参": "asset_type",
+    "成功返回(必须进首句的字段)": "spec_fields 或 media_urls 或 cert_list",
+    "失败策略": "无资产给补齐时间",
+    "是否成交类": "否",
+    "授权/硬门": "禁止伪造证照",
+    "状态": "planned"
+   },
+   {
+    "tool_id": "get_custom_moq",
+    "工具名": "定制/打样/起订",
+    "能力": "可否定制、起订、打样费周期",
+    "必要入参": "offer_id, custom_type",
+    "可选入参": "qty, logo_file",
+    "成功返回(必须进首句的字段)": "moq, sample_fee, lead_days, alt_stock_sku",
+    "失败策略": "不可定制给现货替代",
+    "是否成交类": "否",
+    "授权/硬门": "定制承诺需可履约",
+    "状态": "planned"
+   },
+   {
+    "tool_id": "clarify_slot",
+    "工具名": "澄清单槽",
+    "能力": "只问 1 个关键槽位",
+    "必要入参": "missing_slot",
+    "可选入参": "options",
+    "成功返回(必须进首句的字段)": "question_text",
+    "失败策略": "—",
+    "是否成交类": "否",
+    "授权/硬门": "中置信默认",
+    "状态": "planned"
+   },
+   {
+    "tool_id": "handoff_human",
+    "工具名": "转人工",
+    "能力": "低置信/投诉/超授权",
+    "必要入参": "reason, transcript_snip",
+    "可选入参": "priority",
+    "成功返回(必须进首句的字段)": "agent_queue",
+    "失败策略": "—",
+    "是否成交类": "否",
+    "授权/硬门": "必带 Router 理由",
+    "状态": "planned"
+   },
+   {
+    "tool_id": "reply_template",
+    "工具名": "话术模板填充",
+    "能力": "无工具事实时的短模板（仅非数字承诺）",
+    "必要入参": "intent_bucket, slots",
+    "可选入参": "tone",
+    "成功返回(必须进首句的字段)": "draft_text",
+    "失败策略": "不得含库存/价/交期数字",
+    "是否成交类": "否",
+    "授权/硬门": "硬门扫数字幻觉",
+    "状态": "active_scripts"
+   }
+  ],
+  "mapping": [
+   {
+    "intent_bucket": "库存查询",
+    "台账意图对照": "库存查询",
+    "阶段": "售前",
+    "全量会话量": "40140",
+    "文字转单率": "0.0148",
+    "主工具(按序)": "get_stock_eta",
+    "辅工具": "get_price_quote; lock_or_hold_stock",
+    "必填槽位": "offer/sku, 可选qty",
+    "置信≥0.85": "调主工具→Compose→问件数/锁仓",
+    "置信0.60–0.85": "clarify_slot(数量或规格)",
+    "低置信": "handoff_human",
+    "禁止": "编造有货/到货日",
+    "高转化收束动作": "有现货+截单+需要多少/拍下占库存",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "信息咨询",
+    "台账意图对照": "信息咨询",
+    "阶段": "售前",
+    "全量会话量": "21039",
+    "文字转单率": "0.0269",
+    "主工具(按序)": "get_spec_media",
+    "辅工具": "get_stock_eta; get_price_quote",
+    "必填槽位": "offer 或问题类型",
+    "置信≥0.85": "答所问字段+追问数量",
+    "置信0.60–0.85": "clarify_slot(在看哪款)",
+    "低置信": "handoff_human",
+    "禁止": "空回在的; 站外导流",
+    "高转化收束动作": "实拍/参数→现货与价→问数量",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "询价报价",
+    "台账意图对照": "比价中/明确采购(部分)",
+    "阶段": "售前",
+    "全量会话量": "15299",
+    "文字转单率": "0.0358",
+    "主工具(按序)": "get_price_quote",
+    "辅工具": "get_stock_eta",
+    "必填槽位": "offer/sku, qty",
+    "置信≥0.85": "报价+档位+是否包邮",
+    "置信0.60–0.85": "clarify_slot(数量)",
+    "低置信": "handoff_human",
+    "禁止": "无数量报死价冒充底价",
+    "高转化收束动作": "单价X+需要多少/先拍起订再改价",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "比价中",
+    "台账意图对照": "比价中",
+    "阶段": "售前",
+    "全量会话量": "5188",
+    "文字转单率": "0.1928",
+    "主工具(按序)": "get_price_quote",
+    "辅工具": "apply_change_price(授权内)",
+    "必填槽位": "offer/sku, qty, 目标价可选",
+    "置信≥0.85": "给底价+锁价时点+差价原因",
+    "置信0.60–0.85": "clarify_slot(量或对比点)",
+    "低置信": "handoff_human",
+    "禁止": "超授权口头承诺",
+    "高转化收束动作": "锁价到H点; 拍下备注议价",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "明确采购",
+    "台账意图对照": "明确采购",
+    "阶段": "售前",
+    "全量会话量": "13539",
+    "文字转单率": "0.2912",
+    "主工具(按序)": "get_stock_eta; get_price_quote",
+    "辅工具": "lock_or_hold_stock",
+    "必填槽位": "offer/sku, qty",
+    "置信≥0.85": "价+货+交期→引导拍下",
+    "置信0.60–0.85": "clarify_slot(件数/规格)",
+    "低置信": "handoff_human",
+    "禁止": "无货却催拍",
+    "高转化收束动作": "可以下单/拍下占库存/截单发货",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "交期",
+    "台账意图对照": "交期",
+    "阶段": "售前/售中",
+    "全量会话量": "8055",
+    "文字转单率": "0.2345",
+    "主工具(按序)": "get_stock_eta; ship_urge_track",
+    "辅工具": "lock_or_hold_stock",
+    "必填槽位": "offer 或 order_id",
+    "置信≥0.85": "确定发货日或截单规则",
+    "置信0.60–0.85": "clarify_slot(订单号或款)",
+    "低置信": "handoff_human",
+    "禁止": "「尽快发」无日期",
+    "高转化收束动作": "X点前付当天发",
+    "维护人": "",
+    "更新日期": "",
+    "备注": "售前无单走 stock_eta；售中有单走 track"
+   },
+   {
+    "intent_bucket": "尺寸定制",
+    "台账意图对照": "尺寸定制",
+    "阶段": "售前",
+    "全量会话量": "766",
+    "文字转单率": "0.0144",
+    "主工具(按序)": "get_custom_moq",
+    "辅工具": "get_stock_eta(替代款)",
+    "必填槽位": "custom_type, 尺寸/图",
+    "置信≥0.85": "moq+打样费周期+现货替代",
+    "置信0.60–0.85": "clarify_slot(尺寸图)",
+    "低置信": "handoff_human",
+    "禁止": "口头无限定制",
+    "高转化收束动作": "可定制门槛→或近规格现货",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "logo/知识产权",
+    "台账意图对照": "logo",
+    "阶段": "售前",
+    "全量会话量": "1751",
+    "文字转单率": "0.0086",
+    "主工具(按序)": "get_custom_moq",
+    "辅工具": "get_spec_media",
+    "必填槽位": "logo需求",
+    "置信≥0.85": "可否印+起订+打样",
+    "置信0.60–0.85": "clarify_slot",
+    "低置信": "handoff_human",
+    "禁止": "侵权承诺",
+    "高转化收束动作": "小批量现货不印 / 大货再印",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "样品",
+    "台账意图对照": "现货(弱)",
+    "阶段": "售前",
+    "全量会话量": "161",
+    "文字转单率": "0.087",
+    "主工具(按序)": "get_custom_moq; get_price_quote",
+    "辅工具": "get_stock_eta",
+    "必填槽位": "sku, sample_qty",
+    "置信≥0.85": "样品价+运费+周期",
+    "置信0.60–0.85": "clarify_slot",
+    "低置信": "handoff_human",
+    "禁止": "免费样品随意承诺",
+    "高转化收束动作": "样品规则一次说清",
+    "维护人": "",
+    "更新日期": "",
+    "备注": "样本少"
+   },
+   {
+    "intent_bucket": "发票对公",
+    "台账意图对照": "信息咨询",
+    "阶段": "售前",
+    "全量会话量": "484",
+    "文字转单率": "0.2045",
+    "主工具(按序)": "get_spec_media",
+    "辅工具": "clarify_slot",
+    "必填槽位": "发票类型",
+    "置信≥0.85": "开票类型+所需资料一次收齐",
+    "置信0.60–0.85": "clarify_slot(税号等)",
+    "低置信": "handoff_human",
+    "禁止": "假票承诺",
+    "高转化收束动作": "资料齐再下单",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "资质合规",
+    "台账意图对照": "信息咨询",
+    "阶段": "售前",
+    "全量会话量": "1831",
+    "文字转单率": "0.0306",
+    "主工具(按序)": "get_spec_media",
+    "辅工具": "handoff_human",
+    "必填槽位": "资质类型",
+    "置信≥0.85": "有则发链接/文件; 无则补齐时间",
+    "置信0.60–0.85": "clarify_slot",
+    "低置信": "handoff_human",
+    "禁止": "伪造资质",
+    "高转化收束动作": "一次性给出或说明缺件",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "开场领券",
+    "台账意图对照": "信息咨询",
+    "阶段": "售前",
+    "全量会话量": "3437",
+    "文字转单率": "0.0137",
+    "主工具(按序)": "clarify_slot",
+    "辅工具": "get_stock_eta; get_price_quote",
+    "必填槽位": "—",
+    "置信≥0.85": "问数量/用途后报价",
+    "置信0.60–0.85": "clarify_slot",
+    "低置信": "handoff_human",
+    "禁止": "只回券模板",
+    "高转化收束动作": "领券后立刻问采购量",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "售中改价改单",
+    "台账意图对照": "售中询盘",
+    "阶段": "售中",
+    "全量会话量": "21124",
+    "文字转单率": "1",
+    "主工具(按序)": "apply_change_price",
+    "辅工具": "get_price_quote; lock_or_hold_stock",
+    "必填槽位": "order_id, target_price/qty",
+    "置信≥0.85": "申请或改价结果+付款安排",
+    "置信0.60–0.85": "clarify_slot(单号/改几)",
+    "低置信": "handoff_human 超授权",
+    "禁止": "未改先说已改好",
+    "高转化收束动作": "改好了哈 / 付款后尽快安排",
+    "维护人": "",
+    "更新日期": "",
+    "备注": "桶口径含转单信号，率偏高属预期"
+   },
+   {
+    "intent_bucket": "售中履约",
+    "台账意图对照": "交期/售中",
+    "阶段": "售中",
+    "全量会话量": "36505",
+    "文字转单率": "0.4204",
+    "主工具(按序)": "ship_urge_track",
+    "辅工具": "get_stock_eta; aftersale_refund",
+    "必填槽位": "order_id",
+    "置信≥0.85": "发货日或运单号",
+    "置信0.60–0.85": "clarify_slot(订单号)",
+    "低置信": "handoff_human",
+    "禁止": "空承诺尽快",
+    "高转化收束动作": "明确发货日/单号",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "售后处理",
+    "台账意图对照": "售后处理",
+    "阶段": "售后",
+    "全量会话量": "9421",
+    "文字转单率": "0.6173",
+    "主工具(按序)": "aftersale_refund",
+    "辅工具": "ship_urge_track; get_stock_eta",
+    "必填槽位": "order_id, aftersale_type",
+    "置信≥0.85": "处理路径+状态",
+    "置信0.60–0.85": "clarify_slot",
+    "低置信": "handoff_human",
+    "禁止": "推诿/威胁",
+    "高转化收束动作": "结案一句+是否补购",
+    "维护人": "",
+    "更新日期": "",
+    "备注": ""
+   },
+   {
+    "intent_bucket": "无买家意图/空会话",
+    "台账意图对照": "非询盘",
+    "阶段": "空",
+    "全量会话量": "54532",
+    "文字转单率": "0.0205",
+    "主工具(按序)": "clarify_slot",
+    "辅工具": "reply_template",
+    "必填槽位": "—",
+    "置信≥0.85": "不调成交工具；确认在看哪款",
+    "置信0.60–0.85": "clarify_slot",
+    "低置信": "handoff_human",
+    "禁止": "推销站外",
+    "高转化收束动作": "确认款式并问数量",
+    "维护人": "",
+    "更新日期": "",
+    "备注": "无模板业务工具"
+   },
+   {
+    "intent_bucket": "其他",
+    "台账意图对照": "非询盘",
+    "阶段": "空/其他",
+    "全量会话量": "3004",
+    "文字转单率": "0.0273",
+    "主工具(按序)": "clarify_slot; handoff_human",
+    "辅工具": "—",
+    "必填槽位": "—",
+    "置信≥0.85": "澄清或转人工",
+    "置信0.60–0.85": "clarify_slot",
+    "低置信": "handoff_human",
+    "禁止": "乱调改价",
+    "高转化收束动作": "—",
+    "维护人": "",
+    "更新日期": "",
+    "备注": "弱覆盖"
+   }
+  ],
+  "rules": [
+   {
+    "规则ID": "R1",
+    "条件": "intent置信≥0.85 且槽位齐",
+    "允许工具": "映射表主+辅工具可并行",
+    "禁止工具": "—",
+    "输出": "Compose 完整草稿（人点发送）"
+   },
+   {
+    "规则ID": "R2",
+    "条件": "置信 0.60–0.85 或缺关键槽",
+    "允许工具": "clarify_slot 仅 1 问",
+    "禁止工具": "apply_change_price / lock_or_hold_stock",
+    "输出": "单选澄清句"
+   },
+   {
+    "规则ID": "R3",
+    "条件": "置信<0.60 或投诉/超授权",
+    "允许工具": "handoff_human",
+    "禁止工具": "一切成交类",
+    "输出": "转人工+理由"
+   },
+   {
+    "规则ID": "R4",
+    "条件": "工具失败",
+    "允许工具": "clarify 或 handoff",
+    "禁止工具": "用失败结果编数字",
+    "输出": "禁止估计有货/价"
+   },
+   {
+    "规则ID": "R5",
+    "条件": "售中有 order_id",
+    "允许工具": "ship_urge_track / apply_change_price 优先",
+    "禁止工具": "仅用售前库存猜订单",
+    "输出": "订单工具结果进首句"
+   },
+   {
+    "规则ID": "R6",
+    "条件": "并行上限",
+    "允许工具": "主工具+最多2辅",
+    "禁止工具": ">3 工具同轮",
+    "输出": "超时按失败策略"
+   }
+  ],
+  "ledger": [
+   {
+    "台账意图": "信息咨询",
+    "映射到intent_bucket": "信息咨询",
+    "主工具": "get_spec_media + get_stock_eta",
+    "说明": "台账量大头"
+   },
+   {
+    "台账意图": "库存查询",
+    "映射到intent_bucket": "库存查询",
+    "主工具": "get_stock_eta",
+    "说明": "三件套：货+交期+问件数"
+   },
+   {
+    "台账意图": "交期",
+    "映射到intent_bucket": "交期",
+    "主工具": "get_stock_eta / ship_urge_track",
+    "说明": "有单走物流"
+   },
+   {
+    "台账意图": "售后处理",
+    "映射到intent_bucket": "售后处理",
+    "主工具": "aftersale_refund",
+    "说明": "先结案再连带"
+   },
+   {
+    "台账意图": "尺寸定制",
+    "映射到intent_bucket": "尺寸定制",
+    "主工具": "get_custom_moq",
+    "说明": "转化低，必给替代"
+   },
+   {
+    "台账意图": "明确采购",
+    "映射到intent_bucket": "明确采购",
+    "主工具": "get_stock_eta + get_price_quote",
+    "说明": "逼近拍下"
+   },
+   {
+    "台账意图": "比价中",
+    "映射到intent_bucket": "比价中",
+    "主工具": "get_price_quote ± apply_change_price",
+    "说明": "锁价时效"
+   },
+   {
+    "台账意图": "现货",
+    "映射到intent_bucket": "库存查询 或 明确采购",
+    "主工具": "get_stock_eta",
+    "说明": "按上下文归并"
+   },
+   {
+    "台账意图": "logo",
+    "映射到intent_bucket": "logo/知识产权",
+    "主工具": "get_custom_moq",
+    "说明": "样本少"
+   },
+   {
+    "台账意图": "急单",
+    "映射到intent_bucket": "交期",
+    "主工具": "get_stock_eta + lock_or_hold_stock",
+    "说明": "截单+加急说明"
+   }
+  ],
+  "changelog": [
+   {
+    "日期": "2026-11-07",
+    "变更人": "询盘bot",
+    "变更内容": "v1 初版：17 意图桶 × 工具字典 + 置信度规则，对齐智能回复设计五工具并扩展定制/规格/澄清/转人工",
+    "影响桶/工具": "全部",
+    "审批": "待业务确认"
+   }
+  ]
+ },
+ "tool_map": {
+  "get_stock_eta": {
+   "tools": [
+    "xclaw_platform_alibaba_product_get"
+   ],
+   "confidence": "中",
+   "why": "1688 开放平台「获取商品」(platform alibaba product get) 返回商品及 SKU 的可售数量；没有预计到货日 / 截单发货规则字段，这两项仍缺接口"
+  },
+  "get_price_quote": {
+   "tools": [
+    "xclaw_platform_alibaba_product_get"
+   ],
+   "confidence": "中",
+   "why": "同一「获取商品」返回区间（阶梯）报价；包邮门槛、活动价不在返回里，报价时按数量对应档位"
+  },
+  "apply_change_price": {
+   "tools": [
+    "xclaw_platform_alibaba_trade_order_modifyorderprice_call"
+   ],
+   "confidence": "高",
+   "why": "「修改订单价格」(trade-order-modifyorderprice) 直接改 1688 订单价；接口要求运费、改价明细以「分」为单位，需由客服按目标价换算并确认；已标记需确认"
+  },
+  "lock_or_hold_stock": {
+   "tools": [],
+   "confidence": "",
+   "why": "目录中没有「占仓 / 锁库存」接口（只有修改库存 product-modifystock、批量改库存，语义不同，不能代替占仓）"
+  },
+  "ship_urge_track": {
+   "tools": [
+    "xclaw_platform_alibaba_trade_getlogisticstraceinfo_sellerview_v1_call"
+   ],
+   "confidence": "高",
+   "why": "「获取交易订单的物流跟踪信息（卖家视角）」(trade-getlogisticstraceinfo-sellerview-v1) 按订单号返回运单与物流节点"
+  },
+  "aftersale_refund": {
+   "tools": [
+    "xclaw_platform_alibaba_trade_refund_sellerview_query"
+   ],
+   "confidence": "中",
+   "why": "「查询退款单详情-根据订单ID（卖家视角）」(trade-refund-sellerview query) 返回退款进度/状态；同意退货、补寄、换货等操作接口存在但属写操作，本期只绑查询"
+  },
+  "get_spec_media": {
+   "tools": [
+    "xclaw_platform_alibaba_product_get"
+   ],
+   "confidence": "中（资质 / 发票低）",
+   "why": "「获取商品」返回商品属性、图片；证照 / 资质、开票类型不在返回里"
+  },
+  "get_custom_moq": {
+   "tools": [
+    "xclaw_platform_alibaba_product_get"
+   ],
+   "confidence": "低",
+   "why": "「获取商品」只能给起订量；「查询定制服务」(custom-query-bycate) 需要一二三级类目 ID，无法从对话槽位取得，未绑定；打样费、打样周期无接口"
+  },
+  "clarify_slot": {
+   "tools": [],
+   "confidence": "",
+   "why": "Router 动作：由必填槽位追问话术 + 空间「识别设置」中的澄清实现，不是外部工具"
+  },
+  "handoff_human": {
+   "tools": [],
+   "confidence": "",
+   "why": "Router 动作：由空间「识别设置」兜底动作（转人工 handoff_human）实现，不是外部工具"
+  },
+  "reply_template": {
+   "tools": [],
+   "confidence": "",
+   "why": "Router 动作：无工具事实时的短模板，由 Bot 话术模块实现，不是外部工具"
+  }
+ },
+ "confirm_tools": [
+  "xclaw_platform_alibaba_trade_order_modifyorderprice_call",
+  "xclaw_platform_alibaba_trade_refund_sellerview_query"
+ ],
+ "slots": [
+  {
+   "name": "shop_id",
+   "display_name": "店铺",
+   "type": "文本",
+   "options": [],
+   "default_ask": "（不向买家追问：由 Bot 按会话所属的 1688 店铺带入 ERP 店铺 ID）"
+  },
+  {
+   "name": "offer_id",
+   "display_name": "商品（链接/商品ID）",
+   "type": "文本",
+   "options": [],
+   "default_ask": "麻烦发一下您在看的商品链接～"
+  },
+  {
+   "name": "sku_id",
+   "display_name": "规格（SKU）",
+   "type": "文本",
+   "options": [],
+   "default_ask": "您要的是哪个规格呢？"
+  },
+  {
+   "name": "qty",
+   "display_name": "数量",
+   "type": "数字",
+   "options": [],
+   "default_ask": "您大概需要多少件？"
+  },
+  {
+   "name": "order_id",
+   "display_name": "订单号",
+   "type": "文本",
+   "options": [],
+   "default_ask": "麻烦发一下订单号～"
+  },
+  {
+   "name": "target_price",
+   "display_name": "目标价",
+   "type": "数字",
+   "options": [],
+   "default_ask": "您期望的价格是多少？"
+  },
+  {
+   "name": "custom_type",
+   "display_name": "定制类型",
+   "type": "文本",
+   "options": [],
+   "default_ask": "您想定制哪方面呢？"
+  },
+  {
+   "name": "custom_spec",
+   "display_name": "尺寸/参考图",
+   "type": "文本",
+   "options": [],
+   "default_ask": "麻烦发一下需要的尺寸或参考图～"
+  },
+  {
+   "name": "logo_req",
+   "display_name": "Logo 需求",
+   "type": "文本",
+   "options": [],
+   "default_ask": "您想印什么 Logo、印在哪个位置？"
+  },
+  {
+   "name": "logo_file",
+   "display_name": "Logo 文件",
+   "type": "图片",
+   "options": [],
+   "default_ask": "方便发一下 Logo 图片吗？"
+  },
+  {
+   "name": "sample_qty",
+   "display_name": "样品数量",
+   "type": "数字",
+   "options": [],
+   "default_ask": "样品需要几件？"
+  },
+  {
+   "name": "invoice_type",
+   "display_name": "发票类型",
+   "type": "文本",
+   "options": [],
+   "default_ask": "您需要开哪种发票？"
+  },
+  {
+   "name": "cert_type",
+   "display_name": "资质类型",
+   "type": "文本",
+   "options": [],
+   "default_ask": "您需要哪类资质或证书？"
+  },
+  {
+   "name": "question_type",
+   "display_name": "问题类型",
+   "type": "文本",
+   "options": [],
+   "default_ask": "您想了解商品的哪方面信息？"
+  },
+  {
+   "name": "aftersale_type",
+   "display_name": "售后类型",
+   "type": "枚举",
+   "options": [
+    "退款",
+    "退货",
+    "换货",
+    "补发"
+   ],
+   "default_ask": "您是想退款、退货、换货还是补发？"
+  },
+  {
+   "name": "carriage",
+   "display_name": "改价后运费（分）",
+   "type": "数字",
+   "options": [],
+   "default_ask": "（不向买家追问：客服确认改价后填写，单位为分）"
+  },
+  {
+   "name": "entry_discounts",
+   "display_name": "改价明细（分）",
+   "type": "文本",
+   "options": [],
+   "default_ask": "（不向买家追问：客服按目标价换算后填写，单位为分，负数为减价）"
+  }
+ ],
+ "space": {
+  "levels": [
+   "阶段",
+   "意图"
+  ]
+ },
+ "categories": [
+  {
+   "code": "PRE",
+   "name": "售前"
+  },
+  {
+   "code": "MID",
+   "name": "售中"
+  },
+  {
+   "code": "POST",
+   "name": "售后"
+  },
+  {
+   "code": "NONE",
+   "name": "非询盘"
+  }
+ ],
+ "intents": [
+  {
+   "bucket": "库存查询",
+   "code": "B.PRE.STOCK",
+   "category": "PRE",
+   "name": "库存查询",
+   "description": "买家询问某款商品或规格有没有现货、能卖多少、什么时候到货；问「有货吗」「库存多少」「没货什么时候到」算；只问价格不算（→ 询价报价），已下单问发货不算（→ 售中履约）",
+   "examples": [
+    "这款有现货吗",
+    "黑色的还有货吗",
+    "现在库存有多少",
+    "没货的话什么时候能到"
+   ],
+   "slots": [
+    {
+     "name": "offer_id",
+     "required": true
+    },
+    {
+     "name": "sku_id",
+     "required": false
+    },
+    {
+     "name": "qty",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_stock_eta",
+    "get_price_quote",
+    "lock_or_hold_stock"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "信息咨询",
+   "code": "B.PRE.INFO",
+   "category": "PRE",
+   "name": "信息咨询",
+   "description": "买家咨询商品参数、材质、毛重、实拍图等商品信息；要实拍、问规格参数算；问库存不算（→ 库存查询），问价不算（→ 询价报价），要资质证书不算（→ 资质合规）",
+   "examples": [
+    "发几张实拍图看看",
+    "这个是什么材质的",
+    "毛重多少",
+    "详细参数发一下"
+   ],
+   "slots": [
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "question_type",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_spec_media",
+    "get_stock_eta",
+    "get_price_quote"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "询价报价",
+   "code": "B.PRE.QUOTE",
+   "category": "PRE",
+   "name": "询价报价",
+   "description": "买家询问单价、阶梯价、包邮门槛或活动价；问「多少钱」「拿多少件什么价」算；拿别家价格比、要求降价不算（→ 比价中）",
+   "examples": [
+    "这个多少钱一件",
+    "拿500件什么价",
+    "多少件起包邮",
+    "有活动价吗"
+   ],
+   "slots": [
+    {
+     "name": "offer_id",
+     "required": true
+    },
+    {
+     "name": "qty",
+     "required": true
+    },
+    {
+     "name": "sku_id",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_price_quote",
+    "get_stock_eta"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "比价中",
+   "code": "B.PRE.COMPARE",
+   "category": "PRE",
+   "name": "比价中",
+   "description": "买家拿其他店铺或渠道的价格作对比，要求给底价或议价；说「别家更便宜」「能不能便宜点」算；只问单价不算（→ 询价报价），已下单要求改价不算（→ 售中改价改单）",
+   "examples": [
+    "别家比你便宜",
+    "能再便宜点吗",
+    "给个最低价",
+    "量大能优惠多少"
+   ],
+   "slots": [
+    {
+     "name": "offer_id",
+     "required": true
+    },
+    {
+     "name": "qty",
+     "required": true
+    },
+    {
+     "name": "target_price",
+     "required": false
+    },
+    {
+     "name": "order_id",
+     "required": false
+    },
+    {
+     "name": "carriage",
+     "required": false
+    },
+    {
+     "name": "entry_discounts",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_price_quote",
+    "apply_change_price"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    },
+    {
+     "tool": "xclaw_platform_alibaba_trade_order_modifyorderprice_call",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "order_id": {
+       "source": "槽位",
+       "value": "order_id"
+      },
+      "carriage": {
+       "source": "槽位",
+       "value": "carriage"
+      },
+      "entry_discounts": {
+       "source": "槽位",
+       "value": "entry_discounts"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "明确采购",
+   "code": "B.PRE.BUY",
+   "category": "PRE",
+   "name": "明确采购",
+   "description": "买家已明确要买，确认数量、规格后准备下单；说「我要500件」「怎么拍」「现在下单」算；还在问价、比价不算（→ 询价报价 / 比价中）",
+   "examples": [
+    "我要300件黑色的",
+    "现在拍可以吗",
+    "确定要了怎么下单",
+    "今天拍今天能发吗"
+   ],
+   "slots": [
+    {
+     "name": "offer_id",
+     "required": true
+    },
+    {
+     "name": "qty",
+     "required": true
+    },
+    {
+     "name": "sku_id",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_stock_eta",
+    "get_price_quote",
+    "lock_or_hold_stock"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "交期",
+   "code": "B.PRE.LEADTIME",
+   "category": "PRE",
+   "name": "交期",
+   "description": "买家询问几天发货、截单时间或急单能否当天发（售前/售中均可能出现：没有订单按商品查发货规则，已有订单按订单查物流）；问「几天发货」「几点前付款当天发」算；问有没有货不算（→ 库存查询）",
+   "examples": [
+    "几天能发货",
+    "今天下单今天发吗",
+    "急用，最快什么时候发",
+    "几点前付款当天发"
+   ],
+   "slots": [
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "order_id",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_stock_eta",
+    "ship_urge_track",
+    "lock_or_hold_stock"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    },
+    {
+     "tool": "xclaw_platform_alibaba_trade_getlogisticstraceinfo_sellerview_v1_call",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "order_id": {
+       "source": "槽位",
+       "value": "order_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "尺寸定制",
+   "code": "B.PRE.CUSTOM_SIZE",
+   "category": "PRE",
+   "name": "尺寸定制",
+   "description": "买家想按自己的尺寸或图纸定制，问能否改尺寸、起订量和打样；说「能做这个尺寸吗」「按图定做」算；印 Logo 不算（→ logo/知识产权），只要样品不算（→ 样品）",
+   "examples": [
+    "能按我的尺寸做吗",
+    "可以做大一号的吗",
+    "按图纸定制起订多少",
+    "改尺寸要打样吗"
+   ],
+   "slots": [
+    {
+     "name": "custom_type",
+     "required": true
+    },
+    {
+     "name": "custom_spec",
+     "required": true
+    },
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "qty",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_custom_moq",
+    "get_stock_eta"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "logo/知识产权",
+   "code": "B.PRE.LOGO",
+   "category": "PRE",
+   "name": "logo/知识产权",
+   "description": "买家想在商品或包装上印 Logo、贴牌，或问印品牌图案能不能做；说「能印 logo 吗」「可以贴牌吗」算；只改尺寸不算（→ 尺寸定制）",
+   "examples": [
+    "能印我们的logo吗",
+    "可以贴牌吗",
+    "印logo起订多少",
+    "包装上能印字吗"
+   ],
+   "slots": [
+    {
+     "name": "logo_req",
+     "required": true
+    },
+    {
+     "name": "logo_file",
+     "required": false
+    },
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "qty",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_custom_moq",
+    "get_spec_media"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "样品",
+   "code": "B.PRE.SAMPLE",
+   "category": "PRE",
+   "name": "样品",
+   "description": "买家想先拿样品看质量，询问样品价、运费和寄样周期；说「能寄样吗」「先拿个样」算；直接下大货不算（→ 明确采购）",
+   "examples": [
+    "能先寄个样品吗",
+    "样品怎么收费",
+    "先拿两件看看质量",
+    "样品多久能寄出"
+   ],
+   "slots": [
+    {
+     "name": "sku_id",
+     "required": true
+    },
+    {
+     "name": "sample_qty",
+     "required": true
+    },
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_custom_moq",
+    "get_price_quote",
+    "get_stock_eta"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "发票对公",
+   "code": "B.PRE.INVOICE",
+   "category": "PRE",
+   "name": "发票对公",
+   "description": "买家询问能否开发票、开哪种发票、开票要什么资料或能否对公付款；说「能开专票吗」「可以对公转账吗」算；要资质证书不算（→ 资质合规）",
+   "examples": [
+    "能开专票吗",
+    "可以对公转账吗",
+    "开票需要提供什么",
+    "能开普票吗"
+   ],
+   "slots": [
+    {
+     "name": "invoice_type",
+     "required": true
+    },
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_spec_media",
+    "clarify_slot"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "资质合规",
+   "code": "B.PRE.CERT",
+   "category": "PRE",
+   "name": "资质合规",
+   "description": "买家索要商品资质、检测报告、证书等合规文件；说「有检测报告吗」「有什么证书」算；问开发票不算（→ 发票对公）",
+   "examples": [
+    "有检测报告吗",
+    "有什么资质证书",
+    "能发一下质检报告吗",
+    "这个有认证吗"
+   ],
+   "slots": [
+    {
+     "name": "cert_type",
+     "required": true
+    },
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "get_spec_media",
+    "handoff_human"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "开场领券",
+   "code": "B.PRE.COUPON",
+   "category": "PRE",
+   "name": "开场领券",
+   "description": "买家开场只问优惠券、怎么领券、有没有优惠，还没说采购需求；说「有优惠券吗」「怎么领券」算；已说明数量问价不算（→ 询价报价）",
+   "examples": [
+    "有优惠券吗",
+    "怎么领券",
+    "新客有优惠吗",
+    "有没有满减"
+   ],
+   "slots": [
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "qty",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "clarify_slot",
+    "get_stock_eta",
+    "get_price_quote"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "售中改价改单",
+   "code": "B.MID.CHANGE_ORDER",
+   "category": "MID",
+   "name": "售中改价改单",
+   "description": "买家已拍下或已下单，要求修改订单价格、数量或运费；说「拍好了帮我改价」「数量改成 200」算；还没下单的议价不算（→ 比价中）",
+   "examples": [
+    "拍好了帮我改下价",
+    "订单数量改成200件",
+    "改好价我就付款",
+    "运费能帮我改一下吗"
+   ],
+   "slots": [
+    {
+     "name": "order_id",
+     "required": true
+    },
+    {
+     "name": "target_price",
+     "required": false
+    },
+    {
+     "name": "qty",
+     "required": false
+    },
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "carriage",
+     "required": false
+    },
+    {
+     "name": "entry_discounts",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "apply_change_price",
+    "get_price_quote",
+    "lock_or_hold_stock"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_trade_order_modifyorderprice_call",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "order_id": {
+       "source": "槽位",
+       "value": "order_id"
+      },
+      "carriage": {
+       "source": "槽位",
+       "value": "carriage"
+      },
+      "entry_discounts": {
+       "source": "槽位",
+       "value": "entry_discounts"
+      }
+     }
+    },
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "售中履约",
+   "code": "B.MID.FULFILL",
+   "category": "MID",
+   "name": "售中履约",
+   "description": "买家已下单，询问发货时间、催发货或查询运单号与物流轨迹；有订单问「什么时候发」「单号多少」「物流到哪了」算；没下单问几天发不算（→ 交期），要退换货不算（→ 售后处理）",
+   "examples": [
+    "我的订单什么时候发",
+    "发货了吗，单号多少",
+    "物流怎么一直没动",
+    "帮我催一下发货"
+   ],
+   "slots": [
+    {
+     "name": "order_id",
+     "required": true
+    },
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "ship_urge_track",
+    "get_stock_eta",
+    "aftersale_refund"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_trade_getlogisticstraceinfo_sellerview_v1_call",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "order_id": {
+       "source": "槽位",
+       "value": "order_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    },
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    },
+    {
+     "tool": "xclaw_platform_alibaba_trade_refund_sellerview_query",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "order_id": {
+       "source": "槽位",
+       "value": "order_id"
+      },
+      "query_type": {
+       "source": "常量",
+       "value": "1"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "售后处理",
+   "code": "B.POST.AFTERSALE",
+   "category": "POST",
+   "name": "售后处理",
+   "description": "买家收货后要退款、退货、换货、补发，或查询售后进度；说「少发了」「要退货」「退款到哪了」算；未发货催发不算（→ 售中履约）",
+   "examples": [
+    "少发了两件给我补一下",
+    "质量有问题要退货",
+    "退款什么时候到账",
+    "发错颜色了能换吗"
+   ],
+   "slots": [
+    {
+     "name": "order_id",
+     "required": true
+    },
+    {
+     "name": "aftersale_type",
+     "required": true
+    },
+    {
+     "name": "offer_id",
+     "required": false
+    },
+    {
+     "name": "shop_id",
+     "required": false
+    }
+   ],
+   "doc_tools": [
+    "aftersale_refund",
+    "ship_urge_track",
+    "get_stock_eta"
+   ],
+   "tools": [
+    {
+     "tool": "xclaw_platform_alibaba_trade_refund_sellerview_query",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "order_id": {
+       "source": "槽位",
+       "value": "order_id"
+      },
+      "query_type": {
+       "source": "常量",
+       "value": "1"
+      }
+     }
+    },
+    {
+     "tool": "xclaw_platform_alibaba_trade_getlogisticstraceinfo_sellerview_v1_call",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "order_id": {
+       "source": "槽位",
+       "value": "order_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    },
+    {
+     "tool": "xclaw_platform_alibaba_product_get",
+     "param_map": {
+      "shop_id": {
+       "source": "槽位",
+       "value": "shop_id"
+      },
+      "product_id": {
+       "source": "槽位",
+       "value": "offer_id"
+      },
+      "web_site": {
+       "source": "常量",
+       "value": "1688"
+      },
+      "scene": {
+       "source": "常量",
+       "value": "1688"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "bucket": "无买家意图/空会话",
+   "code": "B.NONE.EMPTY",
+   "category": "NONE",
+   "name": "无买家意图/空会话",
+   "description": "会话里没有明确的采购需求，只有「在吗」「你好」、表情或只发链接不说话；先确认买家在看哪款，不调成交类工具；只要提出了具体问题就不算",
+   "examples": [
+    "在吗",
+    "你好",
+    "在不在",
+    "老板"
+   ],
+   "slots": [],
+   "doc_tools": [
+    "clarify_slot",
+    "reply_template"
+   ],
+   "tools": []
+  },
+  {
+   "bucket": "其他",
+   "code": "B.NONE.OTHER",
+   "category": "NONE",
+   "name": "其他",
+   "description": "不属于以上任何意图、与采购无关或无法判断的消息；只做澄清或转人工，禁止调用改价等成交类工具；能归到具体意图的不算",
+   "examples": [
+    "你们几点下班",
+    "帮我转给别人",
+    "我先问问别的",
+    "说个别的事"
+   ],
+   "slots": [],
+   "doc_tools": [
+    "clarify_slot",
+    "handoff_human"
+   ],
+   "tools": []
+  }
+ ],
+ "owner": "1688客服（映射维护表 v1）"
+}

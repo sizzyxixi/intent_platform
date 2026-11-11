@@ -36,6 +36,8 @@ OWNER = "西之月开放平台"
 BIN = "xclaw-cli"
 INSTALL = "curl -fsSL https://open.westmonth.com/install | bash（Windows：irm https://open.westmonth.com/install.ps1 | iex）"
 LOGIN = "xclaw-cli auth login"
+# 目录里未标记需确认、但会改动订单金额的命令：平台侧强制「写操作需确认」（1688 客服映射表 R1–R3：成交类工具需人确认）
+CONFIRM_OVERRIDE = {"platform.alibaba.trade-order-modifyorderprice.call"}
 AUTH_ENV = "XCLAW_UMC_TOKEN"  # 官方文档：业务命令凭证优先链 XCLAW_UMC_TOKEN → .xclaw.env.json → 本地 credentials.json
 PACK_NAMES = {"goods": "商品"}
 SKILL_ORDER = ["xclaw-cli-assistant", "xclaw-mall", "xclaw-operate", "xclaw-platform", "xclaw-supply"]
@@ -120,7 +122,7 @@ def cli_payload(c: dict, name: str, cli_version: str) -> dict:
             "params": params,
             "config": {"bin": BIN, "command_template": tpl, "auth": "CLI 内置登录（OAuth）", "login_command": LOGIN,
                        "install": INSTALL, "verified_version": cli_version, "output_format": "json",
-                       "confirm_required": bool(c.get("confirmRequired")),
+                       "confirm_required": bool(c.get("confirmRequired")) or c["operationId"] in CONFIRM_OVERRIDE,
                        "output_description": f"JSON（--json）；参数与返回以 xclaw-cli schema {c['path']} --json 为准",
                        "auth_env": AUTH_ENV, "pack": pack, "pack_name": c.get("packName") or PACK_NAMES.get(pack, pack),
                        "group": c.get("capabilityCode") or "", "source_ref": c["operationId"],
