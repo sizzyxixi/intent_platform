@@ -115,20 +115,22 @@ def admin_dict(t: Tool, users: list | None = None, spaces: dict | None = None) -
     return d
 
 
-LIST_BATCH = 500
+LIST_BATCH = 0  # 0 = 取配置 tool_list_batch（测试可直接改这个值）
 
 
 def list_tools(db: Session, source: str | None = None) -> list[Tool]:
     """全部工具。按工具名分批读取（每批 LIST_BATCH 条），远程数据库上避免单次传输过大被断开。"""
+    from ..config import get_settings
+    batch = LIST_BATCH or get_settings().tool_list_batch
     out: list[Tool] = []
     last = ""
     while True:
         stmt = select(Tool).where(Tool.name > last)
         if source:
             stmt = stmt.where(Tool.source == source)
-        part = list(db.scalars(stmt.order_by(Tool.name).limit(LIST_BATCH)))
+        part = list(db.scalars(stmt.order_by(Tool.name).limit(batch)))
         out += part
-        if len(part) < LIST_BATCH:
+        if len(part) < batch:
             break
         last = part[-1].name
     out.sort(key=lambda t: (t.position, t.name))

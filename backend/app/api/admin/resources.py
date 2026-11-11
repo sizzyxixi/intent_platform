@@ -164,7 +164,9 @@ def get_import(import_id: str, actor=Depends(VIEW), db: Session = Depends(get_db
 def list_tools(source: str | None = None, actor=Depends(VIEW), db: Session = Depends(get_db)):
     sp = kb_svc.space_names(db)
     usage = intent_svc.tool_usage(db)
-    fp = (source, tool_svc.fingerprint(db))
+    fp = [source, *[int(x) for x in tool_svc.fingerprint(db)]]
+    if _TOOL_CACHE.get("fp") != fp:
+        _load_cache_file()
     if _TOOL_CACHE.get("fp") != fp:
         rows = []
         for t in tool_svc.list_tools(db, source):
@@ -172,6 +174,7 @@ def list_tools(source: str | None = None, actor=Depends(VIEW), db: Session = Dep
             d.pop("input_schema", None)  # 列表不带（与 params 重复，工具多时体积翻倍）；详情接口仍返回
             rows.append(d)
         _TOOL_CACHE.update(fp=fp, rows=rows)
+        _save_cache_file()
     out = []
     for d in _TOOL_CACHE["rows"]:
         users = usage.get(d["name"], [])
@@ -180,8 +183,33 @@ def list_tools(source: str | None = None, actor=Depends(VIEW), db: Session = Dep
     return out
 
 
-# 工具列表缓存（进程内）：工具 / MCP 服务表没变化时不再整表读取；使用情况每次现查
+# 工具列表缓存（进程内，可选落盘 IP_TOOL_CACHE_FILE）：工具 / MCP 服务表没变化时不再整表读取；使用情况每次现查
 _TOOL_CACHE: dict = {}
+
+
+def _load_cache_file() -> None:
+    import json
+    from pathlib import Path
+    from ...config import get_settings
+    f = get_settings().tool_cache_file
+    if f and Path(f).is_file():
+        try:
+            d = json.loads(Path(f).read_text(encoding="utf-8"))
+            _TOOL_CACHE.update(fp=d["fp"], rows=d["rows"])
+        except (ValueError, KeyError, OSError):
+            pass
+
+
+def _save_cache_file() -> None:
+    import json
+    import os
+    from pathlib import Path
+    from ...config import get_settings
+    f = get_settings().tool_cache_file
+    if f:
+        tmp = Path(f + ".tmp")
+        tmp.write_text(json.dumps({"fp": _TOOL_CACHE["fp"], "rows": _TOOL_CACHE["rows"]}, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, f)
 
 
 @router.post("/skill-packages", status_code=201)

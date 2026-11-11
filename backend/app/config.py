@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     idempotency_ttl_hours: int = 24
     max_batch: int = 100
     max_upload_mb: int = 50
+    # 工具目录：分批读取的每批条数；列表缓存文件（可选，设置后进程重启也不用重新整表读取，适合离数据库很远 / 带宽很低的部署）
+    tool_list_batch: int = 200
+    tool_cache_file: str | None = None
     public_base_url: str = "https://intent.example.com"
     docs_dir: str | None = None
     frontend_dist: str | None = None

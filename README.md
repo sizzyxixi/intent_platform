@@ -15,6 +15,7 @@
   - 官方 **5 个 Skills**（xclaw-cli-assistant / xclaw-mall / xclaw-operate / xclaw-platform / xclaw-supply，v2.2.1）登记为技能。
   - 鉴权：`xclaw-cli auth login`（OAuth），或在 Bot 运行环境注入 `XCLAW_UMC_TOKEN`。
   - 快照在 `backend/seed/westmonth/`；刷新：先 `xclaw-cli catalog index --json > index.json` 并下载 `skills list` 给出的 zip，再 `python -m app.westmonth refresh-fixture --catalog index.json --skills-dir <zip目录> --cli-version <版本>`，最后 `python -m app.westmonth import`（幂等；快照里没有了的命令若仍被意图使用则保留）。
+  - 工具目录接口按名分批读取（`IP_TOOL_LIST_BATCH`，默认 200）并缓存，表没变化时不再整表读取；数据库很远时可设 `IP_TOOL_CACHE_FILE=/路径/tools_cache.json` 让缓存落盘，重启后不用重新拉取。
   - 工具中心按「CLI 命令包」筛选、搜索、分页显示；意图里选 CLI 时可先选「命令包 › 业务分组」。
 - **用户与审计**（仅管理员）：账号分 admin / editor / viewer 三种角色；所有写操作都记审计日志。
 

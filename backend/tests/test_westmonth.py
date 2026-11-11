@@ -142,3 +142,16 @@ def test_list_tools_batched_and_cache_invalidates(tokens, admin, monkeypatch):
         db.commit()
     lst = admin.get("/api/admin/tools").json()
     assert len(lst) == n1 + 3  # 缓存随表变化失效
+
+
+def test_tool_cache_file(tokens, admin, tmp_path, monkeypatch):
+    from app.api.admin import resources as res
+    from app.config import get_settings
+    f = tmp_path / "tools_cache.json"
+    monkeypatch.setattr(get_settings(), "tool_cache_file", str(f))
+    res._TOOL_CACHE.clear()
+    a = admin.get("/api/admin/tools").json()
+    assert f.is_file()
+    res._TOOL_CACHE.clear()  # 模拟重启：从文件恢复，不需整表读取
+    monkeypatch.setattr(tool_svc, "list_tools", lambda *x, **k: (_ for _ in ()).throw(AssertionError("不应整表读取")))
+    assert admin.get("/api/admin/tools").json() == a
