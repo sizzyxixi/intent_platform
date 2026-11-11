@@ -109,3 +109,7 @@ pre.code{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;fo
 .adv>summary{cursor:pointer;color:#4b5563;font-weight:600}
 .adv .f{margin-top:8px}
 .cred-presets a{margin-right:10px}
+
+.tblwrap{overflow-x:auto}table.fixed{table-layout:fixed;min-width:1040px}table.fixed td{overflow-wrap:anywhere;word-break:break-word}
+.clamp2,.clamp3{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}.clamp2{-webkit-line-clamp:2}.clamp3{-webkit-line-clamp:3}
+#toolPack{max-width:220px}

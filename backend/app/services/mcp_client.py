@@ -223,3 +223,46 @@ def fetch_tools(transport: str, *, url: str | None = None, headers: dict | None 
     except httpx.HTTPError as e:
         raise McpError(f"连接 MCP 服务失败：{type(e).__name__} {e}")
     raise McpError(f"不支持的传输方式 {transport}")
+
+
+def call_tool(url: str, headers: dict, name: str, arguments: dict, timeout: float = 30) -> dict:
+    """测试调用：Streamable HTTP 上 initialize → tools/call，返回 result（含 content / isError）。"""
+    sess: dict = {}
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=False) as c:
+            def post(body: dict) -> dict | None:
+                h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", **headers}
+                if sess.get("id"):
+                    h["Mcp-Session-Id"] = sess["id"]
+                if sess.get("ver"):
+                    h["MCP-Protocol-Version"] = sess["ver"]
+                with c.stream("POST", url, json=body, headers=h) as r:
+                    if r.headers.get("mcp-session-id"):
+                        sess["id"] = r.headers["mcp-session-id"]
+                    if "id" not in body:
+                        return None
+                    if r.status_code >= 400:
+                        r.read()
+                        raise McpError(f"HTTP {r.status_code}：{r.text[:200]}")
+                    if "text/event-stream" in r.headers.get("content-type", ""):
+                        for _ev, data in _sse_events(r.iter_lines()):
+                            try:
+                                m = json.loads(data)
+                            except ValueError:
+                                continue
+                            if m.get("id") == body["id"]:
+                                return m
+                        raise McpError("事件流结束前没有收到响应")
+                    r.read()
+                    m = r.json()
+                    if isinstance(m, list):
+                        m = next((x for x in m if x.get("id") == body["id"]), {})
+                    return m
+
+            init = _check(post(_init_req(1)), "initialize")
+            sess["ver"] = init.get("protocolVersion") or PROTOCOL_VERSION
+            post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            return _check(post({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                "params": {"name": name, "arguments": arguments}}), "tools/call")
+    except httpx.HTTPError as e:
+        raise McpError(f"连接 MCP 服务失败：{type(e).__name__} {e}")

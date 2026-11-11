@@ -19,7 +19,10 @@ test('工具：注册 HTTP 工具 → 测试调用预览 → 删除', async ({ p
   const row = page.locator('#toolTbl tbody tr', { hasText: 'e2e_query_color' })
   await expect(row).toBeVisible()
   await row.getByRole('button', { name: '测试调用' }).click()
-  await page.click('#ttRun')
+  await page.click('#ttPrev')
+  await expect(page.getByTestId('toolTest')).toContainText('sku')  // 必填未填 → 报错
+  await page.getByTestId('toolTest').locator('input').first().fill('SKU-1')
+  await page.click('#ttPrev')
   await expect(page.locator('#ttOut')).toContainText('https://erp.example.com/api/color')
   await page.keyboard.press('Escape')
   page.once('dialog', d => d.accept())
@@ -63,4 +66,30 @@ test('接入与密钥：新建 Key 只显示一次 → 吊销', async ({ page, r
   expect(r2.status()).toBe(401)
   // AI 接入说明已加载
   await expect(page.locator('#doc_openapi')).toContainText('openapi: 3')
+})
+
+test('工具：平台内置工具真实执行，显示状态与响应', async ({ page }) => {
+  await login(page)
+  await page.goto('/#/tools/list')
+  const row = page.locator('#toolTbl tbody tr[data-tool="pf_list_tools"]')
+  await row.getByRole('button', { name: '测试调用' }).click()
+  await page.click('#ttRun')
+  await expect(page.locator('#ttStatus')).toContainText('成功')
+  await expect(page.locator('#ttStatus')).toContainText('HTTP 200')
+  await expect(page.locator('#ttOut')).toContainText('items')
+  await page.keyboard.press('Escape')
+  // 维护类（写）工具：未勾选确认不能执行
+  await page.locator('#toolTbl tbody tr[data-tool="pf_write_slots"]').getByRole('button', { name: '测试调用' }).click()
+  await expect(page.locator('#ttRun')).toBeDisabled()
+  await page.locator('#ttConfirm input').check()
+  await expect(page.locator('#ttRun')).toBeEnabled()
+})
+
+test('工具中心：1280 宽度下页面不横向溢出', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await login(page)
+  await page.goto('/#/tools/list')
+  await expect(page.locator('#toolTbl')).toBeVisible()
+  const over = await page.evaluate(() => { const c = document.querySelector('.content')!; return c.scrollWidth - c.clientWidth })
+  expect(over).toBeLessThanOrEqual(0)
 })

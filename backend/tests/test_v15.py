@@ -134,7 +134,7 @@ def test_skill_upload_create_version_download(admin, full_key):
     assert z.status_code == 200 and z.headers["X-Skill-Version"] == "2"
     assert full_key.get("/api/v1/tools/query_stock/skill-package").status_code == 400
     # 测试调用：技能只给预览，没有入参
-    pv = admin.post("/api/admin/tools/poster_maker/test", json={"values": {}}).json()
+    pv = admin.post("/api/admin/tools/poster_maker/test", json={"values": {}, "dry_run": True}).json()
     assert pv["request"]["version"] == 2 and "SKILL.md" in pv["request"]["files"]
 
 
@@ -186,7 +186,7 @@ def test_workflow_sync_inputs_and_create(admin, full_key):
     assert r.status_code == 201, r.text
     wf = r.json()["workflow"]
     assert wf["user"] == {"mode": "session"} and wf["timeout_sec"] == 60 and wf["confirm_required"] is True
-    pv = admin.post("/api/admin/tools/dify_poster/test", json={"values": {"query": "做海报", "image": "https://x/1.png"}}).json()
+    pv = admin.post("/api/admin/tools/dify_poster/test", json={"values": {"query": "做海报", "image": "https://x/1.png"}, "dry_run": True}).json()
     assert pv["request"]["url"] == "https://api.dify.ai/v1/workflows/run"
     assert pv["request"]["json"]["inputs"]["n"] == 2 and pv["request"]["json"]["user"] == "$session.user"
     assert pv["request"]["headers"]["Authorization"] == "Bearer $DIFY_APP_KEY"
@@ -196,7 +196,7 @@ def test_workflow_sync_inputs_and_create(admin, full_key):
           "config": {**coze, "response_mode": "streaming", "workflow_version": "v0.0.3", "is_async": True, "ext": '{"a": 1}'}}
     r = admin.post("/api/admin/tools", json=cb)
     assert r.status_code == 201, r.text
-    pv = admin.post("/api/admin/tools/coze_tr/test", json={"values": {"input": "你好"}}).json()["request"]
+    pv = admin.post("/api/admin/tools/coze_tr/test", json={"values": {"input": "你好"}, "dry_run": True}).json()["request"]
     assert pv["url"] == "https://api.coze.cn/v1/workflow/stream_run"
     assert pv["json"] == {"workflow_id": "7400000000000000001", "parameters": {"input": "你好"}, "workflow_version": "v0.0.3",
                           "ext": {"a": 1}, "is_async": True}

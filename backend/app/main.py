@@ -24,6 +24,7 @@ log = logging.getLogger("intent")
 async def lifespan(app: FastAPI):
     s = get_settings()
     logging.basicConfig(level=s.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # httpx 的 INFO 日志会带完整 URL（可能含 URL 参数里的凭据）
     try:
         from .services.knowledge import recover_stuck_builds
         with SessionLocal() as db:

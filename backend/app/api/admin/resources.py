@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ...db import get_db
 from ...deps import SCOPES, Role, require
-from ...errors import bad_request, not_found
+from ...errors import bad_request, forbidden, not_found
 from ...models import ImportRecord, McpServer, Space
 from ...services import intents as intent_svc, keys as key_svc, knowledge as kb_svc, tools as tool_svc
 from ...services import mcp_servers as mcp_svc, skills as skill_svc, workflows as wf_svc
@@ -332,8 +332,15 @@ async def apply_mcp_sync(name: str, request: Request, actor=Depends(EDIT), db: S
 
 @router.post("/tools/{name}/test")
 async def test_tool(name: str, request: Request, actor=Depends(VIEW), db: Session = Depends(get_db)):
+    """dry_run=true：只生成请求预览（所有角色）；否则真实执行一次（仅管理员，记审计）。"""
     b = await json_body(request)
-    return tool_svc.preview(tool_svc.get(db, name), b.get("values") or {}, b.get("space"))
+    t = tool_svc.get(db, name)
+    if b.get("dry_run"):
+        return tool_svc.preview(t, b.get("values") or {}, b.get("space"))
+    if actor.role != "admin":
+        raise forbidden("测试调用会真实执行工具，仅管理员可用", "ROLE_FORBIDDEN")
+    from ...services import tool_exec
+    return await tool_exec.execute(db, t, b.get("values") or {}, b.get("space"), bool(b.get("confirm")), actor)
 
 
 # ---------------- API Key ----------------

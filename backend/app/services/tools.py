@@ -391,8 +391,8 @@ def render_cli(template: str, values: dict) -> list[str]:
     return out
 
 
-def preview(t: Tool, values: dict, space_id: str | None = None) -> dict:
-    """测试调用：校验必填并生成将要发出的请求（平台不执行，执行在 Bot）。"""
+def coerce_args(t: Tool, values: dict) -> dict:
+    """测试调用的入参：补默认值、校验必填、按类型转换。"""
     values = {**{p["name"]: p["default"] for p in t.params if p.get("default") not in (None, "")},
               **{k: v for k, v in (values or {}).items() if v not in (None, "")}}
     missing = [p["name"] for p in t.params if p.get("required") and values.get(p["name"]) in (None, "")]
@@ -413,6 +413,12 @@ def preview(t: Tool, values: dict, space_id: str | None = None) -> dict:
         elif p["type"] in ("file_list", "string[]") and isinstance(v, str):
             v = [x.strip() for x in re.split(r"[,，\n]", v) if x.strip()]
         args[p["name"]] = v
+    return args
+
+
+def preview(t: Tool, values: dict, space_id: str | None = None) -> dict:
+    """生成将要发出的请求（不执行）。"""
+    args = coerce_args(t, values)
     c = t.config or {}
     out: dict = {"type": t.type, "executed": False,
                  "note": "平台只登记工具，测试调用只生成请求预览，不会真正执行；实际执行在 Bot / 智能体侧。"}

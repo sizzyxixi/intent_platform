@@ -9,7 +9,6 @@ import ToolEdit, { KINDS, TypeTag, WF_PLAT, pTypeLabel } from './ToolEdit'
 const PAGE = 100
 const API_ROWS = (demo as any).API_ROWS as string[][]
 const MCP_ROWS = (demo as any).MCP_ROWS as string[][]
-const MOCKV: Record<string, string> = { sku: 'SKU-88231', need_qty: '500', qty: '500', order_id: '202611090012345', new_price: '4800', reason: '破损', session_id: 'ww-session-7781', product_image: 'https://img.example.com/demo/sku-88231.jpg', platform: 'TikTok', site: 'US', style: '简约', title: 'Women Summer Dress No.1 Best Seller', text: 'No.1 Best ever summer dress, 100% effective', language: 'en', locale: 'en', query: 'TikTok 主图要求', kb_id: 'kb_spec', mode: 'merge', since_version: '6', task: 'main', prompt: '白底主图，产品居中，柔和阴影', ratio: '1:1', image_url: 'https://img.example.com/demo/sku-88231.jpg', color: '白色', target_language: 'en', video_url: 'https://video.example.com/demo.mp4' }
 
 export default function ToolsPage({ tab }: { tab: string }) {
   const { go } = useSession()
@@ -26,11 +25,11 @@ function End({ t }: { t: any }) {
   if (t.source === 'builtin') return <><div className="mono" style={s}>{t.endpoints.map((e: string) => <div key={e}>{e}</div>)}</div>
     {t.mcp_tools.length > 0 && <div className="muted" style={s}>MCP：{t.mcp_tools.join('、')}</div>}
     <div className="muted" style={s}>{t.space_scoped ? '按空间：需 X-Space-Id' : '全局：不需要 X-Space-Id'}</div></>
-  if (t.type === 'cli') return <><div className="mono" style={s}>{t.cli.command_template}</div>{t.cli.pack && <div className="muted" style={s}>{t.cli.pack_name || t.cli.pack}{t.cli.group && ` › ${t.cli.group}`}</div>}<div className="muted" style={s}>鉴权：{t.cli.auth}{t.cli.auth_env && <>（或 <span className="mono">${t.cli.auth_env}</span>）</>} · 输出 {t.cli.output_format === 'json' ? 'JSON' : '纯文本'}</div></>
+  if (t.type === 'cli') return <><div className="mono clamp2" style={s} title={t.cli.command_template}>{t.cli.command_template}</div>{t.cli.pack && <div className="muted" style={s}>{t.cli.pack_name || t.cli.pack}{t.cli.group && ` › ${t.cli.group}`}</div>}<div className="muted" style={s}>鉴权：{t.cli.auth}{t.cli.auth_env && <>（或 <span className="mono">${t.cli.auth_env}</span>）</>} · 输出 {t.cli.output_format === 'json' ? 'JSON' : '纯文本'}</div></>
   if (t.type === 'skill') return t.skill?.files?.length ? <div className="muted" style={s}>技能包 v{t.skill.version} · {t.skill.files.length} 个文件</div> : <div style={s}><Badge c="y">待上传技能包</Badge></div>
   if (t.type === 'workflow') { const w = t.workflow || {}; return <div className="muted" style={s}>{WF_PLAT[w.platform]}{w.platform === 'coze' ? ` · ${w.region} · ${w.workflow_id}` : w.platform === 'dify' ? ` · ${w.base_url}` : ` · ${w.url}`} · {w.response_mode === 'streaming' ? '流式' : '同步'}</div> }
   if (t.type === 'mcp') return <div className="mono" style={s}>tools/call {t.mcp_tool}</div>
-  return <><Badge>{t.method}</Badge><div className="mono" style={s}>{t.url}</div></>
+  return <><Badge>{t.method}</Badge><div className="mono clamp2" style={s} title={t.url}>{t.url}</div></>
 }
 
 function ToolList() {
@@ -74,7 +73,7 @@ function ToolList() {
   }
   const usedBy = (list: any[]) => list?.length ? list.map((u: any) => <div key={u.space + u.code}><span className="mono" style={{ color: '#2563eb' }}>{u.code}</span><div><span className="tg">{u.space_name}</span></div></div>) : <span className="muted">未使用</span>
   const srcCell = (t: any) => t.source === 'builtin' ? <><Badge c="g">平台内置</Badge><div style={{ marginTop: 4 }}>{t.maintenance ? <Badge c="y">维护类</Badge> : <Badge>可在意图中使用</Badge>}</div></> : <span className="muted">外部</span>
-  const paramCell = (t: any) => t.type === 'skill' ? <span className="muted">无（槽位作上下文）</span> : t.params.map((p: any, i: number) => <span key={p.name} className="mono">{i > 0 && ', '}{p.name}{p.required ? '*' : ''}</span>)
+  const paramCell = (t: any) => t.type === 'skill' ? <span className="muted">无（槽位作上下文）</span> : <div className="mono clamp3" title={t.params.map((p: any) => p.name + (p.required ? '*' : '')).join(', ')}>{t.params.length ? t.params.map((p: any) => p.name + (p.required ? '*' : '')).join(', ') : <span className="muted">无</span>}</div>
   return <>
     <div className="card"><div className="row"><span className="sp" />
       {canEdit && <Btn p id="toolNew" onClick={() => setEdit({})}>＋ 注册工具</Btn>}</div>
@@ -83,24 +82,24 @@ function ToolList() {
       <div className="row" style={{ marginTop: 8 }}>
         {packs.length > 0 && <select id="toolPack" value={pk} onChange={e => setPk(e.target.value)}><option value="">全部 CLI 命令包</option>
           {packs.map(([k, l, n]) => <option key={k} value={k}>{l}（{n}）</option>)}</select>}
-        <input type="text" id="toolQ" value={q} onChange={e => setQ(e.target.value)} placeholder="搜索工具名 / 描述 / 命令" style={{ width: 260 }} />
+        <input type="text" id="toolQ" value={q} onChange={e => setQ(e.target.value)} placeholder="搜索工具名 / 描述 / 命令" style={{ width: 240 }} />
         <span className="muted">{ts.length + ss.length} 个</span></div></div>
-    <div className="card" style={{ padding: 0 }}><table id="toolTbl"><thead><tr><th>工具</th><th>类型</th><th>来源</th><th>描述</th><th>接入</th><th>入参</th><th>被意图使用</th><th>操作</th></tr></thead><tbody>
+    <div className="card tblwrap" style={{ padding: 0 }}><table id="toolTbl" className="fixed"><colgroup><col style={{ width: 220 }} /><col style={{ width: 92 }} /><col style={{ width: 92 }} /><col /><col style={{ width: 210 }} /><col style={{ width: 130 }} /><col style={{ width: 112 }} /><col style={{ width: 96 }} /></colgroup><thead><tr><th>工具</th><th>类型</th><th>来源</th><th>描述</th><th>接入</th><th>入参</th><th>被意图使用</th><th>操作</th></tr></thead><tbody>
       {ts.slice(0, lim).map((t: any) => <tr key={t.name} data-tool={t.name}><td><b>{t.display_name}</b><div className="mono">{t.name}</div></td><td><TypeTag type={t.type} />{t.confirm_required && <div style={{ marginTop: 4 }}><Badge c="y">写操作需确认</Badge></div>}</td>
         <td>{srcCell(t)}</td>
-        <td className="muted">{t.description}</td><td><End t={t} /></td><td>{paramCell(t)}</td>
+        <td className="muted"><div className="clamp3" title={t.description}>{t.description}</div></td><td><End t={t} /></td><td>{paramCell(t)}</td>
         <td>{usedBy(t.used_by)}</td>
-        <td style={{ whiteSpace: 'nowrap' }}><Btn s onClick={() => setTest(t)}>测试调用</Btn> {t.source === 'builtin' ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>平台提供<br />不可编辑 / 删除</div>
+        <td><Btn s onClick={() => setTest(t)}>测试调用</Btn> {t.source === 'builtin' ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>平台提供<br />不可编辑 / 删除</div>
           : canEdit && <><Btn s onClick={() => setEdit({ tool: t })}>编辑</Btn><div style={{ marginTop: 4, textAlign: 'right' }}><a style={{ color: '#dc2626', fontSize: 12 }} onClick={() => del(t)}>删除</a></div></>}</td></tr>)}
       {ts.length > lim && <tr id="toolMore"><td colSpan={8} className="muted" style={{ textAlign: 'center' }}>已显示 {lim} / {ts.length} 个，可用上方搜索或命令包缩小范围 · <a onClick={() => setLim(lim + PAGE)}>再显示 {Math.min(PAGE, ts.length - lim)} 个</a></td></tr>}
       {ss.map((v: any) => { const sub = subs(v); const on = !!open[v.name]; const users = new Set(sub.flatMap((t: any) => (t.used_by || []).map((u: any) => u.code))); return [
         <tr key={'s' + v.name} className="srvrow" data-server={v.name}><td onClick={() => setOpen({ ...open, [v.name]: !on })}><span className="caret">{on ? '▾' : '▸'}</span><b>{v.display_name}</b><div className="mono" style={{ paddingLeft: 14 }}>{v.name}</div></td>
           <td><Badge c="p">MCP 服务</Badge><div className="muted" style={{ marginTop: 4 }}><a onClick={() => setOpen({ ...open, [v.name]: !on })}>{v.tool_count} 个工具</a></div></td>
           <td>{v.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <span className="muted">外部</span>}{v.example_data && <div style={{ marginTop: 4 }}><Badge c="y" title="当前工具列表为示例数据，真实同步可拉取完整列表">示例数据</Badge></div>}</td>
-          <td className="muted">{v.description || '—'}<div>启用 {v.enabled_count} / {v.tool_count}{v.missing_count > 0 && <> · <b style={{ color: '#b91c1c' }}>{v.missing_count} 个远端已消失</b></>}</div></td>
+          <td className="muted"><div className="clamp3" title={v.description}>{v.description || '—'}</div><div>启用 {v.enabled_count} / {v.tool_count}{v.missing_count > 0 && <> · <b style={{ color: '#b91c1c' }}>{v.missing_count} 个远端已消失</b></>}</div></td>
           <td><div className="muted" style={{ fontSize: 11 }}>{v.transport_label} · {credText(v)}</div><div className="mono" style={{ fontSize: 11 }}>{serverEnd(v)}</div><div className="muted" style={{ fontSize: 11 }}>同步：{syncText(v)}</div></td>
           <td className="muted">按工具</td><td>{users.size ? <span>{users.size} 个意图</span> : <span className="muted">未使用</span>}</td>
-          <td style={{ whiteSpace: 'nowrap' }}>{v.source === 'builtin' ? <div className="muted" style={{ fontSize: 11 }}>平台提供<br />不可编辑 / 同步</div>
+          <td>{v.source === 'builtin' ? <div className="muted" style={{ fontSize: 11 }}>平台提供<br />不可编辑 / 同步</div>
             : canEdit && <><Btn s onClick={() => setEdit({ server: v })}>同步工具</Btn><div style={{ marginTop: 4, textAlign: 'right', fontSize: 12 }}><a onClick={() => setEdit({ server: v })}>编辑</a>　<a style={{ color: '#dc2626' }} onClick={() => delSrv(v)}>删除</a></div></>}</td></tr>,
         ...(on ? sub.length ? sub.map((t: any) => <tr key={t.name} className={'subrow' + (t.remote_missing ? ' missing' : '')} data-tool={t.name}>
           <td><b>{t.display_name}</b><div className="mono">{t.name}</div>{t.remote_missing && <Badge c="r">远端已消失</Badge>}</td>
@@ -108,7 +107,7 @@ function ToolList() {
           <td>{v.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <>
             <label style={{ display: 'block', whiteSpace: 'nowrap' }}><input type="checkbox" className="mEn" checked={t.enabled} disabled={!canEdit} onChange={e => patch(t, { enabled: e.target.checked })} /> 启用</label>
             <label style={{ display: 'block', whiteSpace: 'nowrap' }}><input type="checkbox" className="mCf" checked={t.confirm_required} disabled={!canEdit} onChange={e => patch(t, { confirm_required: e.target.checked })} /> 写操作需确认</label></>}</td>
-          <td className="muted">{t.description}</td><td className="mono" style={{ fontSize: 11 }}>tools/call {t.mcp_tool}</td>
+          <td className="muted"><div className="clamp3" title={t.description}>{t.description}</div></td><td className="mono" style={{ fontSize: 11 }}>tools/call {t.mcp_tool}</td>
           <td>{paramCell(t)}</td>
           <td>{usedBy(t.used_by)}</td><td><Btn s onClick={() => setTest(t)}>测试调用</Btn></td></tr>)
           : [<tr key={'e' + v.name} className="subrow"><td colSpan={8} className="muted">还没有工具，点「同步工具」读取</td></tr>] : [])] })}
@@ -119,29 +118,49 @@ function ToolList() {
   </>
 }
 
+function Pre({ v }: { v: any }) {
+  const txt = typeof v === 'string' ? v : JSON.stringify(v, null, 2)
+  return <pre className="code" style={{ maxHeight: 320 }}>{txt}</pre>
+}
+
 function ToolTest({ t, onClose }: { t: any; onClose: () => void }) {
-  const { space } = useSession()
-  const [v, setV] = useState<Record<string, string>>(() => Object.fromEntries(t.params.map((p: any) => [p.name, MOCKV[p.name] || ''])))
+  const { space, isAdmin } = useSession()
+  const [v, setV] = useState<Record<string, string>>(() => Object.fromEntries(t.params.map((p: any) => [p.name, p.default || ''])))
   const [r, setR] = useState<any>(null)
   const [err, setErr] = useState<string[]>()
+  const [busy, setBusy] = useState(false)
+  const [ok, setOk] = useState(false)
   const w = t.workflow || {}
+  const write = t.confirm_required || (t.source === 'builtin' && t.maintenance)
   const hd = t.type === 'cli' ? <>CLI：<span className="mono">{t.cli.bin}</span> · 鉴权：{t.cli.auth}</>
     : t.type === 'skill' ? <>技能包 v{t.skill?.version || 0} · {t.skill?.files?.length || 0} 个文件</>
     : t.type === 'workflow' ? <>{WF_PLAT[w.platform]} · {w.response_mode === 'streaming' ? '流式' : '同步'}{w.auth_env && <> · 凭据 <span className="mono">${w.auth_env}</span></>}</>
     : t.type === 'mcp' ? <>MCP 服务：{t.mcp_server.display_name} <span className="mono">{serverEnd(t.mcp_server)}</span> · tools/call <span className="mono">{t.mcp_tool}</span></> : <><Badge c="b">{t.method}</Badge> <span className="mono">{t.url}</span> · 鉴权：{t.auth}</>
-  const run = async () => {
-    setErr(undefined)
-    try { setR(await api.post(`/tools/${t.name}/test`, { values: v, space: space.id })) } catch (e) { setR(null); setErr(errLines(e)) }
+  const run = async (dry: boolean) => {
+    setErr(undefined); setBusy(true); setR(null)
+    try { setR(await api.post(`/tools/${t.name}/test`, { values: v, space: space.id, confirm: ok, dry_run: dry })) } catch (e) { setErr(errLines(e)) } finally { setBusy(false) }
   }
-  return <Modal title={<>测试调用 · {t.display_name} <span className="mono">{t.name}</span></>} testId="toolTest" onClose={onClose} foot={<><Btn onClick={onClose}>关闭</Btn> <Btn p id="ttRun" onClick={run}>生成请求预览</Btn></>}>
-    <div className="muted" style={{ marginBottom: 8 }}><TypeTag type={t.type} /> {hd}{t.confirm_required && <> · <Badge c="y">写操作需确认</Badge></>}</div>
-    {t.type === 'skill' && <div className="note" style={{ marginTop: 0 }}>技能没有入参：本意图抽取的槽位作为上下文交给 AI，输出格式按意图的回复要求。</div>}
+  const out = r?.stdout_json ?? r?.response_json ?? r?.stdout ?? r?.response
+  return <Modal title={<>测试调用 · {t.display_name} <span className="mono">{t.name}</span></>} testId="toolTest" onClose={onClose} foot={<>
+    <Btn onClick={onClose}>关闭</Btn> {t.type !== 'skill' && <Btn id="ttPrev" onClick={() => run(true)} disabled={busy}>只看请求</Btn>}{' '}
+    {isAdmin ? <Btn p id="ttRun" onClick={() => run(false)} disabled={busy || (write && !ok)}>{busy ? '执行中…' : t.type === 'skill' ? '查看技能包' : '执行'}</Btn> : <span className="muted">执行仅管理员可用</span>}</>}>
+    <div className="muted" style={{ marginBottom: 8 }}><TypeTag type={t.type} /> {hd}{write && <> · <Badge c="y">写操作需确认</Badge></>}</div>
+    {t.type === 'skill' && <div className="note" style={{ marginTop: 0 }}>技能不执行：Bot 把 SKILL.md 交给 AI 使用，这里只展示技能包内容。</div>}
     {t.params.map((p: any) => <div className="f" key={p.name}><label>{p.name}{p.required ? ' *' : ''} <span className="muted">{pTypeLabel(p.type)} {p.description}{p.default ? ` · 默认 ${p.default}` : ''}</span></label>
       <input type="text" value={v[p.name]} placeholder={p.default || (p.type === 'file_list' || p.type === 'string[]' ? '多个值用逗号分隔' : '')} onChange={e => setV({ ...v, [p.name]: e.target.value })} /></div>)}
+    {write && <label id="ttConfirm" style={{ display: 'block', margin: '6px 0' }}><input type="checkbox" checked={ok} onChange={e => setOk(e.target.checked)} /> 我确认这是写操作，会真实修改数据</label>}
     <ErrBox lines={err} />
-    {r && <div id="ttOut"><div className="ok">{r.note}</div><div className="muted">请求</div>
-      <pre className="code">{t.type === 'cli' ? r.request.command : JSON.stringify(r.request, null, 2)}</pre>
-      {r.response_example && <><div className="muted">登记的响应示例</div><pre className="code">{(() => { try { return JSON.stringify(JSON.parse(r.response_example), null, 2) } catch { return r.response_example } })()}</pre></>}</div>}
+    {r && <div id="ttOut">
+      {r.executed === false && !r.skill && <div className="muted">请求预览（未执行）</div>}
+      {r.executed && <div className="row" id="ttStatus" style={{ margin: '4px 0' }}><Badge c={r.ok ? 'g' : 'r'}>{r.ok ? '成功' : '失败'}</Badge>
+        {r.exit_code !== undefined && <span className="muted">退出码 {r.exit_code}</span>}{r.status !== undefined && <span className="muted">HTTP {r.status}</span>}
+        {r.duration_ms !== undefined && <span className="muted">耗时 {r.duration_ms} ms</span>}{r.error_code && <span className="mono">{r.error_code}</span>}{r.truncated && <span className="muted">输出过长已截断</span>}</div>}
+      {r.error && <div className="note w" id="ttErr" style={{ margin: '6px 0' }}>{r.error}{r.hint && <div style={{ marginTop: 4 }}>{r.hint}</div>}</div>}
+      {r.request && <><div className="muted">请求</div><Pre v={r.request.command || r.request} /></>}
+      {out !== undefined && out !== '' && <><div className="muted">{r.stdout !== undefined ? '输出（stdout）' : '响应'}</div><Pre v={out} /></>}
+      {r.stderr && <><div className="muted">stderr</div><Pre v={r.stderr} /></>}
+      {r.skill && <><div className="muted">文件</div><Pre v={r.skill.files.map((f: any) => `${f.path}  ${f.size} B`).join('\n')} /><div className="muted">SKILL.md</div><Pre v={r.skill.skill_md} /></>}
+      {r.response_example && <><div className="muted">登记的响应示例</div><Pre v={(() => { try { return JSON.parse(r.response_example) } catch { return r.response_example } })()} /></>}</div>}
   </Modal>
 }
 

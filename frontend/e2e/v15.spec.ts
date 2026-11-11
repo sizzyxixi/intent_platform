@@ -135,7 +135,7 @@ test('v15：技能（文件夹上传 SKILL.md）与工作流（Dify / Coze）', 
   await expect(row).toContainText('Coze · coze.cn · 7428000000000000001 · 流式')
   await row.getByRole('button', { name: '测试调用' }).click()
   await page.getByTestId('toolTest').locator('input').first().fill('夏季连衣裙')
-  await page.click('#ttRun')
+  await page.click('#ttPrev')
   await expect(page.locator('#ttOut')).toContainText('https://api.coze.cn/v1/workflow/stream_run')
   await page.keyboard.press('Escape')
   expect(errs).toEqual([])

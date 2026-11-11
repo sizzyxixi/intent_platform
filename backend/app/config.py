@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     # 工具目录：分批读取的每批条数；列表缓存文件（可选，设置后进程重启也不用重新整表读取，适合离数据库很远 / 带宽很低的部署）
     tool_list_batch: int = 200
     tool_cache_file: str | None = None
+    # 工具中心「测试调用」真实执行（仅管理员）：CLI 在本服务器上按命令模板执行（参数数组，不经 shell）
+    tool_test_enabled: bool = True
+    tool_test_cli_enabled: bool = True
+    tool_test_timeout_seconds: float = 60
+    tool_test_max_output_kb: int = 256
+    tool_test_extra_path: str = "~/.xclaw/bin:~/.local/bin"
     public_base_url: str = "https://intent.example.com"
     docs_dir: str | None = None
     frontend_dist: str | None = None

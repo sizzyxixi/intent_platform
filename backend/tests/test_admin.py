@@ -248,9 +248,9 @@ def test_tools_admin(admin):
     base["config"]["command_template"] = "xclaw-cli mall mall-product detail get --sku {sku} --json"
     r = admin.post("/api/admin/tools", json=base)
     assert r.status_code == 201, r.text
-    p = admin.post("/api/admin/tools/my_cli/test", json={"values": {"sku": "SKU-1"}}).json()
+    p = admin.post("/api/admin/tools/my_cli/test", json={"values": {"sku": "SKU-1"}, "dry_run": True}).json()
     assert p["executed"] is False and p["request"]["argv"][:2] == ["xclaw-cli", "mall"]
-    assert admin.post("/api/admin/tools/my_cli/test", json={"values": {}}).status_code == 422
+    assert admin.post("/api/admin/tools/my_cli/test", json={"values": {}, "dry_run": True}).status_code == 422
     r = admin.delete("/api/admin/tools/query_stock")
     assert r.status_code == 409 and r.json()["code"] == "TOOL_IN_USE"
     assert admin.delete("/api/admin/tools/my_cli").status_code == 200

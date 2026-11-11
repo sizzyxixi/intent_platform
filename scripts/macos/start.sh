@@ -11,6 +11,8 @@ if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "8000 端口已有服务在运行（如需重启先执行：pkill -f 'uvicorn app.main:app'）"; exit 0
 fi
 cd "$ROOT/backend"
+# 工具中心「测试调用」执行 CLI 时需要能找到 xclaw-cli（安装在 ~/.xclaw/bin）
+export PATH="$HOME/.xclaw/bin:$HOME/.local/bin:$PATH"
 set -a; . ./.env.local; set +a
 IP_FRONTEND_DIST=../frontend/dist nohup ../.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 > "$ROOT/server.log" 2>&1 &
 for i in $(seq 1 30); do
