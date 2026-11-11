@@ -75,6 +75,13 @@ cd frontend && npm ci && npm run dev         # http://localhost:5173，/api、/m
 - 工具：默认只建平台内置工具，并登记西之月 xclaw-cli 工具；`--demo-tools` 才导入 demo 的示例外部工具（e2e 用），`--no-westmonth` 跳过西之月。
 - 已有库清掉示例工具：`python -m app.westmonth purge-examples --backup backup.json --yes`（删除全部外部工具 / 外部 MCP 服务 / 技能包并移除意图关联，先写备份；因此没有任何知识和工具的已启用意图会转为草稿）。
 
+## macOS 本地运行（无 Homebrew / Docker）
+
+- PostgreSQL：用 zonky embedded-postgres-binaries（darwin-arm64v8 17.11.0，Maven Central 上的 jar，解出 `postgres-darwin-arm_64.txz`，含 initdb / pg_ctl / postgres 和 pg_trgm）解压到 `~/intent-platform/pgsql`；
+  `pgsql/bin/initdb -D pgdata -U intent --pwfile=<含 intent 的文件> -A scram-sha-256 -E UTF8 --locale=C`，监听 `127.0.0.1:5432`，库 / 用户 `intent / intent`（建库和 `CREATE EXTENSION pg_trgm` 用 psycopg 执行即可，不需要 psql）。
+- `backend/.env.local`：`IP_DATABASE_URL=postgresql+psycopg://intent:intent@127.0.0.1:5432/intent`。
+- 启动 / 停止：`scripts/macos/start.sh`、`scripts/macos/stop.sh`（默认目录 `~/intent-platform`，可用 `IP_ROOT` 改）。
+
 ## 部署（Docker Compose）
 
 ```bash
