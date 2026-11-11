@@ -9,3 +9,5 @@ frontend/playwright-report/
 .env
 deploy/.env
 *.log
+.env.local
+*.env.local
