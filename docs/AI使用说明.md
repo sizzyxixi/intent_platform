@@ -4,6 +4,18 @@
 > 本说明与代码一致（平台 v0.17，`openapi.yaml` 0.17.0）。字段细节以 `openapi.yaml` 为准；6 个 MCP 工具的完整 inputSchema 见 `AI接入说明.md` 第 9 节。
 > 文中示例来自 1688 智能客服空间（`cs`）的真实数据；换成你所在的空间时，结构完全相同。
 
+## 环境地址
+
+| 项 | 值 |
+|---|---|
+| 生产地址 | `http://intent.47.86.15.93.sslip.io` |
+| API Base | `http://intent.47.86.15.93.sslip.io/api/v1` |
+| MCP 端点 | `http://intent.47.86.15.93.sslip.io/mcp`（`POST`，JSON-RPC 2.0） |
+| 鉴权方式 | 请求头 `Authorization: Bearer ipk_…`。意图类接口另带 `X-Space-Id`（或 `?space=`） |
+| API Key | 管理员在控制台「工具中心 › 接入与密钥管理」创建；完整 Key 只显示一次 |
+
+本地开发时把上面的生产地址换成 `http://127.0.0.1:8000`（API Base 为 `http://127.0.0.1:8000/api/v1`，MCP 为 `http://127.0.0.1:8000/mcp`）。下文路径都以生产地址为前缀，也可用环境变量 `BASE`。
+
 ## 1. 你面对的是什么
 
 平台把一个 Bot 需要的三样东西放在一起：**意图**（用户想办的事）、**知识**（回答依据和硬性规则）、**工具**（能调用的外部能力）。你要建立的心智模型是这样一棵树：
@@ -31,8 +43,8 @@
 
 | 项 | 值 |
 |---|---|
-| Base URL | 平台部署地址（`IP_PUBLIC_BASE_URL`；本机部署为 `http://127.0.0.1:8000`）。下文路径都以它为前缀 |
-| 鉴权 | 请求头 `Authorization: Bearer ipk_…`（管理员在「工具中心 › 接入与密钥」发放，完整 Key 只显示一次） |
+| Base URL | 生产环境：`http://intent.47.86.15.93.sslip.io`（API：`http://intent.47.86.15.93.sslip.io/api/v1`）。本地开发为 `http://127.0.0.1:8000`。下文路径都以它为前缀 |
+| 鉴权 | 请求头 `Authorization: Bearer ipk_…`（管理员在控制台「工具中心 › 接入与密钥管理」创建，完整 Key 只显示一次） |
 | 权限 scope | `意图:读`、`意图:写`、`知识:读`、`知识:写`、`工具:读`。线上 Bot 通常只有三个「读」；维护型 AI 另有两个「写」 |
 | 空间 | 意图类接口（spaces、taxonomy、recognition、slots、intents、runtime-config）带 `X-Space-Id: cs`（或 `?space=cs`）；不传时用 Key 绑定的第一个空间；不在绑定范围返回 403 `SPACE_FORBIDDEN`。知识库、导入任务、工具接口全局，不需要空间 |
 | MCP | `POST {Base URL}/mcp`，JSON-RPC 2.0，同一个 Key；意图类工具可传 `space` 参数 |
@@ -41,7 +53,7 @@
 MCP 客户端配置示例：
 
 ```json
-{ "mcpServers": { "intent-platform": { "url": "https://<平台地址>/mcp",
+{ "mcpServers": { "intent-platform": { "url": "http://intent.47.86.15.93.sslip.io/mcp",
     "headers": { "Authorization": "Bearer ipk_xxx", "X-Space-Id": "cs" } } } }
 ```
 
@@ -305,6 +317,7 @@ Content-Type: application/json
 3. 导入（REST 用 multipart；MCP `import_knowledge` 用 base64）：
 
 ```bash
+BASE=http://intent.47.86.15.93.sslip.io
 curl -X POST "$BASE/api/v1/kbs/kb_cs_reply/documents:import" \
   -H "Authorization: Bearer $IP_API_KEY" -H "Idempotency-Key: 7f3a-20261111-0004" \
   -F "files=@回复规则补充.csv"

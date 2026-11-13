@@ -37,7 +37,10 @@ info:
 
     '
 servers:
-- url: https://intent.example.com
+- url: http://intent.47.86.15.93.sslip.io
+  description: 生产环境
+- url: http://127.0.0.1:8000
+  description: 本地开发
 security:
 - bearerAuth: []
 tags:

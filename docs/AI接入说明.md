@@ -2,7 +2,7 @@
 
 > 读者：运营使用的 AI 工具（如 Claude、Cursor、自建 Agent），以及读取运行时配置的 Bot / 智能体。
 > **完整的读写与调用说明见同目录 `AI使用说明.md`（先读它）**；本文是规则速查：字段规则、槽位规则、错误处理和 6 个 MCP 工具的完整定义（第 9 节，与平台实现一致）。两者冲突时以 `AI使用说明.md` 和 `openapi.yaml` 为准。
-> 接口定义见同目录 `openapi.yaml`（OpenAPI 3.0.3，0.17.0）。Base URL：平台部署地址（`IP_PUBLIC_BASE_URL`），鉴权：`Authorization: Bearer ipk_xxx`，空间：意图类接口带 `X-Space-Id: {space_id}`，知识库与工具接口全局、不需要。
+> 接口定义见同目录 `openapi.yaml`（OpenAPI 3.0.3，0.17.0）。生产环境 Base URL：`http://intent.47.86.15.93.sslip.io`（API：`http://intent.47.86.15.93.sslip.io/api/v1`，MCP：`http://intent.47.86.15.93.sslip.io/mcp`）；本地开发为 `http://127.0.0.1:8000`。鉴权：`Authorization: Bearer ipk_xxx`（API Key 在控制台「工具中心 › 接入与密钥管理」创建），空间：意图类接口带 `X-Space-Id: {space_id}`，知识库与工具接口全局、不需要。
 
 ## 1. 平台是什么
 
@@ -127,7 +127,7 @@ v0.5 起**取消意图级兜底条件**：意图上不再有 `fallback` 字段�
 
 ## 9. MCP 工具
 
-MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer ipk_xxx`、`X-Space-Id: {space_id}`。意图类工具（list_intents、get_intent、upsert_intents）也接受 `space` 参数，不传时使用 Key 绑定的第一个空间；search_knowledge、import_knowledge、list_tools 是全局的，不需要 space。
+MCP 地址：`http://intent.47.86.15.93.sslip.io/mcp`（本地开发为 `http://127.0.0.1:8000/mcp`），请求头 `Authorization: Bearer ipk_xxx`、`X-Space-Id: {space_id}`。意图类工具（list_intents、get_intent、upsert_intents）也接受 `space` 参数，不传时使用 Key 绑定的第一个空间；search_knowledge、import_knowledge、list_tools 是全局的，不需要 space。
 
 ```json
 [
