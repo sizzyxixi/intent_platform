@@ -1,12 +1,12 @@
 import secrets
 
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
 from .. import audit
 from ..deps import SCOPES
-from ..errors import not_found, unprocessable
-from ..models import ApiKey, Space
+from ..errors import conflict, not_found, unprocessable
+from ..models import ApiKey, IdempotencyRecord, RateCounter, Space
 from ..security import new_api_token, token_hash, token_hint
 from .common import Actor, iso, utcnow
 
@@ -54,3 +54,23 @@ def revoke(db: Session, kid: str, actor: Actor) -> ApiKey:
         k.revoked_at = utcnow()
         audit.record(db, actor, "api_key.revoke", "api_key", kid, f"吊销 API Key「{k.name}」")
     return k
+
+
+def hard_delete(db: Session, kid: str, actor: Actor) -> dict:
+    """彻底删除已吊销的 Key（不留表记录）。审计日志保留，其中的 Key id 作为文本。"""
+    k = db.get(ApiKey, kid)
+    if not k:
+        raise not_found("API Key 不存在", "KEY_NOT_FOUND")
+    if k.status != "已吊销":
+        raise conflict("请先吊销再删除，有效 Key 不能直接删除", "KEY_NOT_REVOKED")
+    snap = to_dict(k)
+    db.execute(sa_delete(IdempotencyRecord).where(IdempotencyRecord.api_key_id == kid))
+    db.execute(sa_delete(RateCounter).where(RateCounter.api_key_id == kid))
+    db.delete(k)
+    db.flush()
+    audit.record(db, actor, "api_key.delete", "api_key", kid,
+                 f"删除 API Key「{snap['name']}」", None,
+                 {"name": snap["name"], "key_hint": snap["key_hint"],
+                  "spaces": snap["spaces"], "scopes": snap["scopes"]})
+    return snap
+

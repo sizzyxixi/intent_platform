@@ -645,9 +645,9 @@ async def apply_mcp_sync(name: str, request: Request, ctx: KeyCtx = Depends(api_
 
 
 @router.post("/intents/{code}/tools")
-async def bind_intent_tool(code: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT, W_TOOL)),
+async def bind_intent_tool(code: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT)),
                            db: Session = Depends(get_db)):
-    """绑定或更新意图的工具与 param_map。需要「意图:写」和「工具:写」。"""
+    """绑定或更新意图的工具与 param_map。需要「意图:写」（只绑定已有工具，不需要「工具:写」）。"""
     payload = await _json(request)
     if not isinstance(payload, dict):
         raise bad_request("请求体应为对象")
@@ -665,7 +665,7 @@ async def bind_intent_tool(code: str, request: Request, ctx: KeyCtx = Depends(ap
 
 
 @router.delete("/intents/{code}/tools/{tool}")
-def unbind_intent_tool(code: str, tool: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT, W_TOOL)),
+def unbind_intent_tool(code: str, tool: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT)),
                        db: Session = Depends(get_db)):
     sp = resolve_space(request, db, ctx)
     it = intent_svc.get(db, code, sp.id)

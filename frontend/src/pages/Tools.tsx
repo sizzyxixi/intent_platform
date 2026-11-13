@@ -192,6 +192,10 @@ function Access() {
     if (!window.confirm('吊销后使用该 Key 的 AI 工具将无法访问，确认？')) return
     try { await api.post(`/api-keys/${k.id}/revoke`); reloadKeys(); toast('已吊销') } catch (e) { toast(errLines(e)[0]) }
   }
+  const remove = async (k: any) => {
+    if (!window.confirm(`将彻底删除「${k.name}」这行记录，不可恢复。确认删除？`)) return
+    try { await api.del(`/api-keys/${k.id}`); reloadKeys(); toast('已删除') } catch (e) { toast(errLines(e)[0]) }
+  }
   const rtDl = async () => {
     try { const j = await api.get(`/spaces/${sid}/runtime-config`); const fn = `runtime-config_${sid}_v${j.version}.json`; download(fn, JSON.stringify(j, null, 2)); toast('已下载 ' + fn) } catch (e) { toast(errLines(e)[0]) }
   }
@@ -208,7 +212,7 @@ function Access() {
       {!isAdmin ? <div className="muted">API Key 由管理员管理。</div> : <table id="keyTbl"><thead><tr><th>名称</th><th>Key</th><th>绑定空间（意图 / 槽位）</th><th>归属</th><th>权限</th><th>创建</th><th>最近调用</th><th>状态</th><th>操作</th></tr></thead><tbody>
         {keys?.length ? keys.map((k: any) => <tr key={k.id}><td>{k.name}</td><td className="mono">{k.key_hint}</td><td>{k.spaces.map((x: string) => <span key={x} className="tg">{spName(x)}</span>)}</td><td>{k.owner}</td>
           <td>{k.scopes.map((s: string) => <Badge key={s} c={s.includes('写') ? 'y' : 'n'}>{s}</Badge>)}</td><td className="muted">{fmt(k.created_at, false).slice(0, 10)}</td><td className="muted">{k.last_used_at ? fmt(k.last_used_at, false) : '—'}</td>
-          <td><Badge c={k.status === '有效' ? 'g' : 'n'}>{k.status}</Badge></td><td>{k.status === '有效' && <Btn s d onClick={() => revoke(k)}>吊销</Btn>}</td></tr>)
+          <td><Badge c={k.status === '有效' ? 'g' : 'n'}>{k.status}</Badge></td><td>{k.status === '有效' ? <Btn s d onClick={() => revoke(k)}>吊销</Btn> : <Btn s d onClick={() => remove(k)}>删除</Btn>}</td></tr>)
           : <tr><td colSpan={9} className="muted" style={{ textAlign: 'center' }}>{keys ? '还没有 Key' : '加载中…'}</td></tr>}</tbody></table>}
       <div className="muted" style={{ marginTop: 6 }}>通过接口写入意图会在「意图管理 › 导入记录」留下「AI 工具（API）」记录；Key 只在创建时完整显示一次，平台只保存哈希。知识与工具类权限对所有空间生效；意图类权限只对绑定的空间生效。</div></div>
     <div className="card"><h3>REST 接口</h3><div className="muted" style={{ marginBottom: 6 }}>Base URL：{base} · Header：<span className="mono">Authorization: Bearer ipk_xxx</span> · <span className="mono">X-Space-Id: {sid}</span>（仅按空间的接口需要；不在 Key 绑定空间内返回 403）· 写接口需带 <span className="mono">Idempotency-Key</span>。全部接口已合并登记为「工具目录」里的平台内置工具。</div>

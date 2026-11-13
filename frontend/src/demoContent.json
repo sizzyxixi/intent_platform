@@ -183,13 +183,13 @@
   [
    "POST",
    "/api/v1/intents/{code}/tools",
-   "意图:写 + 工具:写",
+   "意图:写",
    "把工具绑定到意图并设置 param_map"
   ],
   [
    "DELETE",
    "/api/v1/intents/{code}/tools/{tool}",
-   "意图:写 + 工具:写",
+   "意图:写",
    "从意图上解绑工具"
   ],
   [

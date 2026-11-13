@@ -586,7 +586,7 @@ MCP 地址（推荐）：`http://47.86.15.93/intent-platform/mcp`；备用：`ht
  },
  {
   "name": "intent_bind_tool",
-  "description": "把已注册工具绑定到当前空间的意图，并设置 param_map（source 为 槽位 / 常量 / 上下文）。已绑定则更新映射。需要 意图:写 与 工具:写。dry_run 只校验。",
+  "description": "把已注册工具绑定到当前空间的意图，并设置 param_map（source 为 槽位 / 常量 / 上下文）。已绑定则更新映射。需要 意图:写（绑定已有工具不需要 工具:写）。dry_run 只校验。",
   "inputSchema": {
    "type": "object",
    "required": [
@@ -622,7 +622,7 @@ MCP 地址（推荐）：`http://47.86.15.93/intent-platform/mcp`；备用：`ht
  },
  {
   "name": "intent_unbind_tool",
-  "description": "从当前空间的意图上解绑工具。需要 意图:写 与 工具:写。未绑定则原样返回。",
+  "description": "从当前空间的意图上解绑工具。需要 意图:写（绑定已有工具不需要 工具:写）。未绑定则原样返回。",
   "inputSchema": {
    "type": "object",
    "required": [

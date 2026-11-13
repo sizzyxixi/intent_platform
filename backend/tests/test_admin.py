@@ -282,6 +282,40 @@ def test_keys_admin(admin, client):
         assert row.token_hash != k["token"] and len(row.token_hash) == 64
 
 
+def test_revoked_key_can_be_hard_deleted(admin, client):
+    r = admin.post("/api/admin/api-keys", json={"name": "待删除探针", "spaces": ["cs"], "scopes": ["意图:读"]})
+    assert r.status_code == 201
+    kid, tok = r.json()["id"], r.json()["token"]
+    # 有效 Key 不能直接删除
+    r = admin.delete(f"/api/admin/api-keys/{kid}")
+    assert r.status_code == 409 and r.json()["code"] == "KEY_NOT_REVOKED"
+    assert any(x["id"] == kid for x in admin.get("/api/admin/api-keys").json())
+
+    r = admin.post(f"/api/admin/api-keys/{kid}/revoke")
+    assert r.status_code == 200 and r.json()["status"] == "已吊销"
+    # 吊销后调用 401
+    assert client.get("/api/v1/spaces", headers={"Authorization": f"Bearer {tok}"}).status_code == 401
+
+    r = admin.delete(f"/api/admin/api-keys/{kid}")
+    assert r.status_code == 200 and r.json()["id"] == kid and r.json()["name"] == "待删除探针"
+    lst = admin.get("/api/admin/api-keys").json()
+    assert all(x["id"] != kid for x in lst)
+    assert all("token" not in x and "token_hash" not in x for x in lst)
+
+    # 行已不在表里；审计保留（创建、吊销、删除）
+    from app.db import SessionLocal
+    from app.models import ApiKey
+    with SessionLocal() as db:
+        assert db.get(ApiKey, kid) is None
+    logs = admin.get(f"/api/admin/audit?entity_type=api_key&q={kid}").json()["items"]
+    acts = [x["action"] for x in logs]
+    assert "api_key.create" in acts and "api_key.revoke" in acts and "api_key.delete" in acts
+    assert any(x["action"] == "api_key.delete" and x["actor_type"] == "user" and x["actor"] == "管理员" for x in logs)
+    # 删除不存在
+    r = admin.delete(f"/api/admin/api-keys/{kid}")
+    assert r.status_code == 404 and r.json()["code"] == "KEY_NOT_FOUND"
+
+
 def test_audit(admin):
     admin.put("/api/admin/spaces/cs/recognition", json={"max_clarify": 3})
     a = admin.get("/api/admin/audit?entity_type=space").json()

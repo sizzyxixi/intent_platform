@@ -25,7 +25,7 @@ TOOL_MAP = {t["name"]: t for t in TOOLS}
 SCOPE = {"list_intents": "意图:读", "get_intent": "意图:读", "upsert_intents": "意图:写",
          "search_knowledge": "知识:读", "import_knowledge": "知识:写", "list_tools": "工具:读",
          "register_tool": "工具:写", "update_tool": "工具:写", "disable_tool": "工具:写",
-         "intent_bind_tool": ("意图:写", "工具:写"), "intent_unbind_tool": ("意图:写", "工具:写"),
+         "intent_bind_tool": "意图:写", "intent_unbind_tool": "意图:写",
          "taxonomy_upsert_node": "意图:写", "taxonomy_disable_node": "意图:写",
          "intent_enable": "意图:写", "intent_disable": "意图:写",
          "create_knowledge_base": "知识:写",

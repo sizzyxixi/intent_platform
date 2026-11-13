@@ -103,9 +103,8 @@ def test_upsert_dry_run_create_update_idempotency_disable(full_key, admin):
     assert any(x["actor_type"] == "api_key" for x in logs)
 
 
-def test_bind_unbind_requires_both_scopes_and_skips_enabled(full_key, linxia):
+def test_bind_unbind_requires_intent_write_not_tool_write(full_key, linxia, bot):
     assert full_key.post("/api/v1/tools", json=HTTP).status_code in (200, 201)
-    # 草稿意图
     b = check(full_key.post("/api/v1/intents:batchUpsert", json={"mode": "merge", "intents": [DRAFT]}, space="cs"))
     assert b["created"] >= 1 or b["updated"] >= 1 or any(i.get("code") == "B.STOCK.TOOLPROBE" for i in b.get("items") or [])
 
@@ -113,22 +112,50 @@ def test_bind_unbind_requires_both_scopes_and_skips_enabled(full_key, linxia):
     r = full_key.post("/api/v1/intents/B.STOCK.TOOLPROBE/tools", json=bind, space="cs")
     assert check(r)["ok"] is True and r.json()["bind"]["tool"] == "ai_probe_echo"
 
-    r = linxia.post("/api/v1/intents/B.STOCK.TOOLPROBE/tools",
-                    json={"tool": "ai_probe_echo", "param_map": {"q": {"source": "槽位", "value": "sku"}}}, space="cs")
+    # 只读 Key 不能绑
+    r = bot.post("/api/v1/intents/B.STOCK.TOOLPROBE/tools",
+                 json={"tool": "ai_probe_echo", "param_map": {"q": {"source": "槽位", "value": "sku"}}}, space="cs")
     assert r.status_code == 403 and r.json()["code"] == "SCOPE_FORBIDDEN"
 
-    r = full_key.post("/api/v1/intents/B.STOCK.TOOLPROBE/tools",
-                      json={"tool": "ai_probe_echo", "param_map": {"q": {"source": "槽位", "value": "sku"}}}, space="cs")
+    # 林夏有「意图:写」、没有「工具:写」，可以绑定已有工具
+    r = linxia.post("/api/v1/intents/B.STOCK.TOOLPROBE/tools",
+                    json={"tool": "ai_probe_echo", "param_map": {"q": {"source": "槽位", "value": "sku"}}}, space="cs")
     it = check(r)
     names = [b["tool"] for b in it["tools"]]
     assert "ai_probe_echo" in names
     pm = next(b["param_map"] for b in it["tools"] if b["tool"] == "ai_probe_echo")
     assert pm["q"]["source"] == "槽位" and pm["q"]["value"] == "sku"
 
-    it = check(full_key.delete("/api/v1/intents/B.STOCK.TOOLPROBE/tools/ai_probe_echo", space="cs"))
+    it = check(linxia.delete("/api/v1/intents/B.STOCK.TOOLPROBE/tools/ai_probe_echo", space="cs"))
     assert "ai_probe_echo" not in [b["tool"] for b in it["tools"]]
 
     full_key.post("/api/v1/tools/ai_probe_echo:disable", json={})
+
+
+def test_intent_write_only_key_can_bind_existing_tool(full_key, client):
+    """只有「意图:写」、没有「工具:写」的 Key，也能给意图绑定已启用的现有工具。"""
+    from app.services import keys
+    from app.services.common import SYSTEM
+    from app.db import SessionLocal
+    from conftest import Api
+    assert full_key.post("/api/v1/tools", json={**HTTP, "name": "ai_probe_bind_only"}).status_code in (200, 201)
+    check(full_key.post("/api/v1/intents:batchUpsert", json={"mode": "merge", "intents": [{
+        **DRAFT, "code": "B.STOCK.BINDONLY", "name": "仅意图写绑工具探针",
+    }]}, space="cs"))
+    with SessionLocal() as db:
+        _, tok = keys.create(db, {"name": "仅意图写", "spaces": ["cs"], "scopes": ["意图:写"]}, SYSTEM)
+        db.commit()
+    only = Api(client, tok)
+    r = only.post("/api/v1/intents/B.STOCK.BINDONLY/tools",
+                  json={"tool": "ai_probe_bind_only", "param_map": {"q": {"source": "槽位", "value": "sku"}}},
+                  space="cs")
+    it = check(r)
+    assert "ai_probe_bind_only" in [b["tool"] for b in it["tools"]]
+    # 没有「工具:写」则不能注册工具
+    r = only.post("/api/v1/tools", json={**HTTP, "name": "should_not_register"})
+    assert r.status_code == 403 and r.json()["code"] == "SCOPE_FORBIDDEN"
+    only.delete("/api/v1/intents/B.STOCK.BINDONLY/tools/ai_probe_bind_only", space="cs")
+    full_key.post("/api/v1/tools/ai_probe_bind_only:disable", json={})
 
 
 def test_mcp_register_and_disable(full_key):

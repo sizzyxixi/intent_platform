@@ -400,6 +400,14 @@ def revoke_key(kid: str, actor=Depends(ADMIN), db: Session = Depends(get_db)):
     return key_svc.to_dict(k)
 
 
+@router.delete("/api-keys/{kid}")
+def delete_key(kid: str, actor=Depends(ADMIN), db: Session = Depends(get_db)):
+    """彻底删除已吊销的 Key；有效 Key 须先吊销。审计记录保留。"""
+    snap = key_svc.hard_delete(db, kid, actor)
+    db.commit()
+    return snap
+
+
 # ---------------- 元数据 / 文档 ----------------
 @router.get("/meta")
 def meta(actor=Depends(VIEW), db: Session = Depends(get_db)):
