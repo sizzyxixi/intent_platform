@@ -71,7 +71,8 @@ def create_app() -> FastAPI:
             f = dist / path
             if path and f.is_file() and dist in f.resolve().parents:
                 return FileResponse(f)
-            return FileResponse(dist / "index.html")
+            # index.html 不缓存，避免部署后浏览器仍加载旧版前端
+            return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return app
 
 
