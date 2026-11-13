@@ -1,751 +1,795 @@
 [
- {
-  "name": "list_intents",
-  "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories），view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
-  "inputSchema": {
-   "type": "object",
-   "properties": {
-    "space": {
-     "type": "string",
-     "description": "空间 ID，如 cs、mc；不传则用 Key 绑定的空间"
-    },
-    "view": {
-     "type": "string",
-     "enum": [
-      "intents",
-      "taxonomy",
-      "slots",
-      "spaces",
-      "recognition"
-     ],
-     "default": "intents"
-    },
-    "category": {
-     "type": "string",
-     "description": "分类路径筛选，每段填编码或名称，用 / 分隔，可只写前几层，如 PRE（1688 智能客服）或 DESIGN/主图与白底图（Moonclaw）"
-    },
-    "status": {
-     "type": "string",
-     "enum": [
-      "草稿",
-      "启用",
-      "停用"
-     ]
-    },
-    "q": {
-     "type": "string",
-     "description": "关键词，匹配编码/名称/意图描述/例句"
-    },
-    "updated_after": {
-     "type": "string",
-     "format": "date-time"
-    },
-    "page_size": {
-     "type": "integer",
-     "minimum": 1,
-     "maximum": 100,
-     "default": 50
-    }
-   }
-  }
- },
- {
-  "name": "get_intent",
-  "description": "按编码读取单个意图的完整信息（例句、槽位、关联知识及用途、工具映射）。只读。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "code"
-   ],
-   "properties": {
-    "space": {
-     "type": "string"
-    },
-    "code": {
-     "type": "string",
-     "pattern": "^[A-Z]{1,4}(\\.[A-Z0-9_]+){1,6}$"
-    }
-   }
-  }
- },
- {
-  "name": "upsert_intents",
-  "description": "批量写回当前空间的意图，结果一律为草稿。mode 只用 merge；不能删除、不能覆盖已启用意图。分类不存在时请先 taxonomy_upsert_node，或设 auto_create_parents=true（路径每段须为编码，或 {code,name}）。启用请用 intent_enable。槽位名用本空间已有槽位的英文名。单次最多 100 条，非 dry_run 须提供 idempotency_key。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "mode",
-    "intents",
-    "idempotency_key"
-   ],
-   "properties": {
-    "space": {
-     "type": "string"
-    },
-    "mode": {
-     "type": "string",
-     "enum": [
-      "merge"
-     ]
-    },
-    "idempotency_key": {
-     "type": "string",
-     "maxLength": 64
-    },
-    "intents": {
-     "type": "array",
-     "minItems": 1,
-     "maxItems": 100,
-     "items": {
+  {
+    "name": "list_intents",
+    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories），view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
+    "inputSchema": {
       "type": "object",
-      "required": [
-       "code",
-       "name",
-       "description",
-       "examples"
-      ],
       "properties": {
-       "code": {
-        "type": "string",
-        "pattern": "^[A-Z]{1,4}(\\.[A-Z0-9_]+){1,6}$"
-       },
-       "name": {
-        "type": "string",
-        "maxLength": 30
-       },
-       "category_path": {
-        "type": "array",
-        "items": {
-         "oneOf": [
-          {
-           "type": "string"
-          },
-          {
-           "type": "object",
-           "properties": {
-            "code": {
-             "type": "string"
-            },
-            "name": {
-             "type": "string"
-            }
-           }
-          }
-         ]
+        "space": {
+          "type": "string",
+          "description": "空间 ID，如 cs、mc；不传则用 Key 绑定的空间"
         },
-        "minItems": 0,
-        "maxItems": 5,
-        "description": "从第 1 层到最末层分类的完整路径，每段填编码或名称（先用 list_intents view=taxonomy 读取），如 [\"PRE\"]（1688 智能客服）或 [\"DESIGN\", \"主图与白底图\"]（Moonclaw）。空间有分类层时必填；0.5 版的 l1 / l2 仍兼容"
-       },
-       "l1": {
-        "type": "string",
-        "description": "已废弃（兼容）：等价于 category_path 第 1 段"
-       },
-       "l2": {
-        "type": "string",
-        "description": "已废弃（兼容）：等价于 category_path 第 2 段"
-       },
-       "description": {
-        "type": "string",
-        "minLength": 15,
-        "description": "意图描述：用户想做什么；什么算；什么不算（易混淆意图）"
-       },
-       "examples": {
-        "type": "array",
-        "minItems": 3,
-        "items": {
-         "type": "string"
+        "view": {
+          "type": "string",
+          "enum": [
+            "intents",
+            "taxonomy",
+            "slots",
+            "spaces",
+            "recognition"
+          ],
+          "default": "intents"
+        },
+        "category": {
+          "type": "string",
+          "description": "分类路径筛选，每段填编码或名称，用 / 分隔，可只写前几层，如 PRE（1688 智能客服）或 DESIGN/主图与白底图（Moonclaw）"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "草稿",
+            "启用",
+            "停用"
+          ]
+        },
+        "q": {
+          "type": "string",
+          "description": "关键词，匹配编码/名称/意图描述/例句"
+        },
+        "updated_after": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "page_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
         }
-       },
-       "slots": {
-        "type": "array",
-        "items": {
-         "type": "object",
-         "required": [
-          "name",
-          "required"
-         ],
-         "properties": {
-          "name": {
-           "type": "string",
-           "description": "本空间槽位英文名"
-          },
-          "required": {
-           "type": "boolean"
-          },
-          "ask": {
-           "type": "string",
-           "description": "留空则继承该槽位默认追问话术"
-          }
-         }
-        }
-       }
       }
-     }
-    },
-    "auto_create_parents": {
-     "type": "boolean",
-     "default": false,
-     "description": "true 时自动创建 category_path 中缺失的分类节点（每段须为编码，或对象 {code,name}）"
     }
-   }
-  }
- },
- {
-  "name": "search_knowledge",
-  "description": "在全部知识库（全平台通用）中按问题检索最相关的知识切片，可按平台/站点/语言/类目标签过滤，返回相似度、标签和已关联意图。只读。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "query"
-   ],
-   "properties": {
-    "kb_id": {
-     "type": "string",
-     "description": "不传则检索全部知识库"
-    },
-    "query": {
-     "type": "string"
-    },
-    "platform": {
-     "type": "string",
-     "description": "如 TikTok、Shopee、Amazon、1688"
-    },
-    "site": {
-     "type": "string",
-     "description": "如 US、VN、CN"
-    },
-    "language": {
-     "type": "string",
-     "description": "如 en、vi、zh"
-    },
-    "category": {
-     "type": "string"
-    },
-    "top_k": {
-     "type": "integer",
-     "minimum": 1,
-     "maximum": 20,
-     "default": 5
-    }
-   }
-  }
- },
- {
-  "name": "import_knowledge",
-  "description": "向已有知识库导入文件（异步构建）。表格库表头必须完全一致；与已有文档同名/同内容时默认返回冲突并列出受影响意图，需运营确认后才能 overwrite=true。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "kb_id",
-    "files",
-    "idempotency_key"
-   ],
-   "properties": {
-    "kb_id": {
-     "type": "string"
-    },
-    "idempotency_key": {
-     "type": "string",
-     "maxLength": 64
-    },
-    "overwrite": {
-     "type": "boolean",
-     "default": false
-    },
-    "files": {
-     "type": "array",
-     "maxItems": 100,
-     "items": {
+  },
+  {
+    "name": "get_intent",
+    "description": "按编码读取单个意图的完整信息（例句、槽位、处理方式 handling、关联知识及用途、工具映射）。只读。",
+    "inputSchema": {
       "type": "object",
       "required": [
-       "name",
-       "content_base64"
+        "code"
       ],
       "properties": {
-       "name": {
-        "type": "string"
-       },
-       "content_base64": {
-        "type": "string"
-       }
+        "space": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z]{1,4}(\\.[A-Z0-9_]+){1,6}$"
+        }
       }
-     }
     }
-   }
-  }
- },
- {
-  "name": "list_tools",
-  "description": "列出全部工具（外部：API 接口 / MCP 工具 / CLI 命令 / 技能 / 工作流；以及平台内置工具）及入参。全局，不区分空间。只读。注册、更新、停用请用 register_tool / update_tool / disable_tool。",
-  "inputSchema": {
-   "type": "object",
-   "properties": {
-    "source": {
-     "type": "string",
-     "enum": [
-      "external",
-      "builtin"
-     ]
-    },
-    "q": {
-     "type": "string"
-    },
-    "type": {
-     "type": "string",
-     "enum": [
-      "http",
-      "mcp",
-      "cli",
-      "skill",
-      "workflow"
-     ]
+  },
+  {
+    "name": "upsert_intents",
+    "description": "批量写回当前空间的意图，结果一律为草稿。mode 只用 merge；不能删除、不能覆盖已启用意图。分类不存在时请先 taxonomy_upsert_node，或设 auto_create_parents=true（路径每段须为编码，或 {code,name}）。启用请用 intent_enable。槽位名用本空间已有槽位的英文名。单次最多 100 条，非 dry_run 须提供 idempotency_key。 可设置 handling（处理方式）。非 tool_flow 时不能带工具或知识绑定。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "mode",
+        "intents",
+        "idempotency_key"
+      ],
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "merge"
+          ]
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "intents": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "name",
+              "description",
+              "examples"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "pattern": "^[A-Z]{1,4}(\\.[A-Z0-9_]+){1,6}$"
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 30
+              },
+              "category_path": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "minItems": 0,
+                "maxItems": 5,
+                "description": "从第 1 层到最末层分类的完整路径，每段填编码或名称（先用 list_intents view=taxonomy 读取），如 [\"PRE\"]（1688 智能客服）或 [\"DESIGN\", \"主图与白底图\"]（Moonclaw）。空间有分类层时必填；0.5 版的 l1 / l2 仍兼容"
+              },
+              "l1": {
+                "type": "string",
+                "description": "已废弃（兼容）：等价于 category_path 第 1 段"
+              },
+              "l2": {
+                "type": "string",
+                "description": "已废弃（兼容）：等价于 category_path 第 2 段"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 15,
+                "description": "意图描述：用户想做什么；什么算；什么不算（易混淆意图）"
+              },
+              "examples": {
+                "type": "array",
+                "minItems": 3,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "slots": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "required"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "本空间槽位英文名"
+                    },
+                    "required": {
+                      "type": "boolean"
+                    },
+                    "ask": {
+                      "type": "string",
+                      "description": "留空则继承该槽位默认追问话术"
+                    }
+                  }
+                }
+              },
+              "handling": {
+                "type": "object",
+                "description": "意图处理方式。mode 为 tool_flow（默认，绑定工具/知识）、handoff_human（转人工，可选 message）、fixed_reply（固定话术，必填 replies，reply_strictness 为 paraphrase 按意思表达或 verbatim 完全固定，默认 paraphrase）、llm_free（让 AI 自由发挥，可选 prompt）。非 tool_flow 时不能绑定工具或知识。",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "tool_flow",
+                      "handoff_human",
+                      "fixed_reply",
+                      "llm_free"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "description": "转人工说明，可选"
+                  },
+                  "replies": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "description": "固定话术，每条不超过 2000 字"
+                  },
+                  "reply_strictness": {
+                    "type": "string",
+                    "enum": [
+                      "paraphrase",
+                      "verbatim"
+                    ],
+                    "default": "paraphrase",
+                    "description": "paraphrase=按意思表达（可改写须保原意）；verbatim=完全固定（须原样输出）"
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "description": "自由发挥的说明或边界，可选"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "auto_create_parents": {
+          "type": "boolean",
+          "default": false,
+          "description": "true 时自动创建 category_path 中缺失的分类节点（每段须为编码，或对象 {code,name}）"
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "register_tool",
-  "description": "按工具名创建或更新外部工具（HTTP / CLI / 技能 / 工作流）。MCP 子工具请先登记 MCP 服务再同步，不能单独注册。dry_run=true 只校验不写入。写入须带 idempotency_key。权限：工具:写。全局。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "name",
-    "type",
-    "display_name",
-    "description",
-    "owner"
-   ],
-   "properties": {
-    "name": {
-     "type": "string",
-     "description": "工具名（稳定编码），小写英文/数字/下划线，以字母开头"
-    },
-    "type": {
-     "type": "string",
-     "enum": [
-      "http",
-      "cli",
-      "skill",
-      "workflow"
-     ]
-    },
-    "display_name": {
-     "type": "string"
-    },
-    "description": {
-     "type": "string"
-    },
-    "owner": {
-     "type": "string"
-    },
-    "params": {
-     "type": "array",
-     "items": {
-      "type": "object"
-     }
-    },
-    "config": {
-     "type": "object",
-     "description": "按类型：http 含 url/method/auth；cli 含 bin/command_template 等；skill 含 package_id；workflow 含平台字段"
-    },
-    "secret": {
-     "type": "string",
-     "description": "HTTP 凭据（只写不读）"
-    },
-    "clear_secret": {
-     "type": "boolean"
-    },
-    "dry_run": {
-     "type": "boolean",
-     "default": false
-    },
-    "idempotency_key": {
-     "type": "string",
-     "minLength": 1,
-     "maxLength": 64,
-     "description": "幂等键；dry_run 时可不传"
+  },
+  {
+    "name": "search_knowledge",
+    "description": "在全部知识库（全平台通用）中按问题检索最相关的知识切片，可按平台/站点/语言/类目标签过滤，返回相似度、标签和已关联意图。只读。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "query"
+      ],
+      "properties": {
+        "kb_id": {
+          "type": "string",
+          "description": "不传则检索全部知识库"
+        },
+        "query": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string",
+          "description": "如 TikTok、Shopee、Amazon、1688"
+        },
+        "site": {
+          "type": "string",
+          "description": "如 US、VN、CN"
+        },
+        "language": {
+          "type": "string",
+          "description": "如 en、vi、zh"
+        },
+        "category": {
+          "type": "string"
+        },
+        "top_k": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 5
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "update_tool",
-  "description": "更新已登记的外部工具（不能改名、改类型）。MCP 子工具请用平台控制台启停。权限：工具:写。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "name"
-   ],
-   "properties": {
-    "name": {
-     "type": "string",
-     "description": "工具名（稳定编码），小写英文/数字/下划线，以字母开头"
-    },
-    "type": {
-     "type": "string",
-     "enum": [
-      "http",
-      "cli",
-      "skill",
-      "workflow"
-     ]
-    },
-    "display_name": {
-     "type": "string"
-    },
-    "description": {
-     "type": "string"
-    },
-    "owner": {
-     "type": "string"
-    },
-    "params": {
-     "type": "array",
-     "items": {
-      "type": "object"
-     }
-    },
-    "config": {
-     "type": "object",
-     "description": "按类型：http 含 url/method/auth；cli 含 bin/command_template 等；skill 含 package_id；workflow 含平台字段"
-    },
-    "secret": {
-     "type": "string",
-     "description": "HTTP 凭据（只写不读）"
-    },
-    "clear_secret": {
-     "type": "boolean"
-    },
-    "dry_run": {
-     "type": "boolean",
-     "default": false
-    },
-    "idempotency_key": {
-     "type": "string",
-     "minLength": 1,
-     "maxLength": 64,
-     "description": "幂等键；dry_run 时可不传"
+  },
+  {
+    "name": "import_knowledge",
+    "description": "向已有知识库导入文件（异步构建）。表格库表头必须完全一致；与已有文档同名/同内容时默认返回冲突并列出受影响意图，需运营确认后才能 overwrite=true。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "kb_id",
+        "files",
+        "idempotency_key"
+      ],
+      "properties": {
+        "kb_id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "overwrite": {
+          "type": "boolean",
+          "default": false
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "content_base64"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "content_base64": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "disable_tool",
-  "description": "停用外部工具（不删除）。已被意图使用时会记入审计，并可能把校验不再通过的已启用意图降为草稿。权限：工具:写。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "name",
-    "idempotency_key"
-   ],
-   "properties": {
-    "name": {
-     "type": "string"
-    },
-    "idempotency_key": {
-     "type": "string",
-     "minLength": 1,
-     "maxLength": 64,
-     "description": "幂等键；dry_run 时可不传"
+  },
+  {
+    "name": "list_tools",
+    "description": "列出全部工具（外部：API 接口 / MCP 工具 / CLI 命令 / 技能 / 工作流；以及平台内置工具）及入参。全局，不区分空间。只读。注册、更新、停用请用 register_tool / update_tool / disable_tool。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "external",
+            "builtin"
+          ]
+        },
+        "q": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "http",
+            "mcp",
+            "cli",
+            "skill",
+            "workflow"
+          ]
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "intent_bind_tool",
-  "description": "把已注册工具绑定到当前空间的意图，并设置 param_map（source 为 槽位 / 常量 / 上下文）。已绑定则更新映射。需要 意图:写（绑定已有工具不需要 工具:写）。dry_run 只校验。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "code",
-    "tool"
-   ],
-   "properties": {
-    "space": {
-     "type": "string"
-    },
-    "code": {
-     "type": "string"
-    },
-    "tool": {
-     "type": "string"
-    },
-    "param_map": {
-     "type": "object",
-     "description": "{入参名: {source, value}}，source 为 槽位 / 常量 / 上下文"
-    },
-    "dry_run": {
-     "type": "boolean",
-     "default": false
-    },
-    "idempotency_key": {
-     "type": "string",
-     "minLength": 1,
-     "maxLength": 64,
-     "description": "幂等键；dry_run 时可不传"
+  },
+  {
+    "name": "register_tool",
+    "description": "按工具名创建或更新外部工具（HTTP / CLI / 技能 / 工作流）。MCP 子工具请先登记 MCP 服务再同步，不能单独注册。dry_run=true 只校验不写入。写入须带 idempotency_key。权限：工具:写。全局。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "name",
+        "type",
+        "display_name",
+        "description",
+        "owner"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "工具名（稳定编码），小写英文/数字/下划线，以字母开头"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "http",
+            "cli",
+            "skill",
+            "workflow"
+          ]
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "config": {
+          "type": "object",
+          "description": "按类型：http 含 url/method/auth；cli 含 bin/command_template 等；skill 含 package_id；workflow 含平台字段"
+        },
+        "secret": {
+          "type": "string",
+          "description": "HTTP 凭据（只写不读）"
+        },
+        "clear_secret": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean",
+          "default": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "幂等键；dry_run 时可不传"
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "intent_unbind_tool",
-  "description": "从当前空间的意图上解绑工具。需要 意图:写（绑定已有工具不需要 工具:写）。未绑定则原样返回。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "code",
-    "tool",
-    "idempotency_key"
-   ],
-   "properties": {
-    "space": {
-     "type": "string"
-    },
-    "code": {
-     "type": "string"
-    },
-    "tool": {
-     "type": "string"
-    },
-    "idempotency_key": {
-     "type": "string",
-     "minLength": 1,
-     "maxLength": 64,
-     "description": "幂等键；dry_run 时可不传"
+  },
+  {
+    "name": "update_tool",
+    "description": "更新已登记的外部工具（不能改名、改类型）。MCP 子工具请用平台控制台启停。权限：工具:写。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "工具名（稳定编码），小写英文/数字/下划线，以字母开头"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "http",
+            "cli",
+            "skill",
+            "workflow"
+          ]
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "config": {
+          "type": "object",
+          "description": "按类型：http 含 url/method/auth；cli 含 bin/command_template 等；skill 含 package_id；workflow 含平台字段"
+        },
+        "secret": {
+          "type": "string",
+          "description": "HTTP 凭据（只写不读）"
+        },
+        "clear_secret": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean",
+          "default": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "幂等键；dry_run 时可不传"
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "taxonomy_upsert_node",
-  "description": "按编码创建或更新当前空间的分类节点。code 为稳定编码；parent_code 为空表示第一层；depth/level 须符合该空间的分类层数。dry_run=true 只校验。非 dry_run 须提供 idempotency_key。需要「意图:写」。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "code",
-    "name"
-   ],
-   "properties": {
-    "space": {
-     "type": "string"
-    },
-    "code": {
-     "type": "string",
-     "description": "稳定编码，大写字母开头，仅大写字母/数字/下划线"
-    },
-    "name": {
-     "type": "string"
-    },
-    "parent_code": {
-     "type": "string",
-     "description": "父节点编码；第一层省略"
-    },
-    "depth": {
-     "type": "integer",
-     "description": "可选，须等于父层+1 或第一层为 1"
-    },
-    "level": {
-     "type": "integer",
-     "description": "depth 的别名"
-    },
-    "sort": {
-     "type": "integer"
-    },
-    "description": {
-     "type": "string"
-    },
-    "dry_run": {
-     "type": "boolean"
-    },
-    "idempotency_key": {
-     "type": "string",
-     "maxLength": 64
+  },
+  {
+    "name": "disable_tool",
+    "description": "停用外部工具（不删除）。已被意图使用时会记入审计，并可能把校验不再通过的已启用意图降为草稿。权限：工具:写。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "name",
+        "idempotency_key"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "幂等键；dry_run 时可不传"
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "taxonomy_disable_node",
-  "description": "停用分类节点（不能删除）。若该节点或其子分类下有已启用意图则拒绝。须提供 idempotency_key。需要「意图:写」。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "code",
-    "idempotency_key"
-   ],
-   "properties": {
-    "space": {
-     "type": "string"
-    },
-    "code": {
-     "type": "string"
-    },
-    "idempotency_key": {
-     "type": "string",
-     "maxLength": 64
+  },
+  {
+    "name": "intent_bind_tool",
+    "description": "把已注册工具绑定到当前空间的意图，并设置 param_map（source 为 槽位 / 常量 / 上下文）。已绑定则更新映射。需要 意图:写（绑定已有工具不需要 工具:写）。dry_run 只校验。 处理方式不是「工具与知识流程」（tool_flow）的意图不能绑定工具。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "code",
+        "tool"
+      ],
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "param_map": {
+          "type": "object",
+          "description": "{入参名: {source, value}}，source 为 槽位 / 常量 / 上下文"
+        },
+        "dry_run": {
+          "type": "boolean",
+          "default": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "幂等键；dry_run 时可不传"
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "intent_enable",
-  "description": "将意图设为启用（须通过启用前校验）。须提供 idempotency_key。需要「意图:写」。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "code",
-    "idempotency_key"
-   ],
-   "properties": {
-    "space": {
-     "type": "string"
-    },
-    "code": {
-     "type": "string"
-    },
-    "idempotency_key": {
-     "type": "string",
-     "maxLength": 64
+  },
+  {
+    "name": "intent_unbind_tool",
+    "description": "从当前空间的意图上解绑工具。需要 意图:写（绑定已有工具不需要 工具:写）。未绑定则原样返回。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "code",
+        "tool",
+        "idempotency_key"
+      ],
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "幂等键；dry_run 时可不传"
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "intent_disable",
-  "description": "将意图设为停用。须提供 idempotency_key。需要「意图:写」。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "code",
-    "idempotency_key"
-   ],
-   "properties": {
-    "space": {
-     "type": "string"
-    },
-    "code": {
-     "type": "string"
-    },
-    "idempotency_key": {
-     "type": "string",
-     "maxLength": 64
+  },
+  {
+    "name": "taxonomy_upsert_node",
+    "description": "按编码创建或更新当前空间的分类节点。code 为稳定编码；parent_code 为空表示第一层；depth/level 须符合该空间的分类层数。dry_run=true 只校验。非 dry_run 须提供 idempotency_key。需要「意图:写」。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "code",
+        "name"
+      ],
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string",
+          "description": "稳定编码，大写字母开头，仅大写字母/数字/下划线"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent_code": {
+          "type": "string",
+          "description": "父节点编码；第一层省略"
+        },
+        "depth": {
+          "type": "integer",
+          "description": "可选，须等于父层+1 或第一层为 1"
+        },
+        "level": {
+          "type": "integer",
+          "description": "depth 的别名"
+        },
+        "sort": {
+          "type": "integer"
+        },
+        "description": {
+          "type": "string"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "create_knowledge_base",
-  "description": "新建知识库（全局）。type 为「表格知识库」或「图文知识库-富文本」。不能删除知识库。须提供 idempotency_key。需要「知识:写」。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "name",
-    "idempotency_key"
-   ],
-   "properties": {
-    "name": {
-     "type": "string"
-    },
-    "type": {
-     "type": "string",
-     "enum": [
-      "表格知识库",
-      "图文知识库-富文本"
-     ],
-     "default": "表格知识库"
-    },
-    "idempotency_key": {
-     "type": "string",
-     "maxLength": 64
-    },
-    "description": {
-     "type": "string",
-     "maxLength": 2000,
-     "description": "可选。自由文本，说明这份知识是做什么用的（不超过 2000 字）。不要再传平台/站点/语言/类目等固化适用范围字段，即使传入也会被忽略。"
+  },
+  {
+    "name": "taxonomy_disable_node",
+    "description": "停用分类节点（不能删除）。若该节点或其子分类下有已启用意图则拒绝。须提供 idempotency_key。需要「意图:写」。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "code",
+        "idempotency_key"
+      ],
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "intent_bind_knowledge",
-  "description": "给意图关联知识。chunk_id 为 * 表示整篇。需要「意图:写」和「知识:写」。dry_run=true 只校验。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "code",
-    "kb_id",
-    "doc_id",
-    "chunk_id"
-   ],
-   "properties": {
-    "space": {
-     "type": "string"
-    },
-    "code": {
-     "type": "string"
-    },
-    "kb_id": {
-     "type": "string"
-    },
-    "doc_id": {
-     "type": "string"
-    },
-    "chunk_id": {
-     "type": "string",
-     "description": "切片 ID，整篇用 *"
-    },
-    "usage": {
-     "type": "string",
-     "enum": [
-      "reference",
-      "validate"
-     ],
-     "default": "reference"
-    },
-    "dry_run": {
-     "type": "boolean"
-    },
-    "idempotency_key": {
-     "type": "string",
-     "maxLength": 64
+  },
+  {
+    "name": "intent_enable",
+    "description": "将意图设为启用（须通过启用前校验）。须提供 idempotency_key。需要「意图:写」。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "code",
+        "idempotency_key"
+      ],
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
     }
-   }
-  }
- },
- {
-  "name": "intent_unbind_knowledge",
-  "description": "从意图上解绑知识。需要「意图:写」和「知识:写」。须提供 idempotency_key。",
-  "inputSchema": {
-   "type": "object",
-   "required": [
-    "code",
-    "kb_id",
-    "doc_id",
-    "chunk_id",
-    "idempotency_key"
-   ],
-   "properties": {
-    "space": {
-     "type": "string"
-    },
-    "code": {
-     "type": "string"
-    },
-    "kb_id": {
-     "type": "string"
-    },
-    "doc_id": {
-     "type": "string"
-    },
-    "chunk_id": {
-     "type": "string"
-    },
-    "idempotency_key": {
-     "type": "string",
-     "maxLength": 64
+  },
+  {
+    "name": "intent_disable",
+    "description": "将意图设为停用。须提供 idempotency_key。需要「意图:写」。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "code",
+        "idempotency_key"
+      ],
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
     }
-   }
+  },
+  {
+    "name": "create_knowledge_base",
+    "description": "新建知识库（全局）。type 为「表格知识库」或「图文知识库-富文本」。不能删除知识库。须提供 idempotency_key。需要「知识:写」。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "name",
+        "idempotency_key"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "表格知识库",
+            "图文知识库-富文本"
+          ],
+          "default": "表格知识库"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "可选。自由文本，说明这份知识是做什么用的（不超过 2000 字）。不要再传平台/站点/语言/类目等固化适用范围字段，即使传入也会被忽略。"
+        }
+      }
+    }
+  },
+  {
+    "name": "intent_bind_knowledge",
+    "description": "给意图关联知识。chunk_id 为 * 表示整篇。需要「意图:写」和「知识:写」。dry_run=true 只校验。 处理方式不是「工具与知识流程」（tool_flow）的意图不能关联知识。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "code",
+        "kb_id",
+        "doc_id",
+        "chunk_id"
+      ],
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "kb_id": {
+          "type": "string"
+        },
+        "doc_id": {
+          "type": "string"
+        },
+        "chunk_id": {
+          "type": "string",
+          "description": "切片 ID，整篇用 *"
+        },
+        "usage": {
+          "type": "string",
+          "enum": [
+            "reference",
+            "validate"
+          ],
+          "default": "reference"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
+    }
+  },
+  {
+    "name": "intent_unbind_knowledge",
+    "description": "从意图上解绑知识。需要「意图:写」和「知识:写」。须提供 idempotency_key。",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "code",
+        "kb_id",
+        "doc_id",
+        "chunk_id",
+        "idempotency_key"
+      ],
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "kb_id": {
+          "type": "string"
+        },
+        "doc_id": {
+          "type": "string"
+        },
+        "chunk_id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
+    }
   }
- }
 ]

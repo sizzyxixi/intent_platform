@@ -7,6 +7,7 @@ from .. import audit
 from ..errors import conflict, unprocessable
 from ..models import Category, Space
 from .common import FINAL_ACTIONS, Actor, iso, utcnow
+from . import handling as handling_svc
 
 DEFAULT_CLARIFY = "我想确认一下，您是想要以下哪一项？"
 DEFAULT_FINAL_MSG = "抱歉，这个问题我暂时处理不了。"
@@ -28,6 +29,7 @@ def recognition(sp: Space, with_version: bool = False) -> dict:
         "final_action_label": FINAL_ACTIONS.get(sp.final_action, sp.final_action),
         "clarify_prompt": sp.clarify_prompt,
         "final_message": sp.final_message if sp.final_action == "decline" else None,
+        "fallback": handling_svc.space_fallback(sp),
     }
     if with_version:
         d["version"] = sp.version
@@ -37,9 +39,11 @@ def recognition(sp: Space, with_version: bool = False) -> dict:
 
 
 def default_recognition(space_id: str) -> dict:
+    fb = handling_svc.default_fallback(space_id)
+    fa, fm = handling_svc.legacy_from(fb)
     return {"threshold": 0.6, "max_clarify": 2, "max_slot_ask": 2, "tool_retry": 1,
-            "final_action": "handoff_human" if space_id == "cs" else "general_assistant",
-            "clarify_prompt": DEFAULT_CLARIFY, "final_message": None}
+            "final_action": fa, "clarify_prompt": DEFAULT_CLARIFY, "final_message": fm,
+            "fallback": fb}
 
 
 def _check_int(errs, name, v, lo, hi, label):
@@ -53,9 +57,10 @@ def update_recognition(db: Session, sp: Space, payload: dict, actor: Actor) -> b
     """只改传入的字段；有改动时 version +1。返回是否有改动。"""
     errs = []
     allowed = {"threshold", "max_clarify", "max_slot_ask", "tool_retry", "final_action",
-               "clarify_prompt", "final_message"}
+               "clarify_prompt", "final_message", "fallback", "handling"}
     unknown = [k for k in payload if k not in allowed and k not in ("candidate_min", "max_candidates",
-                                                                    "final_action_label", "version")]
+                                                                    "final_action_label", "version",
+                                                                    "mode_label", "reply_strictness_label")]
     if unknown:
         errs.append({"field": ",".join(unknown), "message": "不支持的字段"})
     if "candidate_min" in payload:
@@ -69,14 +74,27 @@ def update_recognition(db: Session, sp: Space, payload: dict, actor: Actor) -> b
     _check_int(errs, "max_clarify", payload.get("max_clarify"), 0, 5, "澄清最多次数")
     _check_int(errs, "max_slot_ask", payload.get("max_slot_ask"), 0, 5, "槽位追问最多次数")
     _check_int(errs, "tool_retry", payload.get("tool_retry"), 0, 3, "工具失败重试次数")
-    fa = payload.get("final_action", sp.final_action)
-    if fa not in FINAL_ACTIONS:
-        errs.append({"field": "final_action", "message": "最终动作应为 handoff_human / general_assistant / decline"})
     if "clarify_prompt" in payload and not str(payload.get("clarify_prompt") or "").strip():
         errs.append({"field": "clarify_prompt", "message": "澄清话术必填"})
-    fm = payload.get("final_message", sp.final_message)
-    if fa == "decline" and not str(fm or "").strip():
-        errs.append({"field": "final_message", "message": "最终动作为「告知无法处理」时必须填写回复话术"})
+    fb_raw = payload.get("fallback", payload.get("handling"))
+    try:
+        if fb_raw is not None:
+            fb = handling_svc.parse_handling(fb_raw, fallback=True)
+        elif "final_action" in payload or "final_message" in payload:
+            fa = payload.get("final_action", sp.final_action)
+            fm = payload.get("final_message", sp.final_message)
+            if fa not in handling_svc.LEGACY_TO_MODE and fa not in FINAL_ACTIONS:
+                raise unprocessable("最终动作应为 handoff_human / general_assistant / decline，或使用 fallback.mode")
+            if handling_svc.LEGACY_TO_MODE.get(fa) == "fixed_reply" and not str(fm or "").strip():
+                raise unprocessable("固定话术至少写一条回复",
+                                    details=[{"field": "final_message", "message": "固定话术至少写一条回复"}])
+            fb = handling_svc.from_legacy(fa, fm)
+        else:
+            fb = handling_svc.parse_handling(handling_svc.space_fallback(sp), fallback=True)
+    except Exception as e:
+        if errs:
+            raise unprocessable("空间设置校验不通过", details=errs)
+        raise
     if errs:
         raise unprocessable("空间设置校验不通过", details=errs)
 
@@ -86,11 +104,12 @@ def update_recognition(db: Session, sp: Space, payload: dict, actor: Actor) -> b
     for k in ("max_clarify", "max_slot_ask", "tool_retry"):
         if payload.get(k) is not None:
             setattr(sp, k, int(payload[k]))
+    fa, fm = handling_svc.legacy_from(fb)
     sp.final_action = fa
+    sp.final_message = fm
+    sp.fallback = fb
     if "clarify_prompt" in payload:
         sp.clarify_prompt = str(payload["clarify_prompt"]).strip()
-    if "final_message" in payload:
-        sp.final_message = (str(payload["final_message"]).strip() or None) if payload["final_message"] is not None else None
     after = recognition(sp)
     if before == after and not (fa == "decline" and "final_message" in payload and sp.final_message != fm):
         db.rollback()
@@ -146,7 +165,8 @@ def create_space(db: Session, data: dict, actor: Actor) -> Space:
     sp = Space(id=sid, name=name, description=(data.get("description") or "").strip(), bot=bot,
                code_prefix=prefix, version=1, position=pos, threshold=rec["threshold"],
                max_clarify=rec["max_clarify"], max_slot_ask=rec["max_slot_ask"], tool_retry=rec["tool_retry"],
-               final_action="general_assistant", clarify_prompt=DEFAULT_CLARIFY, max_candidates=3,
+               final_action=rec["final_action"], final_message=rec.get("final_message"),
+               fallback=rec["fallback"], clarify_prompt=DEFAULT_CLARIFY, max_candidates=3,
                levels=["大类", "问题桶", "意图"])
     db.add(sp)
     db.flush()

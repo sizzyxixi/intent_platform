@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from .. import audit
 from ..errors import ApiError, bad_request
 from ..models import ImportRecord, Intent, Space
+from . import handling as handling_svc
 from . import intents as intent_svc
 from . import slots as slot_svc
 from . import spaces as space_svc
@@ -68,7 +69,9 @@ def normalize_item(o: dict) -> dict:
         "examples": [str(x).strip() for x in (ex or []) if str(x).strip()],
         "slots": [x for x in (_slot_from(s) for s in slots) if x],
         "ignored_fields": ignored,
-        "_present": {k for k in ("code", "name", "description", "examples") if o.get(k) not in (None, "")},
+        "_present": {k for k in ("code", "name", "description", "examples", "handling") if o.get(k) not in (None, "")},
+        "handling": o.get("handling"),
+        "handling_error": None,
     }
 
 
@@ -217,7 +220,19 @@ def judge(db: Session, sp: Space, items: list[dict], api: bool = False) -> list[
         mapped, created = _slot_map(x["slots"], defs)
         x["slots_mapped"], r["new_slots"] = mapped, created
         if x["ignored_fields"]:
-            r["notes"].append("兜底已改为空间级设置，已忽略")
+            r["notes"].append("文件里的旧兜底/转人工条件已忽略；意图处理方式请用 handling 字段配置")
+        if x.get("handling") not in (None, "", {}, []):
+            try:
+                x["handling"] = handling_svc.parse_handling(x["handling"])
+            except Exception as e:
+                issue("INVALID_HANDLING", getattr(e, "message", None) or str(e))
+                x["handling"] = None
+        else:
+            x["handling"] = None
+        if x.get("handling") and ex:
+            msg = handling_svc.check_bindings(x["handling"], ex.tools, ex.kb_refs)
+            if msg:
+                issue("HANDLING_BINDINGS", msg)
         if created:
             r["notes"].append("本空间没有的槽位将自动新建为文本槽位：" + "、".join(created))
         if not x["name"] and "MISSING_FIELD" not in r["reasons"]:
@@ -264,8 +279,9 @@ def judge(db: Session, sp: Space, items: list[dict], api: bool = False) -> list[
             r["existing_status"] = ex.status
             new_ex = [e for e in x["examples"] if e not in (ex.examples or [])]
             new_slots = [s for s in mapped if s["name"] not in {y["name"] for y in ex.slots or []}]
+            h_changed = bool(x.get("handling") and handling_svc.parse_handling(ex.handling or {"mode": "tool_flow"}) != x["handling"])
             same = ex.name == x["name"] and (not x["description"] or ex.description == x["description"]) \
-                and not new_ex and not new_slots
+                and not new_ex and not new_slots and not h_changed
             if same:
                 r["type"], r["action"] = "重复", "跳过"
             else:
@@ -278,6 +294,8 @@ def judge(db: Session, sp: Space, items: list[dict], api: bool = False) -> list[
                     r["diff"].append(f"新例句 {len(new_ex)} 条")
                 if new_slots:
                     r["diff"].append(f"新槽位 {len(new_slots)} 个")
+                if h_changed:
+                    r["diff"].append("处理方式")
         r["actions"] = {"冲突": ["跳过"], "更新": ["合并", "覆盖", "跳过"], "重复": ["跳过", "覆盖"],
                         "新增": ["导入", "跳过"]}[r["type"]]
         rows.append(r)
@@ -292,7 +310,8 @@ def _apply_one(db: Session, sp: Space, x: dict, action: str, by: str, file: str,
         pos = (db.scalar(select(func.max(Intent.position)).where(Intent.space_id == sp.id)) or 0) + 1
         it = Intent(code=x["code"], space_id=sp.id, name=x["name"], category_id=x.get("category_id"),
                     description=x["description"], examples=x["examples"], slots=x["slots_mapped"], kb_refs=[],
-                    tools=[], status="草稿", owner=by, position=pos, updated_at=utcnow())
+                    tools=[], handling=x.get("handling") or dict(handling_svc.DEFAULT_HANDLING),
+                    status="草稿", owner=by, position=pos, updated_at=utcnow())
         intent_svc.add_log(it, by, f"通过导入新建（{file}）")
         db.add(it)
         db.flush()
@@ -321,6 +340,8 @@ def _apply_one(db: Session, sp: Space, x: dict, action: str, by: str, file: str,
         if not ex.name:
             ex.name = x["name"]
         result = "merged"
+    if x.get("handling"):
+        ex.handling = x["handling"]
     if intent_svc.as_dict(ex) == before:
         return "unchanged"
     ex.updated_at = utcnow()

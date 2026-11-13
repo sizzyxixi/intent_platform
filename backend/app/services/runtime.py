@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Intent, Space, Tool
+from . import handling as handling_svc
 from . import knowledge as kb_svc
 from . import slots as slot_svc
 from . import spaces as space_svc
@@ -34,7 +35,8 @@ def build(db: Session, sp: Space) -> dict:
                 tool_names.append(t.name)
         intents_out.append({"code": it.code, "name": it.name, "category_path": tax.path(it.category_id),
                             "description": it.description, "examples": list(it.examples or []),
-                            "slots": effective_slots(it, idx), "knowledge": list(it.kb_refs or []), "tools": tools})
+                            "slots": effective_slots(it, idx), "knowledge": list(it.kb_refs or []), "tools": tools,
+                            "handling": handling_svc.public_handling(it.handling)})
         for r in it.kb_refs or []:
             if r.get("usage") != "validate":
                 continue

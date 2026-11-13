@@ -7,19 +7,22 @@ from sqlalchemy.orm import Session
 from .. import audit
 from ..errors import conflict, not_found, unprocessable
 from ..models import Category, Intent, IntentLog, Space, Tool
+from . import handling as handling_svc
 from . import spaces as space_svc
 from . import taxonomy as tax_svc
 from .common import INTENT_CODE_RE, STATUSES, Actor, iso, utcnow
 from .validation import RefIndex, effective_ask, validate
 
 FIELD_LABEL = {"name": "名称", "category_id": "分类", "description": "意图描述", "examples": "例句", "slots": "槽位",
-               "kb_refs": "关联知识", "tools": "关联工具", "status": "状态"}
+               "kb_refs": "关联知识", "tools": "关联工具", "handling": "处理方式", "status": "状态"}
 
 
 def as_dict(it: Intent) -> dict:
     return {"code": it.code, "name": it.name, "category_id": it.category_id, "description": it.description,
             "examples": list(it.examples or []), "slots": list(it.slots or []), "kb_refs": list(it.kb_refs or []),
-            "tools": list(it.tools or []), "space_id": it.space_id, "status": it.status}
+            "tools": list(it.tools or []),
+            "handling": handling_svc.parse_handling(it.handling or handling_svc.DEFAULT_HANDLING),
+            "space_id": it.space_id, "status": it.status}
 
 
 def add_log(it: Intent, by: str, message: str, at: datetime | None = None) -> None:
@@ -89,7 +92,7 @@ def list_page(db: Session, space_id: str, page: int = 1, page_size: int = 50, **
 def api_summary(it: Intent) -> dict:
     return {"code": it.code, "name": it.name, "category_path": category_path(it), "description": it.description,
             "status": it.status, "example_count": len(it.examples or []), "updated_at": iso(it.updated_at),
-            "space": it.space_id}
+            "space": it.space_id, "handling": handling_svc.public_handling(it.handling)}
 
 
 def api_detail(it: Intent) -> dict:
@@ -98,7 +101,8 @@ def api_detail(it: Intent) -> dict:
               "slots": [{"name": s["name"], "required": bool(s.get("required")), "ask": s.get("ask") or ""}
                         for s in it.slots or []],
               "kb_refs": list(it.kb_refs or []),
-              "tools": [{"tool": b["tool"], "param_map": b.get("param_map") or {}} for b in it.tools or []]})
+              "tools": [{"tool": b["tool"], "param_map": b.get("param_map") or {}} for b in it.tools or []],
+              "handling": handling_svc.public_handling(it.handling)})
     return d
 
 
@@ -186,6 +190,9 @@ def check_structure(db: Session, it_data: dict, idx: RefIndex) -> list[str]:
                     b["param_map"] = {}  # 技能没有入参映射
     if len(set(tnames)) != len(tnames):
         e.append("工具重复关联")
+    msg = handling_svc.check_bindings(it_data.get("handling"), it_data.get("tools"), it_data.get("kb_refs"))
+    if msg:
+        e.append(msg)
     return e
 
 
@@ -213,7 +220,8 @@ def create(db: Session, sp: Space, data: dict, actor: Actor) -> Intent:
         raise conflict(f"本空间已有同名意图「{name}」", "DUPLICATE_NAME")
     pos = (db.scalar(select(func.max(Intent.position)).where(Intent.space_id == sp.id)) or 0) + 1
     it = Intent(code=code, space_id=sp.id, name=name, category_id=cid, description="", examples=[], slots=[],
-                kb_refs=[], tools=[], status="草稿", owner=actor.name, position=pos, updated_at=utcnow())
+                kb_refs=[], tools=[], handling=dict(handling_svc.DEFAULT_HANDLING),
+                status="草稿", owner=actor.name, position=pos, updated_at=utcnow())
     add_log(it, actor.name, "新建意图（草稿）")
     db.add(it)
     audit.record(db, actor, "intent.create", "intent", code, f"新建意图 {code} {name}", sp.id)
@@ -256,6 +264,8 @@ def update(db: Session, it: Intent, data: dict, actor: Actor) -> tuple[Intent, l
         new["kb_refs"] = _clean_refs(data["kb_refs"])
     if "tools" in data:
         new["tools"] = _clean_binds(data["tools"])
+    if "handling" in data:
+        new["handling"] = handling_svc.parse_handling(data["handling"])
     status = data.get("status", it.status)
     if status not in STATUSES:
         raise unprocessable("状态应为 草稿 / 启用 / 停用")
@@ -274,7 +284,7 @@ def update(db: Session, it: Intent, data: dict, actor: Actor) -> tuple[Intent, l
     changed = [k for k in FIELD_LABEL if new.get(k) != before.get(k)]
     if not changed:
         return it, []
-    for k in ("name", "category_id", "description", "examples", "slots", "kb_refs", "tools", "status"):
+    for k in ("name", "category_id", "description", "examples", "slots", "kb_refs", "tools", "handling", "status"):
         setattr(it, k, new[k])
     it.updated_at = utcnow()
     msg = "修改了 " + " / ".join(FIELD_LABEL[k] for k in changed if k != "status")

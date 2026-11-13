@@ -11,6 +11,17 @@ import { TypeTag, isFileParam, pTypeLabel } from './ToolEdit'
 type Slot = { name: string; required: boolean; ask: string }
 type Ref = { kb_id: string; doc_id: string; chunk_id: string; usage: string; label?: string; valid?: boolean }
 type Bind = { tool: string; param_map: Record<string, { source: string; value: string }> }
+type Handling = { mode: string; message?: string; repliesText?: string; reply_strictness?: string; prompt?: string }
+const HMODES: [string, string, string][] = [
+  ['tool_flow', '工具与知识流程', '按槽位追问，查知识、调用绑定的工具'],
+  ['handoff_human', '转人工', '把对话交给人工处理，不必绑工具或知识'],
+  ['fixed_reply', '固定话术', '按配置的话术回复，不必绑工具或知识'],
+  ['llm_free', '让 AI 自由发挥', '不调工具、不查知识，由 AI 自行回答'],
+]
+const STRICT: [string, string, string][] = [
+  ['paraphrase', '按意思表达', '可以改写措辞，但必须保持原意'],
+  ['verbatim', '完全固定', '必须原样输出其中一条话术'],
+]
 const CTX = ['session_id', 'buyer_id', 'order_id', 'sku']
 const FILE_SLOT = ['文件', '图片']
 const PICK_TYPES: [string, string][] = [['http', 'API 接口'], ['mcp', 'MCP'], ['cli', 'CLI 命令'], ['skill', '技能'], ['workflow', '工作流'], ['builtin', '平台内置']]
@@ -62,9 +73,12 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   useEffect(() => {
     api.get(`/intents/${code}`).then(x => {
       setD(x)
+      const h = x.handling || { mode: 'tool_flow' }
       setE({ name: x.name, category_id: x.category_id, description: x.description, ex: x.examples.join('\n'), status: x.status,
         slots: x.slots.map((s: any) => ({ name: s.name, required: s.required, ask: s.ask })),
-        kb_refs: x.kb_refs, tools: x.tools })
+        kb_refs: x.kb_refs, tools: x.tools,
+        handling: { mode: h.mode || 'tool_flow', message: h.message || '', prompt: h.prompt || '',
+          repliesText: (h.replies || []).join('\n'), reply_strictness: h.reply_strictness || 'paraphrase' } })
     }).catch(e => { toast(errLines(e)[0]); onClose() })
   // eslint-disable-next-line
   }, [code])
@@ -79,10 +93,33 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
     ...(mcpServers as any[]).flatMap((v: any) => v.tools || [])]
   const toolOf = (name: string) => catalog.find((t: any) => t.name === name)
   const slotDef = (name: string) => slots.find((s: any) => s.name === name)
+  const handlingPayload = () => {
+    const h = E.handling as Handling
+    const out: any = { mode: h.mode }
+    if (h.mode === 'handoff_human' && (h.message || '').trim()) out.message = h.message!.trim()
+    if (h.mode === 'fixed_reply') {
+      out.replies = (h.repliesText || '').split('\n').map((x: string) => x.trim()).filter(Boolean)
+      out.reply_strictness = h.reply_strictness || 'paraphrase'
+    }
+    if (h.mode === 'llm_free' && (h.prompt || '').trim()) out.prompt = h.prompt!.trim()
+    return out
+  }
   const payload = () => ({ name: E.name.trim(), category_id: E.category_id, description: E.description.trim(),
     examples: E.ex.split('\n').map((x: string) => x.trim()).filter(Boolean), slots: E.slots,
     kb_refs: E.kb_refs.map((r: Ref) => ({ kb_id: r.kb_id, doc_id: r.doc_id, chunk_id: r.chunk_id, usage: r.usage })),
-    tools: E.tools, status: E.status })
+    tools: E.tools, handling: handlingPayload(), status: E.status })
+  const setH = (k: string, v: any) => set('handling', { ...E.handling, [k]: v })
+  const changeMode = (mode: string) => {
+    if (mode === E.handling.mode) return
+    const label = HMODES.find(x => x[0] === mode)?.[1] || mode
+    if (mode !== 'tool_flow' && (E.tools.length || E.kb_refs.length)) {
+      const n = E.tools.length, m = E.kb_refs.length
+      if (!window.confirm(`改成「${label}」会解绑已关联的 ${n} 个工具和 ${m} 项知识，确定吗？`)) return
+      setE((e: any) => ({ ...e, tools: [], kb_refs: [], handling: { ...e.handling, mode } }))
+      return
+    }
+    setH('mode', mode)
+  }
   const showErrs = (l: string[]) => { setErrs(l); if (body.current) body.current.scrollTop = 0 }
   const check = async () => {
     try {
@@ -153,7 +190,25 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
           <div className="f"><label>例句 *（每行一条，至少 3 条，当前 {exCount} 条）</label><textarea id="eEx" style={{ minHeight: 90 }} value={E.ex} disabled={ro} onChange={e => set('ex', e.target.value)} /></div>
         </div>
 
-        <div className="sec"><h4 style={{ margin: '0 0 8px' }}>② 槽位（从本空间槽位列表选择；处理前需要拿到的信息）</h4>
+        <div className="sec" id="eHandling"><h4 style={{ margin: '0 0 8px' }}>② 处理方式</h4>
+          <div className="muted" style={{ marginBottom: 8 }}>闲聊、其他等不需要查知识或调工具的意图，请选择转人工、固定话术或让 AI 自由发挥。</div>
+          {HMODES.map(([v, l, tip]) => <label key={v} style={{ display: 'block', marginBottom: 6 }}>
+            <input type="radio" name="eHMode" id={'eH_' + v} value={v} disabled={ro} checked={E.handling.mode === v} onChange={() => changeMode(v)} /> {l}
+            <span className="muted"> — {tip}</span></label>)}
+          {E.handling.mode === 'handoff_human' && <div className="f"><label>转人工说明（可选）</label>
+            <textarea id="eHMsg" rows={2} maxLength={2000} disabled={ro} value={E.handling.message} onChange={e => setH('message', e.target.value)} placeholder="可选，告诉使用方转人工时要说的话" /></div>}
+          {E.handling.mode === 'fixed_reply' && <>
+            <div className="f"><label>话术（每行一条，至少 1 条；多条时由使用方选一条）</label>
+              <textarea id="eHReplies" rows={3} disabled={ro} value={E.handling.repliesText} onChange={e => setH('repliesText', e.target.value)} placeholder="例如：您好，这个问题我先帮您转给人工客服。" /></div>
+            <div className="f"><label>表达要求</label>
+              {STRICT.map(([v, l, tip]) => <label key={v} style={{ display: 'inline-block', marginRight: 16 }}>
+                <input type="radio" name="eHStrict" id={'eHS_' + v} value={v} disabled={ro} checked={(E.handling.reply_strictness || 'paraphrase') === v} onChange={() => setH('reply_strictness', v)} /> {l}
+                <span className="muted"> — {tip}</span></label>)}</div></>}
+          {E.handling.mode === 'llm_free' && <div className="f"><label>发挥说明（可选）</label>
+            <textarea id="eHPrompt" rows={3} maxLength={2000} disabled={ro} value={E.handling.prompt} onChange={e => setH('prompt', e.target.value)} placeholder="可选，给 AI 的发挥边界或语气要求" /></div>}
+        </div>
+
+        <div className="sec"><h4 style={{ margin: '0 0 8px' }}>③ 槽位（从本空间槽位列表选择；处理前需要拿到的信息）</h4>
           <table><thead><tr><th>槽位</th><th>必填</th><th>缺信息时追问（留空＝继承槽位默认话术）</th><th></th></tr></thead><tbody>
             {E.slots.map((s: Slot, i: number) => { const sd = slotDef(s.name); return <tr key={i}>
               <td><select id={'sN' + i} value={s.name} disabled={ro} onChange={e => set('slots', E.slots.map((x: Slot, j: number) => j === i ? { ...x, name: e.target.value } : x))}>
@@ -167,7 +222,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
           {canEdit && <div style={{ marginTop: 6 }}><Btn s id="slotAdd" onClick={() => set('slots', [...E.slots, { name: '', required: false, ask: '' }])}>＋ 添加槽位</Btn> <Btn s id="slotNewInline" onClick={() => setSlotNew(true)}>＋ 新建槽位</Btn></div>}
         </div>
 
-        <div className="sec"><h4 style={{ margin: '0 0 8px' }}>③ 关联知识（参考：检索后用于回答/生成；校验：生成后比对，硬约束）</h4>
+        {E.handling.mode === 'tool_flow' ? <><div className="sec"><h4 style={{ margin: '0 0 8px' }}>④ 关联知识（参考：检索后用于回答/生成；校验：生成后比对，硬约束）</h4>
           {E.kb_refs.length ? <table id="eRefs"><tbody>{E.kb_refs.map((r: Ref, i: number) => <tr key={r.kb_id + r.doc_id + r.chunk_id}>
             <td>{r.valid === false ? <span style={{ color: '#b91c1c' }}>{r.label}</span> : r.label}</td>
             <td style={{ width: 110 }}><select value={r.usage} disabled={ro} onChange={e => set('kb_refs', E.kb_refs.map((x: Ref, j: number) => j === i ? { ...x, usage: e.target.value } : x))}>
@@ -177,7 +232,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
           {canEdit && <div style={{ marginTop: 6 }}><Btn s id="kbPick" onClick={() => setPick(true)}>从知识库选择…</Btn> <span className="muted">知识库全平台通用，可按标签筛选</span></div>}
         </div>
 
-        <div className="sec"><h4 style={{ margin: '0 0 8px' }}>④ 关联工具（来自工具中心）与入参映射</h4>
+        <div className="sec"><h4 style={{ margin: '0 0 8px' }}>⑤ 关联工具（来自工具中心）与入参映射</h4>
           {E.tools.map((b: Bind, ti: number) => {
             const tl = toolOf(b.tool)
             if (!tl) return <div key={ti} className="err">工具 {b.tool} 未在工具中心注册 <a onClick={() => set('tools', E.tools.filter((_: any, j: number) => j !== ti))}>移除</a></div>
@@ -246,7 +301,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
               {pickTy !== 'mcp' && pickData && <Pager page={pickPage} total={pickTotal} size={50} onPage={setPickPage} />}
               <div className="muted" style={{ marginTop: 4 }}>先选类型再选工具。技能无需映射入参；工作流按已同步入参映射（必填须映射或有默认值）；MCP 先选服务，再点「关联」下钻多选子工具；CLI 命令多时可先选命令包 / 业务分组或搜索；维护类平台内置工具不可选</div></>
           })()}
-        </div>
+        </div></> : <div className="muted" id="eNoBind" style={{ margin: '8px 0 16px' }}>当前处理方式不使用知识库和工具，关联入口已隐藏。如需绑定，请改回「工具与知识流程」。</div>}
 
         <SingleTest code={code} draft={() => ({ code, ...payload() })} />
 

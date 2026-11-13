@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Chunk, Document, Intent, KnowledgeBase, Space
+from . import handling as handling_svc
 from . import spaces as space_svc
 from .common import FINAL_ACTIONS
 from .recognizer import recognizer, slot_value
@@ -50,9 +51,17 @@ def run_test(db: Session, sp: Space, text: str, draft: dict | None) -> dict:
     rc = space_svc.recognition(sp)
     th, cm, fa = rc["threshold"], rc["candidate_min"], sp.final_action
     fa_label = FINAL_ACTIONS.get(fa, fa)
-    final_txt = fa_label + (f"（「{sp.final_message or ''}」）" if fa == "decline" else "")
+    fb = rc.get("fallback") or handling_svc.space_fallback(sp)
+    if fb["mode"] == "fixed_reply":
+        final_txt = f"{fb['mode_label']}（{fb.get('reply_strictness_label') or ''}）：" + " / ".join(fb.get("replies") or [])
+    elif fb["mode"] == "llm_free":
+        final_txt = fb["mode_label"] + (f"（{fb['prompt']}）" if fb.get("prompt") else "")
+    elif fb.get("message"):
+        final_txt = fb["mode_label"] + f"（{fb['message']}）"
+    else:
+        final_txt = fa_label + (f"（「{sp.final_message or ''}」）" if fa == "decline" else "")
     pool = [{"code": i.code, "name": i.name, "examples": i.examples, "slots": i.slots, "kb_refs": i.kb_refs,
-             "tools": i.tools} for i in db.scalars(select(Intent).where(Intent.space_id == sp.id, Intent.status == "启用"))
+             "tools": i.tools, "handling": i.handling} for i in db.scalars(select(Intent).where(Intent.space_id == sp.id, Intent.status == "启用"))
             if not draft or i.code != draft.get("code")]
     if draft:
         pool.append({**draft, "_me": True})
@@ -60,7 +69,7 @@ def run_test(db: Session, sp: Space, text: str, draft: dict | None) -> dict:
     scored = [(rz.score(text, c.get("examples") or [], c.get("name") or ""), c) for c in pool]
     scored = sorted([x for x in scored if x[0] > 0], key=lambda x: -x[0])[:3]
     base = {"threshold": th, "candidate_min": cm, "final_action": fa, "final_action_label": fa_label,
-            "final_text": final_txt, "recognizer": rz.name, "simulated": True,
+            "fallback": fb, "final_text": final_txt, "recognizer": rz.name, "simulated": True,
             "candidates": [{"code": c["code"], "name": c["name"], "score": s, "is_current": bool(c.get("_me"))}
                            for s, c in scored]}
     top0 = scored[0][0] if scored else 0
@@ -69,7 +78,8 @@ def run_test(db: Session, sp: Space, text: str, draft: dict | None) -> dict:
         if cands:
             return {**base, "verdict": "clarify", "top_score": top0, "clarify_prompt": sp.clarify_prompt,
                     "clarify_candidates": cands, "max_clarify": sp.max_clarify}
-        return {**base, "verdict": "final", "top_score": top0, "final_message": sp.final_message}
+        return {**base, "verdict": "final", "top_score": top0, "final_message": sp.final_message,
+                "fallback": fb}
     s, c = scored[0]
     idx = RefIndex(db)
     defs = idx.slots(sp.id)

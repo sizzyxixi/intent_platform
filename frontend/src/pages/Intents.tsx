@@ -70,7 +70,7 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
       <div className="card tblwrap" style={{ padding: 0 }}><table id="intentTbl" className="fixed" style={{ minWidth: 760 }}><colgroup><col style={{ width: 150 }} />{catCols.map(n => <col key={n} style={{ width: 76 }} />)}<col /><col style={{ width: 44 }} /><col style={{ width: 44 }} /><col style={{ width: 200 }} /><col style={{ width: 60 }} /><col style={{ width: 104 }} /></colgroup><thead><tr><th>编码</th>{catCols.map(n => <th key={n}>{n}</th>)}<th>{leafName}</th><th>例句</th><th>知识</th><th>工具</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>{!data ? <tr><td colSpan={8 + catCols.length} className="loading">加载中…</td></tr> : data.items.length ? data.items.map((c: any) => <tr key={c.code}>
           <td className="mono">{c.code}</td>{catCols.map((n, i) => <td key={n} className="muted">{c.category_path[i]?.name || '—'}</td>)}
-          <td><a onClick={() => onEdit(c.code)}>{c.name}</a><div className="muted clamp2" title={c.description}>{c.description || ''}</div></td>
+          <td><a onClick={() => onEdit(c.code)}>{c.name}</a>{c.handling && c.handling.mode && c.handling.mode !== 'tool_flow' ? <div className="muted">{c.handling.mode_label || c.handling.mode}</div> : null}<div className="muted clamp2" title={c.description}>{c.description || ''}</div></td>
           <td>{c.example_count}</td><td>{c.kb_count || <span className="muted">0</span>}</td>
           <td>{c.tools.length ? <div className="mono clamp3" style={{ fontSize: 11 }} title={c.tools.join('\n')}>{c.tools.map((t: string) => <div key={t}>{t}</div>)}</div> : <span className="muted">0</span>}</td>
           <td><Badge c={ST_C[c.status]}>{c.status}</Badge></td>
@@ -140,47 +140,85 @@ function SlotsTab({ onEdit, ver }: { onEdit: (c: string) => void; ver: number })
 }
 
 /* ---------------- 空间设置 ---------------- */
-const FA: [string, string][] = [['handoff_human', '转人工'], ['general_assistant', '交给通用助手'], ['decline', '告知无法处理']]
+const FB: [string, string, string][] = [
+  ['handoff_human', '转人工', '交给人工客服'],
+  ['fixed_reply', '固定话术', '按配置的话术回复'],
+  ['llm_free', '让 AI 自由发挥', '由 Bot 自行回答'],
+]
+const STRICT: [string, string][] = [['paraphrase', '按意思表达'], ['verbatim', '完全固定']]
+function normFallback(r: any) {
+  const fb = r.fallback || {}
+  const mode = fb.mode || (r.final_action === 'decline' ? 'fixed_reply' : r.final_action === 'handoff_human' ? 'handoff_human' : 'llm_free')
+  return {
+    mode,
+    message: fb.message || '',
+    prompt: fb.prompt || '',
+    repliesText: (fb.replies && fb.replies.length ? fb.replies : (r.final_message ? [r.final_message] : ['抱歉，这个问题我暂时处理不了。'])).join('\n'),
+    reply_strictness: fb.reply_strictness || 'paraphrase',
+  }
+}
 function RecognitionTab() {
   const { space, canEdit, reloadSpaces } = useSession()
   const [r, reload] = useAsync(() => api.get(`/spaces/${space.id}/recognition`), [space.id])
   const [f, setF] = useState<any>(null)
   const [err, setErr] = useState<string[]>()
-  useEffect(() => { if (r) setF({ ...r, final_message: r.final_message || '抱歉，这个问题我暂时处理不了。' }) }, [r])
+  useEffect(() => { if (r) setF({ ...r, fallback: normFallback(r) }) }, [r])
   if (!r || !f) return <div className="loading">加载中…</div>
   const num = (k: string, lab: string, min: number, max: number, step: number, tip: string, id: string) => <tr><th style={{ width: 170 }}>{lab}</th><td>
     <input type="number" id={id} value={f[k]} min={min} max={max} step={step} style={{ width: 100 }} disabled={!canEdit}
       onChange={e => setF({ ...f, [k]: e.target.value })} /> <span className="muted">{tip}</span></td></tr>
   const th = parseFloat(f.threshold)
+  const setFb = (k: string, v: any) => setF({ ...f, fallback: { ...f.fallback, [k]: v } })
   const save = async () => {
+    const fb: any = { mode: f.fallback.mode }
+    if (fb.mode === 'handoff_human' && f.fallback.message.trim()) fb.message = f.fallback.message.trim()
+    if (fb.mode === 'fixed_reply') {
+      fb.replies = f.fallback.repliesText.split('\n').map((x: string) => x.trim()).filter(Boolean)
+      fb.reply_strictness = f.fallback.reply_strictness || 'paraphrase'
+    }
+    if (fb.mode === 'llm_free' && f.fallback.prompt.trim()) fb.prompt = f.fallback.prompt.trim()
     const body: any = { threshold: parseFloat(f.threshold), max_clarify: Number(f.max_clarify), max_slot_ask: Number(f.max_slot_ask),
-      tool_retry: Number(f.tool_retry), final_action: f.final_action, clarify_prompt: f.clarify_prompt }
-    if (f.final_action === 'decline') body.final_message = f.final_message
+      tool_retry: Number(f.tool_retry), clarify_prompt: f.clarify_prompt, fallback: fb }
     try {
       const res = await api.put(`/spaces/${space.id}/recognition`, body); setErr(undefined)
       toast(res.changed ? `空间设置已保存，配置版本 v${res.version}` : '没有改动'); reload(); reloadSpaces()
     } catch (e) { setErr(errLines(e)) }
   }
-  const def = () => { setF({ ...f, threshold: 0.6, max_clarify: 2, max_slot_ask: 2, tool_retry: 1, final_action: space.id === 'cs' ? 'handoff_human' : 'general_assistant', clarify_prompt: '我想确认一下，您是想要以下哪一项？' }); toast('已填入默认值，点「保存」生效') }
-  const faLabel = FA.find(x => x[0] === r.final_action)?.[1]
+  const def = () => { setF({ ...f, threshold: 0.6, max_clarify: 2, max_slot_ask: 2, tool_retry: 1,
+    clarify_prompt: '我想确认一下，您是想要以下哪一项？',
+    fallback: { mode: space.id === 'cs' ? 'handoff_human' : 'llm_free', message: '', prompt: '', repliesText: '抱歉，这个问题我暂时处理不了。', reply_strictness: 'paraphrase' } }); toast('已填入默认值，点「保存」生效') }
+  const faLabel = (r.fallback && r.fallback.mode_label) || FB.find(x => x[0] === (r.fallback?.mode))?.[1] || r.final_action_label
   return <>
     <div className="card" id="rcCard"><h3>识别与兜底<span className="sp" /><span className="muted" style={{ fontWeight: 'normal' }}>配置版本 v{r.version}{r.updated_at ? ` · 最近修改 ${fmt(r.updated_at, false)} ${r.updated_by || ''}` : ''}</span></h3>
       <table><tbody>
         {num('threshold', '① 识别阈值', 0, 1, 0.05, '0~1，默认 0.6。数值含义由 Bot 的识别模型决定，建议用单句测试和实际对话校准', 'rcTh')}
-        <tr><th>② 未识别处理</th><td>Top1 置信度 &lt; 阈值时：列出不低于候选下限（阈值 ÷ 2 = <b id="rcCm">{isNaN(th) ? '—' : Math.round(th / 2 * 100) / 100}</b>）的最多 {r.max_candidates} 个候选让用户选；没有候选 → 执行最终动作
+        <tr><th>② 未识别处理</th><td>Top1 置信度 &lt; 阈值时：列出不低于候选下限（阈值 ÷ 2 = <b id="rcCm">{isNaN(th) ? '—' : Math.round(th / 2 * 100) / 100}</b>）的最多 {r.max_candidates} 个候选让用户选；没有候选 → 执行空间兜底
           <div style={{ marginTop: 6 }}>澄清话术 <input type="text" id="rcCp" value={f.clarify_prompt} disabled={!canEdit} onChange={e => setF({ ...f, clarify_prompt: e.target.value })} style={{ width: 360 }} /></div></td></tr>
-        {num('max_clarify', '③ 澄清最多次数', 0, 5, 1, '默认 2，超过 → 最终动作', 'rcMc')}
-        {num('max_slot_ask', '④ 槽位追问最多次数', 0, 5, 1, '每个必填槽位，默认 2，超过 → 最终动作', 'rcMs')}
-        <tr><th>⑤ 最终动作</th><td><select id="rcFa" value={f.final_action} disabled={!canEdit} onChange={e => setF({ ...f, final_action: e.target.value })}>{FA.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-          {f.final_action === 'decline' && <span id="rcFmW"> 回复 <input type="text" id="rcFm" value={f.final_message} onChange={e => setF({ ...f, final_message: e.target.value })} style={{ width: 300 }} /></span>}
-          {' '}<span className="muted">转人工：交给人工客服；交给通用助手：由「{space.bot}」的通用对话能力接手；告知无法处理：回复固定话术</span></td></tr>
-        {num('tool_retry', '⑥ 工具调用失败重试', 0, 3, 1, '默认 1 次，仍失败 → 最终动作', 'rcTr')}
+        {num('max_clarify', '③ 澄清最多次数', 0, 5, 1, '默认 2，超过 → 空间兜底', 'rcMc')}
+        {num('max_slot_ask', '④ 槽位追问最多次数', 0, 5, 1, '每个必填槽位，默认 2，超过 → 空间兜底', 'rcMs')}
+        <tr><th>⑤ 空间兜底</th><td>
+          {FB.map(([v, l, tip]) => <label key={v} style={{ display: 'block', marginBottom: 4 }}>
+            <input type="radio" name="rcFb" id={'rcFb_' + v} value={v} disabled={!canEdit} checked={f.fallback.mode === v} onChange={() => setFb('mode', v)} /> {l}
+            <span className="muted"> — {v === 'llm_free' ? `由「${space.bot}」自行回答` : tip}</span></label>)}
+          {f.fallback.mode === 'handoff_human' && <div className="f" style={{ marginTop: 6 }}><label>转人工说明（可选）</label>
+            <input type="text" id="rcFbMsg" value={f.fallback.message} disabled={!canEdit} onChange={e => setFb('message', e.target.value)} style={{ width: 360 }} /></div>}
+          {f.fallback.mode === 'fixed_reply' && <div style={{ marginTop: 6 }}>
+            <div className="f"><label>话术（每行一条，至少 1 条）</label>
+              <textarea id="rcFbReplies" rows={3} disabled={!canEdit} value={f.fallback.repliesText} onChange={e => setFb('repliesText', e.target.value)} style={{ width: 420 }} /></div>
+            <div>{STRICT.map(([v, l]) => <label key={v} style={{ marginRight: 16 }}>
+              <input type="radio" name="rcFbSt" id={'rcFbSt_' + v} value={v} disabled={!canEdit} checked={(f.fallback.reply_strictness || 'paraphrase') === v} onChange={() => setFb('reply_strictness', v)} /> {l}</label>)}
+              <span className="muted">　按意思表达：可改写但须保持原意；完全固定：须原样输出</span></div>
+          </div>}
+          {f.fallback.mode === 'llm_free' && <div className="f" style={{ marginTop: 6 }}><label>发挥说明（可选）</label>
+            <textarea id="rcFbPrompt" rows={2} disabled={!canEdit} value={f.fallback.prompt} onChange={e => setFb('prompt', e.target.value)} style={{ width: 420 }} /></div>}
+        </td></tr>
+        {num('tool_retry', '⑥ 工具调用失败重试', 0, 3, 1, '默认 1 次，仍失败 → 空间兜底', 'rcTr')}
       </tbody></table>
       {canEdit && <div style={{ textAlign: 'right', marginTop: 10 }}><Btn onClick={def}>恢复默认</Btn> <Btn p id="rcSave" onClick={save}>保存</Btn></div>}
       <ErrBox lines={err} />
     </div>
-    <div className="card"><h3>Bot 运行流程</h3><div className="muted" style={{ lineHeight: 1.9 }}>识别 → 阈值判定（≥ 阈值命中；否则澄清，最多 {r.max_clarify} 次）→ 槽位追问（每个必填槽位最多 {r.max_slot_ask} 次）→ 知识校验 → 调用工具（失败重试 {r.tool_retry} 次）→ 最终动作：<b>{faLabel}</b>（任一环节超限或失败时）</div>
-      <div className="muted">保存后配置版本 +1，Bot 拉取 runtime-config 中的 <span className="mono">recognition</span> 生效。</div></div>
+    <div className="card"><h3>Bot 运行流程</h3><div className="muted" style={{ lineHeight: 1.9 }}>识别 → 阈值判定（≥ 阈值命中该意图，按该意图的处理方式执行；否则澄清，最多 {r.max_clarify} 次）→ 若处理方式为「工具与知识流程」：槽位追问（每个必填槽位最多 {r.max_slot_ask} 次）→ 知识校验 → 调用工具（失败重试 {r.tool_retry} 次）。未命中、澄清/追问超限或工具失败时，执行空间兜底：<b>{faLabel}</b></div>
+      <div className="muted">保存后配置版本 +1，Bot 拉取 runtime-config 中的 <span className="mono">recognition.fallback</span> 与每条意图的 <span className="mono">handling</span> 生效。</div></div>
     <TaxonomyCard />
   </>
 }

@@ -261,7 +261,7 @@ async def patch_intent(code: str, request: Request, ctx: KeyCtx = Depends(api_ke
     def run():
         if not isinstance(payload, dict):
             raise bad_request("请求体应为对象")
-        allowed = {"name", "description", "examples", "slots", "status"}
+        allowed = {"name", "description", "examples", "slots", "status", "handling"}
         extra = [k for k in payload if k not in allowed and k not in importer.IGNORED_KEYS]
         if extra:
             raise bad_request("不支持修改的字段：" + "、".join(extra), fields=extra)

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
-  version: 0.19.2
+  version: 0.19.3
   description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
 
     给 AI 的总规则：
@@ -20,7 +20,7 @@ info:
 
     - v0.6 起分类层级由各空间自行配置（0～5 层分类 + 最末层意图，如 1688 智能客服 = 阶段 / 意图，Moonclaw = 大类 / 问题桶 / 意图）：先读 GET /api/v1/taxonomy 的 levels 与 categories，写入时用 category_path 给出从第 1 层到最末层的完整路径（每段填编码或名称）。0.5 版的 l1 / l2 字段在写入与筛选时仍兼容，输出中已移除。
 
-    - v0.5 起意图上不再有 fallback（兜底条件）；兜底由空间设置（GET/PUT /api/v1/recognition，运行时配置中的 recognition）统一处理，写入时带 fallback 会被忽略。
+    - v0.5 起意图上不再有旧的 fallback 条件字段，写入时带 fallback / 转人工条件仍会被忽略。v0.19.3 起请用 handling 配置该意图的处理方式；用户一句话都匹配不上时，走空间设置 recognition.fallback。
 
     - 所有写请求都带 Idempotency-Key；单次最多 100 条；每个 Key 每分钟最多 60 次请求。
 
@@ -31,6 +31,7 @@ info:
 
     - v0.6 起 MCP 按「服务 → 子工具」登记：子工具名为 {服务名}.{远端工具名}，Tool.server 为服务名，Tool.mcp_server 由 0.5 的 URL 字符串改为连接信息对象（URL 在 mcp_server.url）；runtime-config 新增 mcp_servers（只含被用到的服务，密钥只给环境变量名 auth.token_env）。
 
+    - v0.19.3：意图增加处理方式 handling（tool_flow / handoff_human / fixed_reply / llm_free）。fixed_reply 可设 reply_strictness（paraphrase 按意思表达，默认；verbatim 完全固定）。非 tool_flow 不能绑定工具或知识。空间未匹配兜底与此同一套 mode，见 recognition.fallback（仍兼容 final_action）。
     - v0.19.2：知识库创建/编辑改为可选的自由文本「描述」，不再使用固化的适用范围字段（平台/站点/语言/类目）；旧标签已迁移进描述。
     - v0.19.1：给意图绑定或解绑已有工具只需「意图:写」，不再要求「工具:写」。
     - v0.19：开放接口允许维护型 AI 创建 / 更新 / 停用分类节点（「意图:写」），batchUpsert 支持 auto_create_parents，并可用 POST /api/v1/batchUpsert 一次性提交节点和意图（失败全部回滚）。另开放启用 / 停用意图、新建知识库、给意图关联知识。推荐 API 基址为 http://47.86.15.93/intent-platform（部分代理无法解析 sslip.io）。
@@ -2517,6 +2518,52 @@ components:
         mcp_tool:
           type: string
           description: type=mcp 时（运行时配置）远端工具名
+    Handling:
+      type: object
+      description: |
+        意图处理方式。mode=tool_flow 为默认，走槽位/知识/工具流程；其余三种不能绑定工具或知识。
+        空间未匹配兜底见 Recognition.fallback，mode 不含 tool_flow。
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [tool_flow, handoff_human, fixed_reply, llm_free]
+        mode_label:
+          type: string
+          readOnly: true
+        message:
+          type: string
+          maxLength: 2000
+          description: 转人工说明，可选
+        replies:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            type: string
+            maxLength: 2000
+          description: 固定话术，至少 1 条
+        reply_strictness:
+          type: string
+          enum: [paraphrase, verbatim]
+          default: paraphrase
+          description: paraphrase=按意思表达（可改写须保原意，默认）；verbatim=完全固定（须原样输出其中一条）
+        reply_strictness_label:
+          type: string
+          readOnly: true
+        prompt:
+          type: string
+          maxLength: 2000
+          description: 让 AI 自由发挥时的说明或边界，可选
+    Fallback:
+      allOf:
+      - $ref: '#/components/schemas/Handling'
+      - type: object
+        description: 空间未匹配/低置信度兜底，mode 仅为 handoff_human / fixed_reply / llm_free
+        properties:
+          mode:
+            type: string
+            enum: [handoff_human, fixed_reply, llm_free]
     IntentSummary:
       type: object
       required:
@@ -2536,6 +2583,8 @@ components:
         description:
           type: string
           description: 意图描述
+        handling:
+          $ref: '#/components/schemas/Handling'
         status:
           $ref: '#/components/schemas/IntentStatus'
         example_count:
@@ -2611,6 +2660,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Slot'
+        handling:
+          $ref: '#/components/schemas/Handling'
     IntentPatch:
       type: object
       properties:
@@ -2628,6 +2679,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Slot'
+        handling:
+          $ref: '#/components/schemas/Handling'
         status:
           type: string
           enum:
@@ -3559,7 +3612,7 @@ components:
         category: []
     Recognition:
       type: object
-      description: 空间设置（每个空间一份）：识别阈值、澄清、槽位追问、工具失败重试与最终动作。替代原意图级 fallback。
+      description: 空间设置（每个空间一份）：识别阈值、澄清、槽位追问、工具失败重试与未匹配兜底。兜底请读 fallback（与意图 handling 同一套 mode，不含 tool_flow）。final_action / final_message 仍返回以兼容旧读取方。
       required:
       - threshold
       - candidate_min
@@ -3621,7 +3674,9 @@ components:
         final_message:
           type: string
           nullable: true
-          description: final_action=decline 时回复的话术，其余为 null
+          description: 兼容字段。fallback.mode=fixed_reply（旧 final_action=decline）时为第一条话术，其余为 null
+        fallback:
+          $ref: '#/components/schemas/Fallback'
     RecognitionUpdate:
       type: object
       description: 更新空间设置；只传要改的字段。candidate_min 由平台按 threshold ÷ 2 计算，不可写。
@@ -3664,7 +3719,10 @@ components:
         final_message:
           type: string
           nullable: true
-          description: final_action=decline 时回复的话术，其余为 null
+          description: 兼容写入：final_action=decline 时必填。推荐改用 fallback。
+        fallback:
+          $ref: '#/components/schemas/Fallback'
+          description: 推荐。设置未匹配时的兜底处理方式（与意图 handling 同一套 mode，不含 tool_flow）。与 final_action 同时传入时以 fallback 为准。
     CategoryRef:
       type: object
       required:

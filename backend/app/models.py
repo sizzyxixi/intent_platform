@@ -32,6 +32,8 @@ class Space(Base):
     final_action: Mapped[str] = mapped_column(String(32), default="general_assistant")
     clarify_prompt: Mapped[str] = mapped_column(Text, default="我想确认一下，您是想要以下哪一项？")
     final_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 未匹配/低置信度的空间兜底：{mode, message?, replies?, reply_strictness?, prompt?}
+    fallback: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     recognition_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     recognition_updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # 分类层级名称（含最末层「意图」），如 ["大类", "问题桶", "意图"]；分类层数 = len - 1（0～5）
@@ -97,6 +99,8 @@ class Intent(Base):
     kb_refs: Mapped[list] = mapped_column(JSONB, default=list)
     # [{tool, param_map:{param:{source,value}}}]
     tools: Mapped[list] = mapped_column(JSONB, default=list)
+    # {mode: tool_flow|handoff_human|fixed_reply|llm_free, message?, replies?, reply_strictness?, prompt?}
+    handling: Mapped[dict] = mapped_column(JSONB, default=lambda: {"mode": "tool_flow"})
     status: Mapped[str] = mapped_column(String(8), default="草稿", index=True)
     owner: Mapped[str] = mapped_column(String(100), default="")
     position: Mapped[int] = mapped_column(Integer, default=0)
