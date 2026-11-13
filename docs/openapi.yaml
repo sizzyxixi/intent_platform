@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
-  version: 0.18.0
+  version: 0.19.0
   description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
 
     给 AI 的总规则：
@@ -14,9 +14,9 @@ info:
 
     - 槽位按空间维护：优先复用本空间已有槽位，不要新建同义槽位。
 
-    - 写意图只用 POST /api/v1/intents:batchUpsert 且 mode=merge；写回的意图一律是「草稿」，不要尝试启用。
+    - 写意图用 POST /api/v1/intents:batchUpsert 且 mode=merge；写回默认是「草稿」。启用请用 POST /api/v1/intents/{code}:enable（须通过启用前校验）。分类不存在时先 POST /api/v1/taxonomy/nodes，或使用 auto_create_parents=true。
 
-    - 不自建分类，不删除任何数据，不覆盖已启用意图。
+    - 不删除任何数据（分类与工具只能停用），不覆盖已启用意图。持有「意图:写」的 Key 可创建 / 更新 / 停用分类节点。
 
     - v0.6 起分类层级由各空间自行配置（0～5 层分类 + 最末层意图，如 1688 智能客服 = 阶段 / 意图，Moonclaw = 大类 / 问题桶 / 意图）：先读 GET /api/v1/taxonomy 的 levels 与 categories，写入时用 category_path 给出从第 1 层到最末层的完整路径（每段填编码或名称）。0.5 版的 l1 / l2 字段在写入与筛选时仍兼容，输出中已移除。
 
@@ -31,6 +31,8 @@ info:
 
     - v0.6 起 MCP 按「服务 → 子工具」登记：子工具名为 {服务名}.{远端工具名}，Tool.server 为服务名，Tool.mcp_server 由 0.5 的 URL 字符串改为连接信息对象（URL 在 mcp_server.url）；runtime-config 新增 mcp_servers（只含被用到的服务，密钥只给环境变量名 auth.token_env）。
 
+    - v0.19：开放接口允许维护型 AI 创建 / 更新 / 停用分类节点（「意图:写」），batchUpsert 支持 auto_create_parents，并可用 POST /api/v1/batchUpsert 一次性提交节点和意图（失败全部回滚）。另开放启用 / 停用意图、新建知识库、给意图关联知识。推荐 API 基址为 http://47.86.15.93/intent-platform（部分代理无法解析 sslip.io）。
+
     - v0.18：开放接口新增「工具:写」。AI 可注册 / 更新 / 停用工具，并把工具绑定到意图（含 param_map）；对应 MCP 工具为 register_tool、update_tool、disable_tool、intent_bind_tool、intent_unbind_tool。写入须带 Idempotency-Key（dry_run 除外）。控制台创建 API Key 时可授予「工具:写」。开放接口不能删除工具。
 
     - v0.17：工具中心已接入西之月 xclaw-cli（7037 条 CLI 命令 + 5 个技能，cli 配置带 auth_env / pack / group / risk_level）；cli / mcp / workflow 工具的 confirm_required=true 表示写操作，Bot 必须先取得用户（或客服）确认再执行。使用方见 docs/使用方接入指南.md，运营方见 docs/运营方配置手册.md；docs/AI使用说明.md 为索引。
@@ -39,10 +41,10 @@ info:
 
     '
 servers:
+- url: http://47.86.15.93/intent-platform
+  description: 生产环境推荐（按 IP 访问，API 与 MCP）
 - url: http://intent.47.86.15.93.sslip.io
-  description: 生产环境
-- url: http://127.0.0.1:8000
-  description: 本地开发
+  description: 控制台，以及备用 API 主机（部分代理无法解析 sslip.io 时请用上面的 IP 路径）
 security:
 - bearerAuth: []
 tags:
@@ -239,7 +241,7 @@ paths:
         何时不用：不要用它来查具体意图，查意图用 GET /api/v1/intents。
 
 
-        分类与层级由平台维护，AI 不能新增；找不到合适的分类时，选最接近的并在 description（意图描述）中说明。
+        分类节点可由持有「意图:写」的 Key 通过 POST /api/v1/taxonomy/nodes 创建或更新；找不到合适分类时，先创建节点或使用 auto_create_parents。
 
         '
       responses:
@@ -278,6 +280,232 @@ paths:
     parameters:
     - $ref: '#/components/parameters/SpaceHeader'
     - $ref: '#/components/parameters/SpaceQuery'
+
+  /api/v1/taxonomy/nodes:
+    post:
+      tags: [分类]
+      operationId: upsertTaxonomyNode
+      summary: 按编码创建或更新分类节点
+      description: 需要「意图:写」，Key 必须绑定该空间。code 为稳定编码。dry_run=true 只校验。不能删除分类，请用停用。
+      parameters:
+      - $ref: '#/components/parameters/SpaceHeader'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaxonomyNodeInput'
+      responses:
+        '200':
+          description: 更新成功，或 dry_run 校验通过
+          content:
+            application/json:
+              schema:
+                type: object
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaxonomyNode'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/taxonomy/nodes/{code}:disable:
+    post:
+      tags: [分类]
+      operationId: disableTaxonomyNode
+      summary: 停用分类节点（不删除）
+      description: 子树中有已启用意图时返回 409 CATEGORY_IN_USE。
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema: {type: string}
+      - $ref: '#/components/parameters/SpaceHeader'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 已停用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaxonomyNode'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/taxonomy/nodes/{code}:
+    put:
+      tags: [分类]
+      operationId: updateTaxonomyNode
+      summary: 更新已有分类节点
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema: {type: string}
+      - $ref: '#/components/parameters/SpaceHeader'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaxonomyNodeInput'
+      responses:
+        '200':
+          description: 更新成功或 dry_run
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/batchUpsert:
+    post:
+      tags: [意图]
+      operationId: batchApplyCatalog
+      summary: 一次性写入分类节点和意图（失败全部回滚）
+      description: 需要「意图:写」。任一节点或意图失败则全部回滚，错误在 details.items。dry_run=true 只校验。
+      parameters:
+      - $ref: '#/components/parameters/SpaceHeader'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: 全部成功或 dry_run 预览
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/intents/{code}:enable:
+    post:
+      tags: [意图]
+      operationId: enableIntent
+      summary: 启用意图
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/IntentCode'
+      - $ref: '#/components/parameters/SpaceHeader'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 已启用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Intent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/intents/{code}:disable:
+    post:
+      tags: [意图]
+      operationId: disableIntentViaKey
+      summary: 停用意图
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/IntentCode'
+      - $ref: '#/components/parameters/SpaceHeader'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 已停用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Intent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
   /api/v1/intents:
     get:
       tags:
@@ -559,6 +787,110 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+
+    post:
+      tags: [知识]
+      operationId: createKb
+      summary: 新建知识库
+      description: 需要「知识:写」。不能删除知识库。
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                type:
+                  type: string
+                  enum: [表格知识库, 图文知识库-富文本]
+                tags: {type: object}
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/kbs/{kb_id}:
+    get:
+      tags: [知识]
+      operationId: getKb
+      summary: 读取一个知识库（含文档列表）
+      parameters:
+      - name: kb_id
+        in: path
+        required: true
+        schema: {type: string}
+      responses:
+        '200':
+          description: 知识库详情
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    patch:
+      tags: [知识]
+      operationId: patchKb
+      summary: 修改知识库名称或标签
+      parameters:
+      - name: kb_id
+        in: path
+        required: true
+        schema: {type: string}
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
   /api/v1/kbs/{kb_id}/documents:
     parameters:
     - $ref: '#/components/parameters/KbId'
@@ -1415,6 +1747,90 @@ paths:
           $ref: '#/components/responses/Conflict'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/intents/{code}/knowledge:
+    post:
+      tags: [意图]
+      operationId: bindIntentKnowledge
+      summary: 给意图关联知识
+      description: 需要「意图:写」和「知识:写」。chunk_id 为 * 表示整篇。
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/IntentCode'
+      - $ref: '#/components/parameters/SpaceHeader'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KbRefInput'
+      responses:
+        '200':
+          description: 绑定后的意图或 dry_run
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+    delete:
+      tags: [意图]
+      operationId: unbindIntentKnowledge
+      summary: 从意图上解绑知识
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/IntentCode'
+      - name: kb_id
+        in: query
+        required: true
+        schema: {type: string}
+      - name: doc_id
+        in: query
+        required: true
+        schema: {type: string}
+      - name: chunk_id
+        in: query
+        required: true
+        schema: {type: string}
+      - $ref: '#/components/parameters/SpaceHeader'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 解绑后的意图
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Intent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /api/v1/runtime-config:
     get:
       tags:
@@ -2226,6 +2642,10 @@ components:
           maxItems: 100
           items:
             $ref: '#/components/schemas/IntentInput'
+        auto_create_parents:
+          type: boolean
+          default: false
+          description: true 时自动创建 category_path 中缺失的分类节点（每段须为编码，或 {code,name}）
     BatchUpsertResult:
       type: object
       required:
@@ -3256,6 +3676,40 @@ components:
         name: 库存与货期
       - code: null
         name: 现货
+
+    TaxonomyNodeInput:
+      type: object
+      required: [code, name]
+      properties:
+        code: {type: string}
+        name: {type: string}
+        parent_code: {type: string}
+        depth: {type: integer}
+        level: {type: integer}
+        sort: {type: integer}
+        description: {type: string}
+        dry_run: {type: boolean}
+    TaxonomyNode:
+      type: object
+      required: [code, name, depth, enabled]
+      properties:
+        code: {type: string}
+        name: {type: string}
+        depth: {type: integer}
+        parent_code: {type: string, nullable: true}
+        description: {type: string}
+        sort: {type: integer}
+        enabled: {type: boolean}
+        action: {type: string}
+    KbRefInput:
+      type: object
+      required: [kb_id, doc_id, chunk_id]
+      properties:
+        kb_id: {type: string}
+        doc_id: {type: string}
+        chunk_id: {type: string}
+        usage: {type: string, enum: [reference, validate]}
+        dry_run: {type: boolean}
     CategoryNode:
       type: object
       required:

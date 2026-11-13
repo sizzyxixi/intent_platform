@@ -2,7 +2,7 @@
 
 > 读者：运营使用的 AI 工具（如 Claude、Cursor、自建 Agent），以及读取运行时配置的 Bot / 智能体。
 > **使用方先读同目录 `使用方接入指南.md`；运营方先读 `运营方配置手册.md`。** `AI使用说明.md` 是这两份的索引。本文是规则速查：字段规则、槽位规则、错误处理和 6 个 MCP 工具的完整定义（第 9 节，与平台实现一致）。冲突时以上述指南和 `openapi.yaml` 为准。
-> 接口定义见同目录 `openapi.yaml`（OpenAPI 3.0.3，0.18.0）。生产环境 Base URL：`http://intent.47.86.15.93.sslip.io`（API：`http://intent.47.86.15.93.sslip.io/api/v1`，MCP：`http://intent.47.86.15.93.sslip.io/mcp`）。鉴权：`Authorization: Bearer $INTENT_PLATFORM_API_KEY`。Key 的创建、存放位置和自检见 `使用方接入指南.md` 第 1 节（环境变量 `INTENT_PLATFORM_API_KEY` 或文件 `~/.intent-platform/config.json`）；文档里的 `ipk_xxx` 只是格式占位，不是可用密钥。空间：意图类接口带 `X-Space-Id: {space_id}`，知识库与工具接口全局、不需要。
+> 接口定义见同目录 `openapi.yaml`（OpenAPI 3.0.3，0.19.0）。生产环境推荐 Base URL：`http://47.86.15.93/intent-platform`（API：`http://47.86.15.93/intent-platform/api/v1`，MCP：`http://47.86.15.93/intent-platform/mcp`）。控制台：`http://intent.47.86.15.93.sslip.io`，也可作为备用 API 主机。若 sslip 主机返回 500 且响应体为空，是调用方 DNS / 代理问题，请改用 IP 路径。鉴权：`Authorization: Bearer $INTENT_PLATFORM_API_KEY`。Key 的创建、存放位置和自检见 `使用方接入指南.md` 第 1 节（环境变量 `INTENT_PLATFORM_API_KEY` 或文件 `~/.intent-platform/config.json`）；文档里的 `ipk_xxx` 只是格式占位，不是可用密钥。空间：意图类接口带 `X-Space-Id: {space_id}`，知识库与工具接口全局、不需要。
 
 ## 1. 平台是什么
 
@@ -102,7 +102,7 @@ v0.5 起**取消意图级兜底条件**：意图上不再有 `fallback` 字段�
 - 不覆盖已启用意图：只用 `mode=merge`；`overwrite` 作用于已启用意图会被拒绝（`ENABLED_PROTECTED`）。
 - 不把任何意图的状态改为「启用」。
 - 未经运营确认，不覆盖知识文档（不自行传 `overwrite=true`）。
-- 没有 `工具:写` 时，不注册、不修改、不停用工具。有该权限时按《运营方配置手册》第 5.1 节操作，先 dry-run 再写入；不能删除工具。除本说明列出的平台内置接口外，不调用工具中心里的外部业务工具（它们由 Bot 在运行时执行）。
+- 没有相应写权限时，不注册工具、不新建分类、不启用意图。有权限时先 dry-run 再写入；不能删除工具或分类（只能停用）。除本说明列出的平台内置接口外，不调用工具中心里的外部业务工具（它们由 Bot 在运行时执行）。
 - 整理意图时不要用 `GET /api/v1/runtime-config`：它是给 Bot 运行时用的，只含已启用意图；整理请用 intents 系列接口。
 - 不在例句或知识中写入用户隐私和站外联系方式。
 
@@ -127,7 +127,7 @@ v0.5 起**取消意图级兜底条件**：意图上不再有 `fallback` 字段�
 
 ## 9. MCP 工具
 
-MCP 地址：`http://intent.47.86.15.93.sslip.io/mcp`，请求头 `Authorization: Bearer ipk_xxx`、`X-Space-Id: {space_id}`。意图类工具（list_intents、get_intent、upsert_intents、intent_bind_tool、intent_unbind_tool）也接受 `space` 参数，不传时使用 Key 绑定的第一个空间；search_knowledge、import_knowledge、list_tools、register_tool、update_tool、disable_tool 是全局的，不需要 space。写入类工具（含 register_tool / update_tool / disable_tool / intent_bind_tool / intent_unbind_tool）在非 dry_run 时必须提供 `idempotency_key`。
+MCP 地址（推荐）：`http://47.86.15.93/intent-platform/mcp`；备用：`http://intent.47.86.15.93.sslip.io/mcp`，请求头 `Authorization: Bearer ipk_xxx`、`X-Space-Id: {space_id}`。意图类工具（list_intents、get_intent、upsert_intents、intent_bind_tool、intent_unbind_tool）也接受 `space` 参数，不传时使用 Key 绑定的第一个空间；search_knowledge、import_knowledge、list_tools、register_tool、update_tool、disable_tool 是全局的，不需要 space。写入类工具（含 register_tool / update_tool / disable_tool / intent_bind_tool / intent_unbind_tool）在非 dry_run 时必须提供 `idempotency_key`。
 
 ```json
 [
@@ -202,7 +202,7 @@ MCP 地址：`http://intent.47.86.15.93.sslip.io/mcp`，请求头 `Authorization
  },
  {
   "name": "upsert_intents",
-  "description": "批量写回当前空间的意图，结果一律为草稿。mode 只用 merge；不能启用、不能删除、不能覆盖已启用意图。槽位名用本空间已有槽位的英文名，不要建同义槽位。单次最多 100 条，必须提供 idempotency_key。",
+  "description": "批量写回当前空间的意图，结果一律为草稿。mode 只用 merge；不能删除、不能覆盖已启用意图。分类不存在时请先 taxonomy_upsert_node，或设 auto_create_parents=true（路径每段须为编码，或 {code,name}）。启用请用 intent_enable。槽位名用本空间已有槽位的英文名。单次最多 100 条，非 dry_run 须提供 idempotency_key。",
   "inputSchema": {
    "type": "object",
    "required": [
@@ -248,7 +248,22 @@ MCP 地址：`http://intent.47.86.15.93.sslip.io/mcp`，请求头 `Authorization
        "category_path": {
         "type": "array",
         "items": {
-         "type": "string"
+         "oneOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "object",
+           "properties": {
+            "code": {
+             "type": "string"
+            },
+            "name": {
+             "type": "string"
+            }
+           }
+          }
+         ]
         },
         "minItems": 0,
         "maxItems": 5,
@@ -299,6 +314,11 @@ MCP 地址：`http://intent.47.86.15.93.sslip.io/mcp`，请求头 `Authorization
        }
       }
      }
+    },
+    "auto_create_parents": {
+     "type": "boolean",
+     "default": false,
+     "description": "true 时自动创建 category_path 中缺失的分类节点（每段须为编码，或对象 {code,name}）"
     }
    }
   }
@@ -625,6 +645,235 @@ MCP 地址：`http://intent.47.86.15.93.sslip.io/mcp`，请求头 `Authorization
      "minLength": 1,
      "maxLength": 64,
      "description": "幂等键；dry_run 时可不传"
+    }
+   }
+  }
+ },
+ {
+  "name": "taxonomy_upsert_node",
+  "description": "按编码创建或更新当前空间的分类节点。code 为稳定编码；parent_code 为空表示第一层；depth/level 须符合该空间的分类层数。dry_run=true 只校验。非 dry_run 须提供 idempotency_key。需要「意图:写」。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "name"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string",
+     "description": "稳定编码，大写字母开头，仅大写字母/数字/下划线"
+    },
+    "name": {
+     "type": "string"
+    },
+    "parent_code": {
+     "type": "string",
+     "description": "父节点编码；第一层省略"
+    },
+    "depth": {
+     "type": "integer",
+     "description": "可选，须等于父层+1 或第一层为 1"
+    },
+    "level": {
+     "type": "integer",
+     "description": "depth 的别名"
+    },
+    "sort": {
+     "type": "integer"
+    },
+    "description": {
+     "type": "string"
+    },
+    "dry_run": {
+     "type": "boolean"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "taxonomy_disable_node",
+  "description": "停用分类节点（不能删除）。若该节点或其子分类下有已启用意图则拒绝。须提供 idempotency_key。需要「意图:写」。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "idempotency_key"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "intent_enable",
+  "description": "将意图设为启用（须通过启用前校验）。须提供 idempotency_key。需要「意图:写」。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "idempotency_key"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "intent_disable",
+  "description": "将意图设为停用。须提供 idempotency_key。需要「意图:写」。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "idempotency_key"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "create_knowledge_base",
+  "description": "新建知识库（全局）。type 为「表格知识库」或「图文知识库-富文本」。不能删除知识库。须提供 idempotency_key。需要「知识:写」。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "name",
+    "idempotency_key"
+   ],
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string",
+     "enum": [
+      "表格知识库",
+      "图文知识库-富文本"
+     ],
+     "default": "表格知识库"
+    },
+    "tags": {
+     "type": "object"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "intent_bind_knowledge",
+  "description": "给意图关联知识。chunk_id 为 * 表示整篇。需要「意图:写」和「知识:写」。dry_run=true 只校验。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "kb_id",
+    "doc_id",
+    "chunk_id"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "kb_id": {
+     "type": "string"
+    },
+    "doc_id": {
+     "type": "string"
+    },
+    "chunk_id": {
+     "type": "string",
+     "description": "切片 ID，整篇用 *"
+    },
+    "usage": {
+     "type": "string",
+     "enum": [
+      "reference",
+      "validate"
+     ],
+     "default": "reference"
+    },
+    "dry_run": {
+     "type": "boolean"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "intent_unbind_knowledge",
+  "description": "从意图上解绑知识。需要「意图:写」和「知识:写」。须提供 idempotency_key。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "kb_id",
+    "doc_id",
+    "chunk_id",
+    "idempotency_key"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "kb_id": {
+     "type": "string"
+    },
+    "doc_id": {
+     "type": "string"
+    },
+    "chunk_id": {
+     "type": "string"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
     }
    }
   }

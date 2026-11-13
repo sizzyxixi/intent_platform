@@ -21,7 +21,10 @@ def test_initialize_and_list(bot):
     tools = rpc(bot, "tools/list").json()["result"]["tools"]
     assert [t["name"] for t in tools] == ["list_intents", "get_intent", "upsert_intents", "search_knowledge",
                                           "import_knowledge", "list_tools", "register_tool", "update_tool",
-                                          "disable_tool", "intent_bind_tool", "intent_unbind_tool"]
+                                          "disable_tool", "intent_bind_tool", "intent_unbind_tool",
+                                          "taxonomy_upsert_node", "taxonomy_disable_node", "intent_enable",
+                                          "intent_disable", "create_knowledge_base", "intent_bind_knowledge",
+                                          "intent_unbind_knowledge"]
     assert rpc(bot, "nope").json()["error"]["code"] == -32601
     assert bot.c.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"},
                       headers=bot.h(idem=False)).status_code == 202

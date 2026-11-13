@@ -25,7 +25,11 @@ TOOL_MAP = {t["name"]: t for t in TOOLS}
 SCOPE = {"list_intents": "意图:读", "get_intent": "意图:读", "upsert_intents": "意图:写",
          "search_knowledge": "知识:读", "import_knowledge": "知识:写", "list_tools": "工具:读",
          "register_tool": "工具:写", "update_tool": "工具:写", "disable_tool": "工具:写",
-         "intent_bind_tool": ("意图:写", "工具:写"), "intent_unbind_tool": ("意图:写", "工具:写")}
+         "intent_bind_tool": ("意图:写", "工具:写"), "intent_unbind_tool": ("意图:写", "工具:写"),
+         "taxonomy_upsert_node": "意图:写", "taxonomy_disable_node": "意图:写",
+         "intent_enable": "意图:写", "intent_disable": "意图:写",
+         "create_knowledge_base": "知识:写",
+         "intent_bind_knowledge": ("意图:写", "知识:写"), "intent_unbind_knowledge": ("意图:写", "知识:写")}
 PROTOCOL = "2025-06-18"
 
 
@@ -109,7 +113,8 @@ def call_tool(request: Request, db: Session, ctx: KeyCtx, name: str, args: dict,
         return intent_svc.api_detail(intent_svc.get(db, args["code"], sp.id))
     if name == "upsert_intents":
         sp = resolve_space(request, db, ctx, args.get("space"))
-        payload = {"mode": "merge", "intents": args["intents"]}
+        payload = {"mode": "merge", "intents": args["intents"],
+                   "auto_create_parents": bool(args.get("auto_create_parents"))}
         st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "space": sp.id, **payload},
                          lambda: importer.batch_upsert(db, sp, payload, ctx.actor, file="MCP upsert_intents"))
         if st >= 400:
@@ -205,6 +210,80 @@ def call_tool(request: Request, db: Session, ctx: KeyCtx, name: str, args: dict,
         if st >= 400:
             raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
         return body
+    if name == "taxonomy_upsert_node":
+        sp = resolve_space(request, db, ctx, args.get("space"))
+        payload = {k: v for k, v in args.items() if k not in ("idempotency_key", "dry_run", "space")}
+        if args.get("dry_run"):
+            existing, v = tax_svc.validate_node(db, sp, payload)
+            return {"ok": True, "dry_run": True, "action": "updated" if existing else "created", "code": v["code"]}
+        _need_idem(args)
+        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "space": sp.id, **payload},
+                         lambda: (lambda r: {**tax_svc.node_dict(r[0], tax_svc.Tax(db, sp)), "action": r[1]})(
+                             tax_svc.upsert_node(db, sp, payload, ctx.actor)))
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
+    if name == "taxonomy_disable_node":
+        _need_idem(args)
+        sp = resolve_space(request, db, ctx, args.get("space"))
+        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "space": sp.id, "code": args["code"]},
+                         lambda: ({**tax_svc.node_dict(tax_svc.set_node_enabled(db, sp, args["code"], False, ctx.actor),
+                                                       tax_svc.Tax(db, sp)), "action": "disabled"}))
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
+    if name == "intent_enable":
+        _need_idem(args)
+        sp = resolve_space(request, db, ctx, args.get("space"))
+        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "space": sp.id, "code": args["code"]},
+                         lambda: ({**intent_svc.api_detail(intent_svc.set_status(
+                             db, intent_svc.get(db, args["code"], sp.id), "启用", ctx.actor)), "action": "enabled"}))
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
+    if name == "intent_disable":
+        _need_idem(args)
+        sp = resolve_space(request, db, ctx, args.get("space"))
+        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "space": sp.id, "code": args["code"]},
+                         lambda: ({**intent_svc.api_detail(intent_svc.set_status(
+                             db, intent_svc.get(db, args["code"], sp.id), "停用", ctx.actor)), "action": "disabled"}))
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
+    if name == "create_knowledge_base":
+        _need_idem(args)
+        payload = {"name": args["name"], "type": args.get("type") or "表格知识库", "tags": args.get("tags") or {}}
+        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, **payload},
+                         lambda: ({**kb_svc.kb_dict(kb_svc.create_kb(
+                             db, payload["name"], payload["type"], payload["tags"], ctx.actor), admin=True),
+                                   "action": "created"}))
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
+    if name == "intent_bind_knowledge":
+        sp = resolve_space(request, db, ctx, args.get("space"))
+        it = intent_svc.get(db, args["code"], sp.id)
+        ref = {"kb_id": args["kb_id"], "doc_id": args["doc_id"], "chunk_id": args["chunk_id"],
+               "usage": args.get("usage") or "reference"}
+        if args.get("dry_run"):
+            return {"ok": True, "dry_run": True, "code": it.code, "ref": intent_svc.preview_kb_ref(db, it, ref)}
+        _need_idem(args)
+        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "space": sp.id, "code": it.code, **ref},
+                         lambda: (lambda u: {**intent_svc.api_detail(u[0]), "warnings": u[1]})(
+                             intent_svc.bind_knowledge(db, it, ref, ctx.actor)))
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
+    if name == "intent_unbind_knowledge":
+        _need_idem(args)
+        sp = resolve_space(request, db, ctx, args.get("space"))
+        it = intent_svc.get(db, args["code"], sp.id)
+        ref = {"kb_id": args["kb_id"], "doc_id": args["doc_id"], "chunk_id": args["chunk_id"]}
+        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "space": sp.id, "code": it.code, **ref},
+                         lambda: intent_svc.api_detail(intent_svc.unbind_knowledge(db, it, ref, ctx.actor)))
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
     raise ApiError(404, "TOOL_NOT_FOUND", f"未知工具 {name}")
 
 
@@ -230,7 +309,7 @@ async def mcp(request: Request, ctx: KeyCtx = Depends(api_key(None)), db: Sessio
     if method == "initialize":
         return JSONResponse(_rpc(mid, {"protocolVersion": params.get("protocolVersion") or PROTOCOL,
                                        "capabilities": {"tools": {"listChanged": False}},
-                                       "serverInfo": {"name": "intent-platform", "version": "0.18.0"}}))
+                                       "serverInfo": {"name": "intent-platform", "version": "0.19.0"}}))
     if method == "ping":
         return JSONResponse(_rpc(mid, {}))
     if method == "tools/list":

@@ -230,12 +230,13 @@ def judge(db: Session, sp: Space, items: list[dict], api: bool = False) -> list[
             if node:
                 x["category_id"] = node.id
             elif root is None and "MISSING_FIELD" not in r["reasons"]:
-                issue("UNKNOWN_CATEGORY", f"分类「{segs[0] if segs else ''}」不存在（第一层：{t.levels[0]}）")
+                issue("UNKNOWN_CATEGORY", f"分类「{segs[0] if segs else ''}」不存在，先调用 POST /api/v1/taxonomy/nodes 或使用 auto_create_parents")
             elif root is not None:
                 opts = [o for o in t.leaf_options() if o["path"][0]["name"] == root.name]
                 if api or not opts:
                     issue("UNKNOWN_CATEGORY", f"分类路径「{' / '.join(segs)}」不存在"
-                                              f"（需要 {t.n} 层：{' / '.join(t.levels[:-1])}）")
+                                              f"（需要 {t.n} 层：{' / '.join(t.levels[:-1])}）。"
+                                              "先调用 POST /api/v1/taxonomy/nodes 或使用 auto_create_parents")
                 else:
                     r["path_invalid"] = True
                     r["path_options"] = [{"id": o["id"], "label": o["label"]} for o in opts]
@@ -396,6 +397,17 @@ def batch_upsert(db: Session, sp: Space, payload: dict, actor: Actor, file: str 
         raise ApiError(413, "PAYLOAD_TOO_LARGE", f"单次最多 {get_settings().max_batch} 条，请拆批",
                        {"count": len(raw)})
     items = [normalize_item(x if isinstance(x, dict) else {}) for x in raw]
+    created_nodes = []
+    if payload.get("auto_create_parents"):
+        for orig, x in zip(raw, items):
+            segs = tax_svc.path_segments_rich(orig if isinstance(orig, dict) else {}) or x.get("category_path")
+            if not segs:
+                continue
+            try:
+                _, created = tax_svc.ensure_path(db, sp, segs, actor)
+                created_nodes.extend(created)
+            except ApiError:
+                pass  # 仍由 judge 给出 UNKNOWN_CATEGORY
     rows = judge(db, sp, items, api=True)
     conflicts, todo = [], []
     for r in rows:
@@ -433,5 +445,66 @@ def batch_upsert(db: Session, sp: Space, payload: dict, actor: Actor, file: str 
     db.add(rec)
     audit.record(db, actor, "intent.batch_upsert", "import", rec.id, f"API 写入意图：{rec.result}", sp.id,
                  {"mode": mode, "counts": c, "conflicts": conflicts})
-    return {"created": created, "updated": updated, "skipped": skipped, "items": out_items, "conflicts": conflicts,
-            "import_id": rec.id, "space": sp.id, "new_slots": new_slots, "ignored_fields": ignored}
+    out = {"created": created, "updated": updated, "skipped": skipped, "items": out_items, "conflicts": conflicts,
+           "import_id": rec.id, "space": sp.id, "new_slots": new_slots, "ignored_fields": ignored}
+    if created_nodes:
+        out["created_nodes"] = created_nodes
+    return out
+
+
+def batch_apply(db: Session, sp: Space, payload: dict, actor: Actor) -> dict:
+    """一次性写入分类节点和意图：先全部校验，任一失败则全部回滚并按条返回错误。"""
+    from . import taxonomy as tax_svc
+    from ..errors import unprocessable
+
+    dry = bool(payload.get("dry_run"))
+    nodes = payload.get("nodes") or []
+    intents = payload.get("intents") or []
+    if nodes and not isinstance(nodes, list):
+        raise bad_request("nodes 应为数组")
+    if intents and not isinstance(intents, list):
+        raise bad_request("intents 应为数组")
+    if not nodes and not intents:
+        raise bad_request("请至少提供 nodes 或 intents")
+
+    errors, node_out, created_nodes = [], [], []
+    nested = db.begin_nested()
+    try:
+        for i, n in enumerate(nodes):
+            if not isinstance(n, dict):
+                errors.append({"index": i, "kind": "node", "reason": "BAD_REQUEST", "message": "节点应为对象"})
+                continue
+            try:
+                c, action = tax_svc.upsert_node(db, sp, n, actor)
+                db.flush()
+                node_out.append({**tax_svc.node_dict(c, tax_svc.Tax(db, sp)), "action": action})
+                if action == "created":
+                    created_nodes.append(c.code)
+            except ApiError as e:
+                errors.append({"index": i, "kind": "node", "code": (n or {}).get("code"),
+                               "reason": e.code, "message": e.message})
+        intent_res = None
+        if intents and not errors:
+            try:
+                body = {"mode": payload.get("mode") or "merge", "intents": intents,
+                        "auto_create_parents": payload.get("auto_create_parents", True)}
+                intent_res = batch_upsert(db, sp, body, actor, file="batchApply")
+                for c in intent_res.get("conflicts") or []:
+                    errors.append({"kind": "intent", "code": c.get("code"), "reason": c.get("reason"),
+                                   "message": c.get("message")})
+            except ApiError as e:
+                errors.append({"kind": "intents", "reason": e.code, "message": e.message})
+        if errors:
+            nested.rollback()
+            raise unprocessable("批量写入未执行（全部回滚）", "BATCH_FAILED", items=errors)
+        result = {"ok": True, "dry_run": dry, "space": sp.id, "nodes": node_out,
+                  "created_nodes": created_nodes, "intents": intent_res}
+        if dry:
+            nested.rollback()
+        else:
+            nested.commit()
+        return result
+    except Exception:
+        if nested.is_active:
+            nested.rollback()
+        raise

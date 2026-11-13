@@ -325,12 +325,51 @@ def unbind_tool(db: Session, it: Intent, name: str, actor: Actor) -> Intent:
     return it
 
 
+def preview_kb_ref(db: Session, it: Intent, ref: dict) -> dict:
+    """校验一条知识关联（不写入）。"""
+    incoming = _clean_refs([ref])
+    if not incoming:
+        raise unprocessable("请指定要关联的知识（kb_id、doc_id、chunk_id，整篇用 chunk_id=\"*\"）")
+    r = incoming[0]
+    if not RefIndex(db).ref_ok(r):
+        raise unprocessable(
+            f"知识引用无效：{r['kb_id']}/{r['doc_id']}/{r['chunk_id']}，"
+            "请确认知识库、文档和切片存在（整篇用 chunk_id=\"*\"）")
+    return r
+
+
+def bind_knowledge(db: Session, it: Intent, ref: dict, actor: Actor) -> tuple[Intent, list[str]]:
+    cleaned = preview_kb_ref(db, it, ref)
+    refs = [r for r in (it.kb_refs or [])
+            if not (r.get("kb_id") == cleaned["kb_id"] and r.get("doc_id") == cleaned["doc_id"]
+                    and r.get("chunk_id") == cleaned["chunk_id"])]
+    refs.append(cleaned)
+    return update(db, it, {"kb_refs": refs}, actor)
+
+
+def unbind_knowledge(db: Session, it: Intent, ref: dict, actor: Actor) -> Intent:
+    kb_id, doc_id, chunk_id = (ref or {}).get("kb_id"), (ref or {}).get("doc_id"), (ref or {}).get("chunk_id")
+    if not (kb_id and doc_id and chunk_id):
+        raise unprocessable("解绑知识需要 kb_id、doc_id、chunk_id")
+    cur = list(it.kb_refs or [])
+    nxt = [r for r in cur if not (r.get("kb_id") == kb_id and r.get("doc_id") == doc_id
+                                  and r.get("chunk_id") == chunk_id)]
+    if len(nxt) == len(cur):
+        return it
+    it, _ = update(db, it, {"kb_refs": nxt}, actor)
+    return it
+
+
 def set_status(db: Session, it: Intent, status: str, actor: Actor) -> Intent:
     if status not in STATUSES:
         raise unprocessable("状态应为 草稿 / 启用 / 停用")
     if status == it.status:
         return it
     if status == "启用":
+        if it.category_id:
+            c = db.get(Category, it.category_id)
+            if c is not None and not c.enabled:
+                raise unprocessable(f"所属分类「{c.code or c.name}」已停用，不能启用该意图")
         problems = validate(as_dict(it), RefIndex(db))
         if problems:
             raise unprocessable("启用前必填校验未通过", "ENABLE_CHECK_FAILED", problems=problems)

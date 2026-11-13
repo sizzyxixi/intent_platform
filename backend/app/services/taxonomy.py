@@ -122,7 +122,8 @@ class Tax:
         cnt = self.counts() if with_counts else {}
 
         def node(c: Category) -> dict:
-            d = {"code": c.code, "name": c.name, "depth": c.depth}
+            d = {"code": c.code, "name": c.name, "depth": c.depth,
+                 "enabled": bool(c.enabled), "description": c.description or "", "sort": c.position}
             if with_ids:
                 d["id"] = c.id
             if with_counts:
@@ -167,15 +168,21 @@ def category_input(t: Tax, data: dict) -> tuple[int | None, str | None]:
         c = t.nodes.get(cid)
         if not c:
             return None, "分类不存在"
+        if not c.enabled:
+            return None, f"分类「{c.code or c.name}」已停用，请换一个分类或先启用该节点"
         if c.depth != t.n:
             return None, f"意图只能挂在最末一层分类（{t.levels[t.n - 1]}）下"
         return cid, None
     segs = path_segments(data)
     if not segs:
         return None, "缺少分类路径"
-    node, _ = t.resolve(segs)
+    node, matched = t.resolve(segs)
     if not node:
-        return None, f"分类路径「{' / '.join(segs)}」不存在（需要 {t.n} 层：{' / '.join(t.levels[:-1])}）"
+        missing = segs[matched] if matched < len(segs) else (segs[-1] if segs else "")
+        return None, (f"分类「{missing}」不存在，路径「{' / '.join(segs)}」需要 {t.n} 层"
+                      f"（{' / '.join(t.levels[:-1])}）。先调用 POST /api/v1/taxonomy/nodes 创建该分类，或在写入意图时使用 auto_create_parents=true")
+    if not node.enabled or any(not x.enabled for x in t.chain(node.id)):
+        return None, f"分类路径「{' / '.join(segs)}」中有已停用的节点，不能挂新意图"
     return node.id, None
 
 
@@ -290,6 +297,220 @@ def delete_category(db: Session, sp: Space, c: Category, actor: Actor) -> None:
     db.flush()
     _bump(db, sp)
     audit.record(db, actor, "taxonomy.delete", "category", str(c.id), f"删除分类「{label}」", sp.id)
+
+
+
+NODE_HINT = "先调用 POST /api/v1/taxonomy/nodes 创建该分类，或在写入意图时使用 auto_create_parents=true"
+
+
+def node_dict(c: Category, t: Tax | None = None) -> dict:
+    parent_code = None
+    if c.parent_id and t and c.parent_id in t.nodes:
+        parent_code = t.nodes[c.parent_id].code
+    elif c.parent is not None:
+        parent_code = c.parent.code
+    return {"code": c.code, "name": c.name, "depth": c.depth, "parent_code": parent_code,
+            "description": c.description or "", "sort": c.position, "enabled": bool(c.enabled)}
+
+
+def get_by_code(db: Session, sp: Space, code: str) -> Category:
+    code = (code or "").strip().upper()
+    c = db.scalar(select(Category).where(Category.space_id == sp.id, Category.code == code))
+    if not c:
+        raise not_found(f"分类「{code}」不存在，{NODE_HINT}", "CATEGORY_NOT_FOUND")
+    return c
+
+
+def _required_code(raw) -> str:
+    code = (raw or "").strip().upper()
+    if not code:
+        raise unprocessable("分类编码必填（按 code 幂等写入）", details=[{"field": "code", "message": "分类编码必填"}])
+    if not CATEGORY_CODE_RE.match(code):
+        raise unprocessable("编码为大写字母开头的大写字母 / 数字 / 下划线",
+                            details=[{"field": "code", "message": "编码为大写字母开头的大写字母 / 数字 / 下划线"}])
+    return code
+
+
+def _resolve_parent_depth(db: Session, sp: Space, t: Tax, data: dict) -> tuple[Category | None, int]:
+    parent_code = (data.get("parent_code") or "").strip().upper() or None
+    parent_id = data.get("parent_id")
+    parent = None
+    if parent_code:
+        parent = get_by_code(db, sp, parent_code)
+    elif parent_id not in (None, ""):
+        parent = get_category(db, sp, int(parent_id))
+    depth = (parent.depth + 1) if parent else 1
+    given = data.get("depth", data.get("level"))
+    if given not in (None, ""):
+        try:
+            given = int(given)
+        except (TypeError, ValueError):
+            raise unprocessable("depth / level 应为正整数")
+        if given != depth:
+            raise unprocessable(
+                f"层级应为 {depth}（{'父分类 ' + parent.code if parent else '第一层'}，"
+                f"本空间分类共 {t.n} 层：{' / '.join(t.levels[:-1])}）")
+    if depth > t.n:
+        if parent:
+            raise unprocessable(f"「{parent.name}」已是最末一层分类，下面只能放意图", "CATEGORY_TOO_DEEP")
+        raise unprocessable("本空间没有分类层，请先在层级设置里添加", "NO_CATEGORY_LEVEL")
+    if parent is not None and not parent.enabled:
+        raise unprocessable(f"父分类「{parent.code}」已停用，不能在其下创建或更新子分类")
+    return parent, depth
+
+
+def validate_node(db: Session, sp: Space, data: dict) -> tuple[Category | None, dict]:
+    """校验写入，不落库。返回 (已有节点或 None, 清洗后的字段)。"""
+    t = Tax(db, sp)
+    if t.n == 0:
+        raise unprocessable("本空间没有分类层，请先在层级设置里添加", "NO_CATEGORY_LEVEL")
+    code = _required_code(data.get("code"))
+    existing = db.scalar(select(Category).where(Category.space_id == sp.id, Category.code == code))
+    parent, depth = _resolve_parent_depth(db, sp, t, data)
+    if existing and existing.parent_id != (parent.id if parent else None):
+        raise unprocessable(f"分类编码 {code} 已存在且父级不同，不能通过 upsert 移动节点")
+    name = data.get("name")
+    if name is None or name == "":
+        if existing:
+            name = existing.name
+        else:
+            raise unprocessable("名称必填", details=[{"field": "name", "message": "名称必填"}])
+    name = _check_name(name)
+    siblings = t.children[parent.id if parent else None]
+    if any(x.name == name and (existing is None or x.id != existing.id) for x in siblings):
+        raise conflict(f"同一层下已有「{name}」", "CATEGORY_EXISTS")
+    desc = data.get("description")
+    if desc is None and existing:
+        desc = existing.description or ""
+    desc = str(desc or "").strip()
+    if len(desc) > 500:
+        raise unprocessable("说明最多 500 个字", details=[{"field": "description", "message": "说明最多 500 个字"}])
+    sort = data.get("sort", data.get("position"))
+    if sort is None:
+        sort = existing.position if existing else len(siblings)
+    else:
+        try:
+            sort = int(sort)
+        except (TypeError, ValueError):
+            raise unprocessable("sort 应为整数")
+    enabled = existing.enabled if existing and "enabled" not in data else data.get("enabled", True)
+    if isinstance(enabled, str):
+        enabled = enabled.lower() not in ("false", "0", "no")
+    return existing, {"code": code, "name": name, "description": desc, "sort": sort,
+                      "enabled": bool(enabled), "parent": parent, "depth": depth}
+
+
+def upsert_node(db: Session, sp: Space, data: dict, actor: Actor) -> tuple[Category, str]:
+    """按编码创建或更新分类节点。"""
+    existing, v = validate_node(db, sp, data)
+    parent, depth = v["parent"], v["depth"]
+    if existing:
+        before = (existing.name, existing.description or "", existing.position, existing.enabled)
+        existing.name = v["name"]
+        existing.description = v["description"]
+        existing.position = v["sort"]
+        existing.enabled = v["enabled"]
+        if before == (existing.name, existing.description, existing.position, existing.enabled):
+            return existing, "updated"
+        db.flush()
+        _bump(db, sp)
+        audit.record(db, actor, "taxonomy.update", "category", str(existing.id),
+                     f"修改分类「{existing.code}」", sp.id,
+                     {"code": existing.code, "name": existing.name})
+        return existing, "updated"
+    c = Category(space_id=sp.id, parent_id=parent.id if parent else None, depth=depth,
+                 code=v["code"], name=v["name"], description=v["description"],
+                 position=v["sort"], enabled=v["enabled"])
+    db.add(c)
+    db.flush()
+    _bump(db, sp)
+    t = Tax(db, sp)
+    audit.record(db, actor, "taxonomy.add", "category", str(c.id),
+                 f"新增{t.levels[depth - 1]}「{t.path_str(c.id)}」（{c.code}）", sp.id, {"code": c.code})
+    return c, "created"
+
+
+def set_node_enabled(db: Session, sp: Space, code: str, enabled: bool, actor: Actor) -> Category:
+    """停用或重新启用分类节点（不删除）。停用时若子树中有已启用意图则拒绝。"""
+    c = get_by_code(db, sp, code)
+    if c.enabled == bool(enabled):
+        return c
+    if not enabled:
+        t = Tax(db, sp)
+        ids = t.descendants(c.id)
+        n = db.scalar(select(func.count()).select_from(Intent).where(
+            Intent.category_id.in_(ids), Intent.status == "启用")) or 0
+        if n:
+            raise conflict(f"分类「{c.code or c.name}」下还有 {n} 个已启用意图，请先停用或移走这些意图后再停用分类",
+                           "CATEGORY_IN_USE", count=n)
+    c.enabled = bool(enabled)
+    db.flush()
+    _bump(db, sp)
+    verb = "启用" if c.enabled else "停用"
+    audit.record(db, actor, "taxonomy.enable" if c.enabled else "taxonomy.disable", "category",
+                 str(c.id), f"{verb}分类「{c.code or c.name}」", sp.id, {"enabled": c.enabled, "code": c.code})
+    return c
+
+
+def parse_path_seg(seg) -> dict:
+    if isinstance(seg, dict):
+        code = (seg.get("code") or "").strip().upper() or None
+        name = (seg.get("name") or "").strip() or None
+        if code and not CATEGORY_CODE_RE.match(code):
+            raise unprocessable(f"分类编码「{code}」不合法（大写字母开头的大写字母 / 数字 / 下划线）")
+        return {"code": code, "name": name or code}
+    s = str(seg or "").strip()
+    if CATEGORY_CODE_RE.match(s.upper()) and all(ch.isalnum() or ch == "_" for ch in s):
+        return {"code": s.upper(), "name": s.upper()}
+    return {"code": None, "name": s}
+
+
+def path_segments_rich(data: dict) -> list[dict]:
+    p = data.get("category_path")
+    if isinstance(p, str):
+        import re
+        p = [x for x in re.split(r"\s*[/／>]\s*", p) if x.strip()]
+    if isinstance(p, list) and p:
+        return [parse_path_seg(x) for x in p]
+    segs = path_segments(data)
+    return [parse_path_seg(s) for s in segs]
+
+
+def ensure_path(db: Session, sp: Space, segs, actor: Actor) -> tuple[Category | None, list[str]]:
+    """按路径逐层找到或创建分类（用于 auto_create_parents）。返回 (叶子, 新创建的编码列表)。"""
+    t = Tax(db, sp)
+    if t.n == 0:
+        return None, []
+    rich = [parse_path_seg(s) for s in (segs or [])]
+    if len(rich) != t.n:
+        raise unprocessable(
+            f"分类路径需要 {t.n} 层（{' / '.join(t.levels[:-1])}），当前 {len(rich)} 层。"
+            f"{NODE_HINT}")
+    pid, created, last = None, [], None
+    for i, seg in enumerate(rich):
+        node = None
+        if seg.get("code"):
+            node = next((c for c in t.children[pid] if c.code == seg["code"]), None)
+        if node is None and seg.get("name"):
+            node = t.match_child(pid, seg["name"])
+        if node is None:
+            if not seg.get("code"):
+                raise unprocessable(
+                    f"自动创建第 {i + 1} 层分类「{seg.get('name') or ''}」需要编码，"
+                    f"请把 category_path 写成 {{code, name}}，或先调用 POST /api/v1/taxonomy/nodes")
+            if any(c.name == (seg.get("name") or seg["code"]) for c in t.children[pid]):
+                raise conflict(f"同一层下已有「{seg.get('name') or seg['code']}」", "CATEGORY_EXISTS")
+            payload = {"code": seg["code"], "name": seg.get("name") or seg["code"],
+                       "parent_code": None if pid is None else t.nodes[pid].code, "depth": i + 1}
+            if pid is not None and not t.nodes[pid].enabled:
+                raise unprocessable(f"父分类「{t.nodes[pid].code}」已停用，不能在其下创建子分类")
+            node, _ = upsert_node(db, sp, payload, actor)
+            created.append(node.code)
+            t = Tax(db, sp)
+        elif not node.enabled:
+            raise unprocessable(f"分类「{node.code or node.name}」已停用，不能在其下创建意图或子分类")
+        pid, last = node.id, node
+    return last, created
 
 
 # ---------------- 层级调整 ----------------

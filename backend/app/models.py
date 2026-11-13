@@ -55,7 +55,9 @@ class Category(Base):
     depth: Mapped[int] = mapped_column(Integer)
     code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str] = mapped_column(Text, default="")
     position: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     parent: Mapped["Category | None"] = relationship(remote_side=[id])
 
 

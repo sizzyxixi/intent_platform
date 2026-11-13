@@ -1,4 +1,4 @@
-"""开放接口 /api/v1（严格对应 docs/openapi.yaml 0.18.0）。"""
+"""开放接口 /api/v1（严格对应 docs/openapi.yaml 0.19.0）。"""
 import hashlib
 import json
 from datetime import datetime
@@ -81,6 +81,67 @@ def list_spaces(ctx: KeyCtx = Depends(api_key(R_INT)), db: Session = Depends(get
 def get_taxonomy(request: Request, ctx: KeyCtx = Depends(api_key(R_INT)), db: Session = Depends(get_db)):
     sp = resolve_space(request, db, ctx)
     return tax_svc.public_taxonomy(db, sp)
+
+
+
+@router.post("/taxonomy/nodes")
+async def upsert_taxonomy_node(request: Request, ctx: KeyCtx = Depends(api_key(W_INT)),
+                               db: Session = Depends(get_db)):
+    """按编码创建或更新分类节点。dry_run=true 只校验不写入。需要「意图:写」，且 Key 必须绑定该空间。"""
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+    sp = resolve_space(request, db, ctx)
+    if payload.get("dry_run"):
+        existing, v = tax_svc.validate_node(db, sp, payload)
+        return {"ok": True, "dry_run": True, "action": "updated" if existing else "created", "code": v["code"]}
+
+    def run():
+        c, action = tax_svc.upsert_node(db, sp, payload, ctx.actor)
+        db.flush()
+        status = 200 if action == "updated" else 201
+        return status, {**tax_svc.node_dict(c, tax_svc.Tax(db, sp)), "action": action}
+    return idempotent(request, db, ctx, {"space": sp.id, **payload}, run)
+
+
+@router.put("/taxonomy/nodes/{code}")
+async def update_taxonomy_node(code: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT)),
+                               db: Session = Depends(get_db)):
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+    payload = {**payload, "code": code}
+    sp = resolve_space(request, db, ctx)
+    if payload.get("dry_run"):
+        existing, v = tax_svc.validate_node(db, sp, payload)
+        if not existing:
+            raise unprocessable(f"分类「{code}」不存在，先调用 POST /api/v1/taxonomy/nodes 创建", "CATEGORY_NOT_FOUND")
+        return {"ok": True, "dry_run": True, "action": "updated", "code": v["code"]}
+
+    def run():
+        existing, _ = tax_svc.validate_node(db, sp, payload)
+        if not existing:
+            raise unprocessable(f"分类「{code}」不存在，先调用 POST /api/v1/taxonomy/nodes 创建", "CATEGORY_NOT_FOUND")
+        c, action = tax_svc.upsert_node(db, sp, payload, ctx.actor)
+        db.flush()
+        return 200, {**tax_svc.node_dict(c, tax_svc.Tax(db, sp)), "action": action}
+    return idempotent(request, db, ctx, {"space": sp.id, **payload}, run)
+
+
+@router.post("/taxonomy/nodes/{code}:disable")
+async def disable_taxonomy_node(code: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT)),
+                                db: Session = Depends(get_db)):
+    raw = await request.body()
+    payload = json.loads(raw) if raw else {}
+    if payload and not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+    sp = resolve_space(request, db, ctx)
+
+    def run():
+        c = tax_svc.set_node_enabled(db, sp, code, False, ctx.actor)
+        db.flush()
+        return 200, {**tax_svc.node_dict(c, tax_svc.Tax(db, sp)), "action": "disabled"}
+    return idempotent(request, db, ctx, {"space": sp.id, "code": code, "op": "disable", **(payload or {})}, run)
 
 
 @router.get("/recognition")
@@ -206,7 +267,7 @@ async def patch_intent(code: str, request: Request, ctx: KeyCtx = Depends(api_ke
             raise bad_request("不支持修改的字段：" + "、".join(extra), fields=extra)
         it = intent_svc.get(db, code, sp.id)
         if payload.get("status") == "启用":
-            raise forbidden("启用由运营在平台上完成，接口不可把意图设为启用", "ENABLE_FORBIDDEN")
+            raise forbidden("请使用 POST /api/v1/intents/{code}:enable 启用意图，PATCH 不能把意图设为启用", "ENABLE_FORBIDDEN")
         if "status" in payload and payload["status"] not in ("草稿", "停用"):
             raise bad_request("status 只能是 草稿 / 停用")
         if it.status == "启用":
@@ -252,10 +313,96 @@ async def batch_upsert(request: Request, ctx: KeyCtx = Depends(api_key(W_INT)), 
     return idempotent(request, db, ctx, payload, run)
 
 
+
+@router.post("/batchUpsert")
+async def batch_apply(request: Request, ctx: KeyCtx = Depends(api_key(W_INT)), db: Session = Depends(get_db)):
+    """一次性写入分类节点和意图。默认全部成功才提交；任一失败回滚并在 details.items 中按条返回错误。"""
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+    sp = resolve_space(request, db, ctx)
+    if payload.get("dry_run"):
+        return importer.batch_apply(db, sp, payload, ctx.actor)
+
+    def run():
+        res = importer.batch_apply(db, sp, payload, ctx.actor)
+        db.flush()
+        return 200, res
+    return idempotent(request, db, ctx, {"space": sp.id, **payload}, run)
+
+
+@router.post("/intents/{code}:enable")
+async def enable_intent(code: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT)),
+                        db: Session = Depends(get_db)):
+    raw = await request.body()
+    payload = json.loads(raw) if raw else {}
+    if payload and not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+    sp = resolve_space(request, db, ctx)
+
+    def run():
+        it = intent_svc.set_status(db, intent_svc.get(db, code, sp.id), "启用", ctx.actor)
+        db.flush()
+        return 200, {**intent_svc.api_detail(it), "action": "enabled"}
+    return idempotent(request, db, ctx, {"space": sp.id, "code": code, "op": "enable", **(payload or {})}, run)
+
+
+@router.post("/intents/{code}:disable")
+async def disable_intent(code: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT)),
+                         db: Session = Depends(get_db)):
+    raw = await request.body()
+    payload = json.loads(raw) if raw else {}
+    if payload and not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+    sp = resolve_space(request, db, ctx)
+
+    def run():
+        it = intent_svc.set_status(db, intent_svc.get(db, code, sp.id), "停用", ctx.actor)
+        db.flush()
+        return 200, {**intent_svc.api_detail(it), "action": "disabled"}
+    return idempotent(request, db, ctx, {"space": sp.id, "code": code, "op": "disable", **(payload or {})}, run)
+
+
 # ---------------- 知识库（全局） ----------------
 @router.get("/kbs")
 def list_kbs(ctx: KeyCtx = Depends(api_key(R_KB)), db: Session = Depends(get_db)):
     return [kb_svc.kb_dict(k) for k in kb_svc.list_kbs(db)]
+
+
+@router.post("/kbs", status_code=201)
+async def create_kb(request: Request, ctx: KeyCtx = Depends(api_key(W_KB)), db: Session = Depends(get_db)):
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+
+    def run():
+        kb = kb_svc.create_kb(db, payload.get("name"), payload.get("type") or "表格知识库",
+                              payload.get("tags") or {}, ctx.actor)
+        db.flush()
+        return 201, {**kb_svc.kb_dict(kb, admin=True), "action": "created"}
+    return idempotent(request, db, ctx, payload, run)
+
+
+@router.get("/kbs/{kb_id}")
+def get_kb(kb_id: str, ctx: KeyCtx = Depends(api_key(R_KB)), db: Session = Depends(get_db)):
+    kb = kb_svc.get_kb(db, kb_id)
+    d = kb_svc.kb_dict(kb, admin=True)
+    d["documents"] = [kb_svc.doc_dict(kb, x) for x in kb.documents]
+    return d
+
+
+@router.patch("/kbs/{kb_id}")
+async def patch_kb(kb_id: str, request: Request, ctx: KeyCtx = Depends(api_key(W_KB)),
+                   db: Session = Depends(get_db)):
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+
+    def run():
+        kb = kb_svc.update_kb(db, kb_svc.get_kb(db, kb_id), payload, ctx.actor)
+        db.flush()
+        return 200, {**kb_svc.kb_dict(kb, admin=True), "action": "updated"}
+    return idempotent(request, db, ctx, {"kb_id": kb_id, **payload}, run)
 
 
 @router.get("/kbs/{kb_id}/documents")
@@ -528,6 +675,43 @@ def unbind_intent_tool(code: str, tool: str, request: Request, ctx: KeyCtx = Dep
         db.flush()
         return 200, intent_svc.api_detail(updated)
     return idempotent(request, db, ctx, {"code": code, "space": sp.id, "tool": tool, "op": "unbind"}, run)
+
+
+
+@router.post("/intents/{code}/knowledge")
+async def bind_intent_knowledge(code: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT, W_KB)),
+                                db: Session = Depends(get_db)):
+    """给意图关联知识。需要「意图:写」和「知识:写」。"""
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+    sp = resolve_space(request, db, ctx)
+    it = intent_svc.get(db, code, sp.id)
+    if payload.get("dry_run"):
+        cleaned = intent_svc.preview_kb_ref(db, it, payload)
+        return {"ok": True, "dry_run": True, "code": it.code, "ref": cleaned}
+
+    def run():
+        updated, warnings = intent_svc.bind_knowledge(db, it, payload, ctx.actor)
+        db.flush()
+        return 200, {**intent_svc.api_detail(updated), "warnings": warnings}
+    return idempotent(request, db, ctx, {"code": code, "space": sp.id, **payload}, run)
+
+
+@router.delete("/intents/{code}/knowledge")
+def unbind_intent_knowledge(code: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT, W_KB)),
+                            db: Session = Depends(get_db),
+                            kb_id: str | None = Query(None), doc_id: str | None = Query(None),
+                            chunk_id: str | None = Query(None)):
+    sp = resolve_space(request, db, ctx)
+    it = intent_svc.get(db, code, sp.id)
+    ref = {"kb_id": kb_id, "doc_id": doc_id, "chunk_id": chunk_id}
+
+    def run():
+        updated = intent_svc.unbind_knowledge(db, it, ref, ctx.actor)
+        db.flush()
+        return 200, intent_svc.api_detail(updated)
+    return idempotent(request, db, ctx, {"code": code, "space": sp.id, **ref, "op": "unbind_kb"}, run)
 
 
 # ---------------- 运行时配置 ----------------

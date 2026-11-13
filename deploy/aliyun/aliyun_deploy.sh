@@ -48,7 +48,7 @@ DBURL="$(grep '^IP_DATABASE_URL=' "$REMOTE/config/database.env" | head -1 | cut 
   echo "IP_ENV=production"
   echo "IP_DATABASE_URL=$DBURL"
   echo "IP_SECRET_KEY=$(cat "$REMOTE/config/secret_key")"
-  echo "IP_PUBLIC_BASE_URL=http://$HOST_NAME"
+  echo "IP_PUBLIC_BASE_URL=http://47.86.15.93/intent-platform"
   echo "IP_COOKIE_SECURE=false"
 } > "$ENVF"
 chmod 600 "$ENVF" "$REMOTE/config/secret_key"
@@ -73,8 +73,11 @@ for i in $(seq 1 40); do
 done
 docker inspect -f 'container {{.Name}} {{.State.Health.Status}}' "$APP"
 
-# Caddy：按域名增加站点（不改动原有 :80 站点）。注意单文件 bind mount 需原地写入保持 inode
+# Caddy：按域名增加站点；并幂等地确保 :80 有 /intent-platform/*（供无法解析 sslip.io 的环境按 IP 访问）。
+# 已存在的配置不改写。注意单文件 bind mount 需原地写入保持 inode。
+caddy_changed=0
 if ! grep -q "$HOST_NAME" "$CADDYFILE"; then
+  caddy_changed=1
   cp -a "$CADDYFILE" "$CADDYFILE.bak.$(date +%Y%m%d%H%M%S)"
   NEWCF="$(mktemp)"
   cat "$CADDYFILE" > "$NEWCF"
@@ -85,12 +88,29 @@ http://$HOST_NAME {
     reverse_proxy intent-platform:8000
 }
 CADDY_EOF
+  cat "$NEWCF" > "$CADDYFILE"
+  rm -f "$NEWCF"
+fi
+# 0=已存在，1=已插入，其它=失败
+set +e
+python3 "$REMOTE/src/deploy/aliyun/ensure_caddy_intent_path.py" "$CADDYFILE"
+ens=$?
+set -e
+if [ "$ens" -gt 1 ]; then
+  exit "$ens"
+fi
+if [ "$ens" -eq 1 ]; then
+  caddy_changed=1
+fi
+if [ "$caddy_changed" -eq 1 ]; then
+  NEWCF="$(mktemp)"
+  cat "$CADDYFILE" > "$NEWCF"
   docker cp "$NEWCF" "$CADDY:/tmp/Caddyfile.new"
   docker exec "$CADDY" caddy validate --config /tmp/Caddyfile.new --adapter caddyfile
-  cat "$NEWCF" > "$CADDYFILE"   # 原地写入
+  cat "$NEWCF" > "$CADDYFILE"
   rm -f "$NEWCF"
   docker exec "$CADDY" caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 fi
 docker image prune -f >/dev/null
-echo "部署完成：http://$HOST_NAME/"
+echo "部署完成：控制台 http://$HOST_NAME/  API http://47.86.15.93/intent-platform/"
 REMOTE_EOF

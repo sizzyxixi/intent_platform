@@ -70,7 +70,7 @@
  },
  {
   "name": "upsert_intents",
-  "description": "批量写回当前空间的意图，结果一律为草稿。mode 只用 merge；不能启用、不能删除、不能覆盖已启用意图。槽位名用本空间已有槽位的英文名，不要建同义槽位。单次最多 100 条，必须提供 idempotency_key。",
+  "description": "批量写回当前空间的意图，结果一律为草稿。mode 只用 merge；不能删除、不能覆盖已启用意图。分类不存在时请先 taxonomy_upsert_node，或设 auto_create_parents=true（路径每段须为编码，或 {code,name}）。启用请用 intent_enable。槽位名用本空间已有槽位的英文名。单次最多 100 条，非 dry_run 须提供 idempotency_key。",
   "inputSchema": {
    "type": "object",
    "required": [
@@ -116,7 +116,22 @@
        "category_path": {
         "type": "array",
         "items": {
-         "type": "string"
+         "oneOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "object",
+           "properties": {
+            "code": {
+             "type": "string"
+            },
+            "name": {
+             "type": "string"
+            }
+           }
+          }
+         ]
         },
         "minItems": 0,
         "maxItems": 5,
@@ -167,6 +182,11 @@
        }
       }
      }
+    },
+    "auto_create_parents": {
+     "type": "boolean",
+     "default": false,
+     "description": "true 时自动创建 category_path 中缺失的分类节点（每段须为编码，或对象 {code,name}）"
     }
    }
   }
@@ -493,6 +513,235 @@
      "minLength": 1,
      "maxLength": 64,
      "description": "幂等键；dry_run 时可不传"
+    }
+   }
+  }
+ },
+ {
+  "name": "taxonomy_upsert_node",
+  "description": "按编码创建或更新当前空间的分类节点。code 为稳定编码；parent_code 为空表示第一层；depth/level 须符合该空间的分类层数。dry_run=true 只校验。非 dry_run 须提供 idempotency_key。需要「意图:写」。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "name"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string",
+     "description": "稳定编码，大写字母开头，仅大写字母/数字/下划线"
+    },
+    "name": {
+     "type": "string"
+    },
+    "parent_code": {
+     "type": "string",
+     "description": "父节点编码；第一层省略"
+    },
+    "depth": {
+     "type": "integer",
+     "description": "可选，须等于父层+1 或第一层为 1"
+    },
+    "level": {
+     "type": "integer",
+     "description": "depth 的别名"
+    },
+    "sort": {
+     "type": "integer"
+    },
+    "description": {
+     "type": "string"
+    },
+    "dry_run": {
+     "type": "boolean"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "taxonomy_disable_node",
+  "description": "停用分类节点（不能删除）。若该节点或其子分类下有已启用意图则拒绝。须提供 idempotency_key。需要「意图:写」。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "idempotency_key"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "intent_enable",
+  "description": "将意图设为启用（须通过启用前校验）。须提供 idempotency_key。需要「意图:写」。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "idempotency_key"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "intent_disable",
+  "description": "将意图设为停用。须提供 idempotency_key。需要「意图:写」。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "idempotency_key"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "create_knowledge_base",
+  "description": "新建知识库（全局）。type 为「表格知识库」或「图文知识库-富文本」。不能删除知识库。须提供 idempotency_key。需要「知识:写」。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "name",
+    "idempotency_key"
+   ],
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string",
+     "enum": [
+      "表格知识库",
+      "图文知识库-富文本"
+     ],
+     "default": "表格知识库"
+    },
+    "tags": {
+     "type": "object"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "intent_bind_knowledge",
+  "description": "给意图关联知识。chunk_id 为 * 表示整篇。需要「意图:写」和「知识:写」。dry_run=true 只校验。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "kb_id",
+    "doc_id",
+    "chunk_id"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "kb_id": {
+     "type": "string"
+    },
+    "doc_id": {
+     "type": "string"
+    },
+    "chunk_id": {
+     "type": "string",
+     "description": "切片 ID，整篇用 *"
+    },
+    "usage": {
+     "type": "string",
+     "enum": [
+      "reference",
+      "validate"
+     ],
+     "default": "reference"
+    },
+    "dry_run": {
+     "type": "boolean"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
+    }
+   }
+  }
+ },
+ {
+  "name": "intent_unbind_knowledge",
+  "description": "从意图上解绑知识。需要「意图:写」和「知识:写」。须提供 idempotency_key。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "kb_id",
+    "doc_id",
+    "chunk_id",
+    "idempotency_key"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "kb_id": {
+     "type": "string"
+    },
+    "doc_id": {
+     "type": "string"
+    },
+    "chunk_id": {
+     "type": "string"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "maxLength": 64
     }
    }
   }
