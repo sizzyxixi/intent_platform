@@ -50,7 +50,7 @@ function KbList() {
     try { const r = await api.del(`/kbs/${k.kb_id}`); reload(); toast('已删除' + (r.downgraded?.length ? `；${r.downgraded.length} 个启用意图转为草稿` : '')) } catch (e) { toast(errLines(e)[0]) }
   }
   return <>
-    <div className="row" style={{ alignItems: 'flex-start' }}><div><h2>AI知识库</h2><p className="desc">AI知识库是检索增强生成（RAG）服务，支持全模态数据：富文本、表格、图片等，导入后自动解析构建为知识切片，供意图引用与检索。知识库全平台通用，不区分业务空间，任何空间的意图都可以关联；用场景标签（平台 / 站点 / 语言 / 类目）区分适用范围。</p></div><span className="sp" /><Btn id="kbSetting" onClick={() => setCfg(true)}>设置</Btn></div>
+    <div className="row" style={{ alignItems: 'flex-start' }}><div><h2>AI知识库</h2><p className="desc">AI知识库是检索增强生成（RAG）服务，支持全模态数据：富文本、表格、图片等，导入后自动解析构建为知识切片，供意图引用与检索。知识库全平台通用，不区分业务空间，任何空间的意图都可以关联；可用描述说明这份知识是做什么用的。</p></div><span className="sp" /><Btn id="kbSetting" onClick={() => setCfg(true)}>设置</Btn></div>
     <div className="card"><div className="row"><label className="muted" style={{ fontSize: 13, color: '#4b5563' }}>知识库名称</label>
       <input type="text" id="kq" value={qIn} onChange={e => setQIn(e.target.value)} onKeyDown={e => e.key === 'Enter' && setQ(qIn.trim())} placeholder="请输入" style={{ width: 240 }} />
       <Btn p onClick={() => setQ(qIn.trim())}>查询</Btn><Btn onClick={() => { setQIn(''); setQ('') }}>重置</Btn><Btn onClick={saveQuick}>另存为快捷查询</Btn></div>
@@ -58,7 +58,7 @@ function KbList() {
     <div className="card">{canEdit && <div style={{ marginBottom: 10 }}><Btn p id="kbNew" onClick={() => setCreate(true)}>＋新建</Btn></div>}
       <table id="kbTbl"><thead><tr><th>序号</th><th>知识名称</th><th>知识库类型</th><th>状态</th><th>关联意图</th><th><a onClick={() => srt('updated_at')}>最新更新时间{ar('updated_at')}</a></th><th><a onClick={() => srt('created_at')}>创建时间{ar('created_at')}</a></th><th>操作</th></tr></thead><tbody>
         {!kbs ? <tr><td colSpan={8} className="loading">加载中…</td></tr> : list.length ? list.map((k: any, i: number) => <tr key={k.kb_id}>
-          <td>{i + 1}</td><td>{k.name}<TagBadges tags={k.tags} /></td><td>{k.type}</td><td><StDot s={k.status} /></td><td>{k.linked_count || <span className="muted">—</span>}</td>
+          <td>{i + 1}</td><td>{k.name}{k.description ? <div className="muted" style={{ fontSize: 12, marginTop: 2, whiteSpace: 'pre-wrap' }}>{k.description.length > 80 ? k.description.slice(0, 80) + '…' : k.description}</div> : null}</td><td>{k.type}</td><td><StDot s={k.status} /></td><td>{k.linked_count || <span className="muted">—</span>}</td>
           <td>{fmt(k.updated_at)}</td><td>{fmt(k.created_at)}</td>
           <td style={{ whiteSpace: 'nowrap' }}><a className="lk" onClick={() => go('#/kb/' + k.kb_id)}>查看</a>{canEdit && <><a className="lk" onClick={() => setEdit(k)}>编辑</a><a className="lk" onClick={() => del(k)}>删除</a></>}</td></tr>)
           : <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 30 }}>暂无数据</td></tr>}
@@ -83,15 +83,19 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 }
 
 function EditKb({ kb, onClose, onDone }: { kb: any; onClose: () => void; onDone: () => void }) {
-  const [name, setName] = useState(kb.name); const [tags, setTags] = useState<Record<string, string[]>>(kb.tags || emptyTags()); const [err, setErr] = useState<string[]>()
+  const [name, setName] = useState(kb.name)
+  const [description, setDescription] = useState(kb.description || '')
+  const [err, setErr] = useState<string[]>()
   const ok = async () => {
     if (!name.trim()) { setErr(['请输入知识库名称']); return }
-    try { await api.patch(`/kbs/${kb.kb_id}`, { name: name.trim(), tags }); toast('已保存'); onDone() } catch (e) { setErr(errLines(e)) }
+    if (description.trim().length > 2000) { setErr(['描述不超过 2000 个字']); return }
+    try { await api.patch(`/kbs/${kb.kb_id}`, { name: name.trim(), description: description.trim() }); toast('已保存'); onDone() } catch (e) { setErr(errLines(e)) }
   }
   return <Modal title="编辑知识库" onClose={onClose} foot={<><Btn onClick={onClose}>取消</Btn> <Btn p id="keOk" onClick={ok}>确定</Btn></>}>
     <div className="f"><label>* 知识库名称</label><input type="text" id="keN" value={name} onChange={e => setName(e.target.value)} /></div>
     <div className="f"><label>知识库类型</label><input type="text" value={kb.type} disabled /></div>
-    <TagForm tags={tags} setTags={setTags} /><ErrBox lines={err} />
+    <div className="f"><label>描述</label><textarea id="keD" rows={4} maxLength={2000} value={description} onChange={e => setDescription(e.target.value)} placeholder="可选，说明这份知识是做什么用的" /></div>
+    <ErrBox lines={err} />
   </Modal>
 }
 
@@ -99,7 +103,7 @@ function EditKb({ kb, onClose, onDone }: { kb: any; onClose: () => void; onDone:
 function KiModal({ kb, onClose, onDone }: { kb?: any; onClose: () => void; onDone: (id: string) => void }) {
   const [name, setName] = useState('')
   const [type, setType] = useState(kb ? short(kb.type) : '图文')
-  const [tags, setTags] = useState<Record<string, string[]>>(emptyTags())
+  const [description, setDescription] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [err, setErr] = useState<string[]>()
   const [over, setOver] = useState<any>(null)
@@ -111,13 +115,14 @@ function KiModal({ kb, onClose, onDone }: { kb?: any; onClose: () => void; onDon
   const ok = async () => {
     const e: string[] = []
     if (!kb && !createdId && !name.trim()) e.push('请输入知识库名称')
+    if (!kb && !createdId && description.trim().length > 2000) e.push('描述不超过 2000 个字')
     if (!files.length) e.push('请上传文件')
     if (over && !ack) e.push('覆盖会影响已关联意图，请勾选确认')
     if (e.length) { setErr(e); return }
     setBusy(true)
     try {
       let id = createdId
-      if (!id) { const k = await api.post('/kbs', { name: name.trim(), type: type === '表格' ? '表格知识库' : '图文知识库-富文本', tags }); id = k.kb_id; setCreatedId(id) }
+      if (!id) { const k = await api.post('/kbs', { name: name.trim(), type: type === '表格' ? '表格知识库' : '图文知识库-富文本', description: description.trim() }); id = k.kb_id; setCreatedId(id) }
       const fd = new FormData(); files.forEach(f => fd.append('files', f)); fd.append('overwrite', over ? 'true' : 'false')
       await api.post(`/kbs/${id}/documents:import`, fd)
       toast('已提交导入，正在构建…'); onDone(id)
@@ -133,7 +138,7 @@ function KiModal({ kb, onClose, onDone }: { kb?: any; onClose: () => void; onDon
         {([['表格', '表格知识库', '列表格式的数据，比如问答对、用户数据等结构清晰、规范化的文档'], ['图文', '图文知识库', '支持图文文档内容数据，如图片、文档等，内容丰富、版面复杂的内容']] as const).map(x =>
           <div key={x[0]} id={'kiType_' + x[0]} onClick={() => { if (!createdId && type !== x[0]) { setType(x[0]); pick([]) } }} style={{ cursor: 'pointer', border: '1px solid ' + (type === x[0] ? '#2563eb' : '#e5e7eb'), background: type === x[0] ? '#eff6ff' : '#fff', borderRadius: 8, padding: '10px 12px' }}>
             <b>{x[1]}</b><div className="muted">{x[2]}</div><div className="muted">支持 {TYPE_EXT[x[0]].map(e => '.' + e).join(' ')}</div></div>)}</div></div>
-      <TagForm tags={tags} setTags={setTags} />
+      <div className="f"><label>描述</label><textarea id="kiD" rows={4} maxLength={2000} value={description} disabled={!!createdId} onChange={e => setDescription(e.target.value)} placeholder="可选，说明这份知识是做什么用的" /></div>
     </>}
     {kb && <div className="muted" style={{ marginBottom: 8 }}>目标知识库：<b>{kb.name}</b>（{kb.type}）{kb.headers?.length ? '　表头：' + kb.headers.join(' | ') : ''}</div>}
     <div className="f"><label><span style={{ color: '#dc2626' }}>*</span> 导入文件</label>
@@ -166,7 +171,8 @@ function KbDetail({ id }: { id: string }) {
     <div style={{ marginBottom: 8 }}><a onClick={() => go('#/kb')}>← 返回知识库列表</a></div>
     <div className="card"><div className="row"><span style={{ fontSize: 26 }}>{short(k.type) === '表格' ? '▦' : '📄'}</span><div>
       <div className="row"><b style={{ fontSize: 16 }} id="kbName">{k.name}</b><KbBadge s={k.status} /></div>
-      <div className="muted">更新时间：{fmt(k.updated_at)}　　知识库类型：{k.type}　　标签：{TAGK.some(([t]) => (k.tags[t] || []).length) ? <TagBadges tags={k.tags} /> : '不限'}　　关联意图：{k.linked.length}</div></div></div></div>
+      <div className="muted">更新时间：{fmt(k.updated_at)}　　知识库类型：{k.type}　　关联意图：{k.linked.length}</div>
+        {k.description ? <div className="muted" style={{ whiteSpace: 'pre-wrap', marginTop: 6 }}>{k.description}</div> : null}</div></div></div>
     <div className="card"><div className="tabs">{[['docs', '导入文档'], ['chunks', '知识库详情'], ['search', '知识库检索']].map(([t, l]) =>
       <div key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{l}</div>)}</div>
       {tab === 'docs' && <DocsTab k={k} reload={reload} onImport={() => setImp(true)} toChunks={d => { setChunkDoc(d); setTab('chunks') }} canEdit={canEdit} />}
@@ -241,7 +247,7 @@ function SearchTab({ k }: { k: any }) {
   const [res, setRes] = useState<any[] | null>(null)
   const [cfg] = useAsync(() => api.get('/kb-settings'), [])
   const [vals] = useAsync(() => api.get(`/kbs/${k.kb_id}/chunks?page_size=500`), [k.kb_id])
-  const tagVals = (t: string) => Array.from(new Set([...(k.tags[t] || []), ...((vals?.items || []).flatMap((c: any) => c.effective_tags[t] || []))]))
+  const tagVals = (t: string) => Array.from(new Set([...((k.tags && k.tags[t]) || []), ...((vals?.items || []).flatMap((c: any) => c.effective_tags[t] || []))]))
   const run = async (f = tf) => {
     if (!q.trim()) { toast('请输入问题'); return }
     try { setRes(await api.post(`/kbs/${k.kb_id}/search`, { query: q.trim(), ...f })) } catch (e) { toast(errLines(e)[0]) }

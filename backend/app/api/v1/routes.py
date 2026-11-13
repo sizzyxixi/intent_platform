@@ -377,7 +377,7 @@ async def create_kb(request: Request, ctx: KeyCtx = Depends(api_key(W_KB)), db: 
 
     def run():
         kb = kb_svc.create_kb(db, payload.get("name"), payload.get("type") or "表格知识库",
-                              payload.get("tags") or {}, ctx.actor)
+                              ctx.actor, description=payload.get("description") or "")
         db.flush()
         return 201, {**kb_svc.kb_dict(kb, admin=True), "action": "created"}
     return idempotent(request, db, ctx, payload, run)

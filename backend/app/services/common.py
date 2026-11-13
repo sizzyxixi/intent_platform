@@ -4,6 +4,8 @@ from datetime import datetime, timezone, timedelta
 
 TZ_CN = timezone(timedelta(hours=8))
 TAG_KEYS = ("platform", "site", "language", "category")
+SCOPE_LABELS = (("platform", "平台"), ("site", "站点"), ("language", "语言"), ("category", "类目"))
+DESC_MAX = 2000  # 知识库描述最大字数
 INTENT_CODE_RE = re.compile(r"^[A-Z]{1,4}(\.[A-Z0-9_]+){1,6}$")
 CATEGORY_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,31}$")
 MAX_CATEGORY_LEVELS = 5
@@ -70,6 +72,28 @@ def norm_tags(t: dict | None) -> dict:
 def effective_tags(kb_tags: dict | None, chunk_tags: dict | None) -> dict:
     kt, ct = norm_tags(kb_tags), norm_tags(chunk_tags)
     return {k: (ct[k] if ct[k] else kt[k]) for k in TAG_KEYS}
+
+
+def scope_tags_to_description(tags: dict | None) -> str:
+    """把旧的适用范围标签拼成一段描述文本（空标签省略）。"""
+    t = tags or {}
+    parts = []
+    for k, label in SCOPE_LABELS:
+        vals = t.get(k) or []
+        if isinstance(vals, str):
+            vals = [x.strip() for x in re.split(r"[,，]", vals) if x.strip()]
+        vals = [str(x).strip() for x in vals if str(x).strip()]
+        if vals:
+            parts.append(f"{label}：{'、'.join(vals)}")
+    return "\n".join(parts)
+
+
+def clean_description(val, *, max_len: int = DESC_MAX) -> str:
+    s = ("" if val is None else str(val)).strip()
+    if len(s) > max_len:
+        from ..errors import unprocessable
+        raise unprocessable(f"描述不超过 {max_len} 个字（当前 {len(s)} 个字）")
+    return s
 
 
 def tag_hit(eff: dict, filters: dict) -> bool:

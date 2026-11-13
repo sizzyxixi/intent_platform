@@ -655,12 +655,14 @@
      ],
      "default": "表格知识库"
     },
-    "tags": {
-     "type": "object"
-    },
     "idempotency_key": {
      "type": "string",
      "maxLength": 64
+    },
+    "description": {
+     "type": "string",
+     "maxLength": 2000,
+     "description": "可选。自由文本，说明这份知识是做什么用的（不超过 2000 字）。不要再传平台/站点/语言/类目等固化适用范围字段，即使传入也会被忽略。"
     }
    }
   }

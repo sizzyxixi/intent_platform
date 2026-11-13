@@ -213,8 +213,19 @@ def test_recognition_admin(admin):
 def test_kb_admin(admin):
     kbs = admin.get("/api/admin/kbs").json()
     assert len(kbs) == 11 and sum(k["chunk_count"] for k in kbs) > 0
-    r = admin.post("/api/admin/kbs", json={"name": "新表格库", "type": "表格知识库", "tags": {"platform": ["TikTok"]}})
+    r = admin.post("/api/admin/kbs", json={"name": "新表格库", "type": "表格知识库",
+                                           "description": "用于验收的表格库",
+                                           "tags": {"platform": ["TikTok"]}})  # tags 应被忽略
+    assert r.status_code == 201
+    assert r.json()["description"] == "用于验收的表格库" and "tags" not in r.json()
     kid = r.json()["kb_id"]
+    aq = next(k for k in kbs if k["kb_id"] == "kb_aq")
+    assert "tags" not in aq
+    assert "平台：1688" in aq["description"] and "语言：zh" in aq["description"]
+    r2 = admin.patch(f"/api/admin/kbs/{kid}", json={"description": "已改描述", "tags": {"platform": ["Shopee"]}})
+    assert r2.status_code == 200 and r2.json()["description"] == "已改描述" and "tags" not in r2.json()
+    r3 = admin.post("/api/admin/kbs", json={"name": "超长描述库", "type": "表格知识库", "description": "字" * 2001})
+    assert r3.status_code == 422
     csv = "问题,答案\nA,B\n".encode()
     r = admin.post(f"/api/admin/kbs/{kid}/documents:import", files={"files": ("a.csv", csv, "text/csv")})
     assert r.status_code == 202

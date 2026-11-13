@@ -41,7 +41,7 @@ def list_kbs(name: str | None = None, actor=Depends(VIEW), db: Session = Depends
 @router.post("/kbs", status_code=201)
 async def create_kb(request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
     b = await json_body(request)
-    kb = kb_svc.create_kb(db, b.get("name"), b.get("type"), b.get("tags") or {}, actor)
+    kb = kb_svc.create_kb(db, b.get("name"), b.get("type"), actor, description=b.get("description") or "")
     db.commit()
     return kb_svc.kb_dict(kb_svc.get_kb(db, kb.id), admin=True)
 

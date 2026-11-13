@@ -252,10 +252,12 @@ def call_tool(request: Request, db: Session, ctx: KeyCtx, name: str, args: dict,
         return body
     if name == "create_knowledge_base":
         _need_idem(args)
-        payload = {"name": args["name"], "type": args.get("type") or "表格知识库", "tags": args.get("tags") or {}}
+        payload = {"name": args["name"], "type": args.get("type") or "表格知识库",
+                   "description": args.get("description") or ""}
         st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, **payload},
                          lambda: ({**kb_svc.kb_dict(kb_svc.create_kb(
-                             db, payload["name"], payload["type"], payload["tags"], ctx.actor), admin=True),
+                             db, payload["name"], payload["type"], ctx.actor,
+                             description=payload["description"]), admin=True),
                                    "action": "created"}))
         if st >= 400:
             raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))

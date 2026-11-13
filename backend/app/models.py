@@ -122,8 +122,9 @@ class KnowledgeBase(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
     type: Mapped[str] = mapped_column(String(20))  # 表格知识库 / 图文知识库-富文本
+    description: Mapped[str] = mapped_column(Text, default="")
     headers: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    tags: Mapped[dict] = mapped_column(JSONB, default=dict)
+    tags: Mapped[dict] = mapped_column(JSONB, default=dict)  # 历史适用范围，保留列供切片继承与检索；API/UI 不再读写
     position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())

@@ -90,6 +90,7 @@ def test_kbs_docs_chunks(bot):
     assert len(kbs) == 11
     aq = next(k for k in kbs if k["kb_id"] == "kb_aq")
     assert aq["headers"] == ["问题", "答案", "意图编码", "适用范围"]
+    assert "tags" not in aq and "平台：1688" in aq.get("description", "")
     docs = check(bot.get("/api/v1/kbs/kb_aq/documents"))
     assert docs and docs[0]["data_size"].endswith("条")
     ch = check(bot.get("/api/v1/kbs/kb_aq/chunks?page_size=5"))

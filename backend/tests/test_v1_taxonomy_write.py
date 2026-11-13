@@ -162,13 +162,16 @@ def test_patch_still_forbids_enable_via_patch(linxia, full_key):
 
 
 def test_create_kb_and_bind_knowledge(full_key):
-    r = full_key.post("/api/v1/kbs", json={"name": "探针知识库-请勿用于业务", "type": "表格知识库"})
+    r = full_key.post("/api/v1/kbs", json={"name": "探针知识库-请勿用于业务", "type": "表格知识库",
+                                          "description": "开放接口探针库", "tags": {"platform": ["TikTok"]}})
     assert r.status_code == 201
     b = check(r)
     kid = b["kb_id"]
-    assert b["action"] == "created"
+    assert b["action"] == "created" and b["description"] == "开放接口探针库" and "tags" not in b
     got = check(full_key.get(f"/api/v1/kbs/{kid}"))
-    assert got["name"] == "探针知识库-请勿用于业务"
+    assert got["name"] == "探针知识库-请勿用于业务" and got["description"] == "开放接口探针库" and "tags" not in got
+    r = full_key.patch(f"/api/v1/kbs/{kid}", json={"description": "已改为描述"})
+    assert check(r)["description"] == "已改为描述"
 
     # 用已有库绑到草稿意图
     full_key.post("/api/v1/taxonomy/nodes", json=NODE, space="cs")

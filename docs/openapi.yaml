@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
-  version: 0.19.1
+  version: 0.19.2
   description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
 
     给 AI 的总规则：
@@ -31,6 +31,7 @@ info:
 
     - v0.6 起 MCP 按「服务 → 子工具」登记：子工具名为 {服务名}.{远端工具名}，Tool.server 为服务名，Tool.mcp_server 由 0.5 的 URL 字符串改为连接信息对象（URL 在 mcp_server.url）；runtime-config 新增 mcp_servers（只含被用到的服务，密钥只给环境变量名 auth.token_env）。
 
+    - v0.19.2：知识库创建/编辑改为可选的自由文本「描述」，不再使用固化的适用范围字段（平台/站点/语言/类目）；旧标签已迁移进描述。
     - v0.19.1：给意图绑定或解绑已有工具只需「意图:写」，不再要求「工具:写」。
     - v0.19：开放接口允许维护型 AI 创建 / 更新 / 停用分类节点（「意图:写」），batchUpsert 支持 auto_create_parents，并可用 POST /api/v1/batchUpsert 一次性提交节点和意图（失败全部回滚）。另开放启用 / 停用意图、新建知识库、给意图关联知识。推荐 API 基址为 http://47.86.15.93/intent-platform（部分代理无法解析 sslip.io）。
 
@@ -767,9 +768,9 @@ paths:
       - 知识库
       operationId: listKnowledgeBases
       summary: 知识库列表
-      description: '何时用：导入或检索知识前，先找到目标知识库的 kb_id、类型和表头（表格知识库）。
+      description: '何时用：导入或检索知识前，先找到目标知识库的 kb_id、类型、描述和表头（表格知识库）。
 
-        何时不用：AI 不能创建或删除知识库；需要新库请让运营在平台上新建。
+        何时不用：删除知识库仍须运营在控制台操作；新建可用 POST /api/v1/kbs（知识:写）。
 
 
         全局接口：知识库与工具全平台通用，不需要 X-Space-Id（传了也会忽略）。
@@ -808,7 +809,10 @@ paths:
                 type:
                   type: string
                   enum: [表格知识库, 图文知识库-富文本]
-                tags: {type: object}
+                description:
+                  type: string
+                  maxLength: 2000
+                  description: 可选。自由文本，说明这份知识是做什么用的。传入 tags 等旧适用范围字段会被忽略。
       responses:
         '201':
           description: 已创建
@@ -857,7 +861,7 @@ paths:
     patch:
       tags: [知识]
       operationId: patchKb
-      summary: 修改知识库名称或标签
+      summary: 修改知识库名称或描述（传入 tags 等旧适用范围字段会被忽略）
       parameters:
       - name: kb_id
         in: path
@@ -870,6 +874,12 @@ paths:
           application/json:
             schema:
               type: object
+              properties:
+                name: {type: string}
+                description:
+                  type: string
+                  maxLength: 2000
+                  description: 可选。自由文本，说明这份知识是做什么用的。
       responses:
         '200':
           description: 已更新
@@ -2775,9 +2785,11 @@ components:
         created_at:
           type: string
           format: date-time
-        tags:
-          $ref: '#/components/schemas/ScopeTags'
-      description: 知识库全平台通用，不区分业务空间；用 tags 区分适用场景。
+        description:
+          type: string
+          maxLength: 2000
+          description: 可选。自由文本，说明这份知识是做什么用的。
+      description: 知识库全平台通用，不区分业务空间；用 description 说明用途。不再使用固化的适用范围字段。
     Document:
       type: object
       required:

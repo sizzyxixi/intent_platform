@@ -23,7 +23,7 @@ from . import audit
 from .db import SessionLocal
 from .models import Category, Chunk, Document, ImportRecord, Intent, IntentLog, KnowledgeBase, SlotDef, Space, Tool
 from .services import intents as intent_svc, knowledge as kb_svc, slots as slot_svc
-from .services.common import Actor, utcnow
+from .services.common import scope_tags_to_description, Actor, utcnow
 
 SPACE = "cs"
 DATA = Path(__file__).resolve().parents[1] / "seed" / "cs_1688" / "cs_1688.json"
@@ -115,6 +115,7 @@ def build_kbs(db, spec: dict) -> dict[str, dict[str, str]]:
     index = {}
     for k in kb_specs(spec):
         kb = KnowledgeBase(id=k["id"], name=k["name"], type="表格知识库", headers=[], tags=dict(TAGS),
+                           description=scope_tags_to_description(TAGS),
                            position=-int(utcnow().timestamp()))
         db.add(kb)
         db.flush()

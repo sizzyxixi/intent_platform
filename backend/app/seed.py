@@ -21,7 +21,7 @@ from .db import SessionLocal
 from .models import (ApiKey, Chunk, Document, ImportRecord, Intent, IntentLog, KnowledgeBase, Setting, SlotDef, Space,
                      Tool, User, Category, McpServer, SkillPackage)
 from .security import hash_password, new_api_token, token_hash, token_hint
-from .services.common import TZ_CN, parse_local, utcnow
+from .services.common import scope_tags_to_description, TZ_CN, parse_local, utcnow
 from .services.parsers import content_hash
 from .services.search import backend
 from .services import skills as skill_svc
@@ -93,8 +93,10 @@ def seed(db: Session, data: dict, with_keys: bool = True, demo_tools: bool = Tru
     # 知识库
     chunk_pks = []
     for pos, kb in enumerate(st["kbs"]):
-        k = KnowledgeBase(id=kb["id"], name=kb["name"], type=KB_TYPE[kb["type"]],
-                          headers=kb.get("headers") if kb["type"] == "表格" else None, tags=kb.get("tags") or {},
+        tags = kb.get("tags") or {}
+        desc = (kb.get("description") or "").strip() or scope_tags_to_description(tags)
+        k = KnowledgeBase(id=kb["id"], name=kb["name"], type=KB_TYPE[kb["type"]], description=desc,
+                          headers=kb.get("headers") if kb["type"] == "表格" else None, tags=tags,
                           position=pos, created_at=_t(kb.get("created")), updated_at=_t(kb.get("updated")))
         db.add(k)
         for d in kb["docs"]:

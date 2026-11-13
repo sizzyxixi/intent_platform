@@ -13,7 +13,7 @@ from ..errors import ApiError, bad_request, conflict, not_found, unprocessable
 from ..models import Chunk, Document, ImportRecord, Intent, KnowledgeBase, Setting, Space
 from . import intents as intent_svc
 from . import spaces as space_svc
-from .common import KB_TYPES, TAG_KEYS, Actor, effective_tags, iso, norm_tags, utcnow
+from .common import KB_TYPES, TAG_KEYS, Actor, clean_description, effective_tags, iso, norm_tags, utcnow
 from .importer import next_import_id
 from .parsers import BuildFailure, check_ext, content_hash, parse_table, parse_text, row_text
 from .search import backend
@@ -33,8 +33,9 @@ def kb_status(kb: KnowledgeBase) -> str:
 
 def kb_dict(kb: KnowledgeBase, admin: bool = False) -> dict:
     d = {"kb_id": kb.id, "name": kb.name, "type": kb.type, "status": kb_status(kb),
+         "description": kb.description or "",
          "headers": list(kb.headers) if kb.headers else None, "updated_at": iso(kb.updated_at),
-         "created_at": iso(kb.created_at), "tags": norm_tags(kb.tags)}
+         "created_at": iso(kb.created_at)}
     if d["headers"] is None:
         d.pop("headers")
     if admin:
@@ -184,7 +185,9 @@ def _check_tags(tags) -> dict:
     return norm_tags(tags if isinstance(tags, dict) else {})
 
 
-def create_kb(db: Session, name: str, kb_type: str, tags: dict, actor: Actor) -> KnowledgeBase:
+def create_kb(db: Session, name: str, kb_type: str, actor: Actor, description: str = "",
+              tags=None) -> KnowledgeBase:
+    """tags 为兼容参数，忽略不写入（历史适用范围已迁到 description）。"""
     name = (name or "").strip()
     if not name:
         raise unprocessable("知识库名称必填")
@@ -192,17 +195,20 @@ def create_kb(db: Session, name: str, kb_type: str, tags: dict, actor: Actor) ->
         raise unprocessable("知识库类型应为 表格知识库 / 图文知识库-富文本")
     if db.scalar(select(KnowledgeBase).where(KnowledgeBase.name == name)):
         raise conflict(f"知识库名称「{name}」已存在", "KB_NAME_EXISTS")
-    kb = KnowledgeBase(id="kb_" + secrets.token_hex(4), name=name, type=kb_type,
-                       headers=[] if kb_type == "表格知识库" else None, tags=_check_tags(tags),
+    desc = clean_description(description)
+    kb = KnowledgeBase(id="kb_" + secrets.token_hex(4), name=name, type=kb_type, description=desc,
+                       headers=[] if kb_type == "表格知识库" else None, tags={},
                        position=-int(utcnow().timestamp()))
     db.add(kb)
     db.flush()
-    audit.record(db, actor, "kb.create", "kb", kb.id, f"新建知识库「{name}」", None, {"type": kb_type, "tags": kb.tags})
+    audit.record(db, actor, "kb.create", "kb", kb.id, f"新建知识库「{name}」", None,
+                 {"type": kb_type, "description": desc})
     return kb
 
 
 def update_kb(db: Session, kb: KnowledgeBase, data: dict, actor: Actor) -> KnowledgeBase:
-    before = {"name": kb.name, "tags": norm_tags(kb.tags)}
+    # tags / platform / site / language / category 若随请求传入则忽略
+    before = {"name": kb.name, "description": kb.description or ""}
     if "name" in data:
         n = (data.get("name") or "").strip()
         if not n:
@@ -210,12 +216,13 @@ def update_kb(db: Session, kb: KnowledgeBase, data: dict, actor: Actor) -> Knowl
         if n != kb.name and db.scalar(select(KnowledgeBase).where(KnowledgeBase.name == n)):
             raise conflict(f"知识库名称「{n}」已存在", "KB_NAME_EXISTS")
         kb.name = n
-    if "tags" in data:
-        kb.tags = _check_tags(data["tags"])
-    after = {"name": kb.name, "tags": norm_tags(kb.tags)}
+    if "description" in data:
+        kb.description = clean_description(data.get("description"))
+    after = {"name": kb.name, "description": kb.description or ""}
     if before != after:
         kb.updated_at = utcnow()
-        audit.record(db, actor, "kb.update", "kb", kb.id, f"编辑知识库「{kb.name}」", None, {"before": before, "after": after})
+        audit.record(db, actor, "kb.update", "kb", kb.id, f"编辑知识库「{kb.name}」", None,
+                     {"before": before, "after": after})
     return kb
 
 
