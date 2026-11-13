@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, errLines, fmt } from '../api'
+import { api, errLines, fmt, qs } from '../api'
 import { useSession } from '../session'
-import { Badge, Btn, Drawer, ErrBox, ST_C, toast, useAsync } from '../ui'
+import { Badge, Btn, Drawer, ErrBox, Pager, ST_C, toast, useAsync } from '../ui'
 import KbPicker from './KbPicker'
 import { SlotForm } from './Slots'
 import { Tax, leaves } from '../taxonomy'
@@ -14,7 +14,6 @@ type Bind = { tool: string; param_map: Record<string, { source: string; value: s
 const CTX = ['session_id', 'buyer_id', 'order_id', 'sku']
 const FILE_SLOT = ['文件', '图片']
 const PICK_TYPES: [string, string][] = [['http', 'API 接口'], ['mcp', 'MCP'], ['cli', 'CLI 命令'], ['skill', '技能'], ['workflow', '工作流'], ['builtin', '平台内置']]
-const MAX_OPTS = 300
 
 export default function IntentEditor({ code, onClose, onSaved }: { code: string; onClose: () => void; onSaved: () => void }) {
   const { space, canEdit, reloadSpaces } = useSession()
@@ -31,7 +30,35 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   const body = useRef<HTMLDivElement>(null)
   const [slots, reloadSlots] = useAsync(() => api.get(`/spaces/${space.id}/slots`), [space.id])
   const [tax] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
-  const [tools] = useAsync(() => api.get('/tools'), [])
+  const [pickPage, setPickPage] = useState(1)
+  const [toolQDeb, setToolQDeb] = useState('')
+  const [extraTools, setExtraTools] = useState<any[]>([])
+  useEffect(() => {
+    const tmr = setTimeout(() => { setToolQDeb(toolQ); setPickPage(1) }, 300)
+    return () => clearTimeout(tmr)
+  }, [toolQ])
+  useEffect(() => { setPickPage(1); setToolSel(''); setToolQ('') }, [pickTy0, cliGrp])
+  const boundKey = E ? E.tools.map((b: Bind) => b.tool).join(',') : ''
+  const [boundResp] = useAsync(
+    () => !E ? Promise.resolve(undefined) : boundKey
+      ? api.get('/tools' + qs({ names: boundKey })) : Promise.resolve({ items: [] as any[] }),
+    [boundKey, !!E])
+  const [facetsResp] = useAsync(() => api.get('/tools' + qs({ page: 1, page_size: 1, maintenance: false })), [])
+  const [mcpServers] = useAsync(() => api.get('/mcp-servers'), [])
+  const packOf = cliGrp.includes('|') ? cliGrp.split('|')[0] : cliGrp
+  const groupOf = cliGrp.includes('|') ? cliGrp.slice(cliGrp.indexOf('|') + 1) : ''
+  const [pickData] = useAsync(() => {
+    if (!pickTy0 || pickTy0 === 'mcp') return Promise.resolve({ items: [] as any[], total: 0 })
+    return api.get('/tools' + qs({
+      page: pickPage, page_size: 50, q: toolQDeb,
+      type: pickTy0 === 'builtin' ? undefined : pickTy0,
+      source: pickTy0 === 'builtin' ? 'builtin' : undefined,
+      pack: packOf || undefined,
+      group: groupOf || undefined,
+      maintenance: false,
+      exclude_type: pickTy0 === 'builtin' ? 'mcp' : undefined,
+    }))
+  }, [pickTy0, toolQDeb, cliGrp, pickPage])
   useEffect(() => {
     api.get(`/intents/${code}`).then(x => {
       setD(x)
@@ -41,13 +68,16 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
     }).catch(e => { toast(errLines(e)[0]); onClose() })
   // eslint-disable-next-line
   }, [code])
-  if (!d || !E || !slots || !tax || !tools) return <Drawer title="加载中…" onClose={onClose}><div className="loading">加载中…</div></Drawer>
+  if (!d || !E || !slots || !tax || boundResp === undefined || !facetsResp || !mcpServers) return <Drawer title="加载中…" onClose={onClose}><div className="loading">加载中…</div></Drawer>
   const set = (k: string, v: any) => setE((e: any) => ({ ...e, [k]: v }))
   const opts = leaves(tax)
   const curRoot = opts.find(o => o.id === d.category_id)?.root
   const cur = opts.find(o => o.id === E.category_id)
   const lvNames = tax.levels
-  const toolOf = (name: string) => tools.find((t: any) => t.name === name)
+  const facets = facetsResp.facets || {}
+  const catalog: any[] = [...(boundResp.items || []), ...extraTools, ...(pickData?.items || []),
+    ...(mcpServers as any[]).flatMap((v: any) => v.tools || [])]
+  const toolOf = (name: string) => catalog.find((t: any) => t.name === name)
   const slotDef = (name: string) => slots.find((s: any) => s.name === name)
   const payload = () => ({ name: E.name.trim(), category_id: E.category_id, description: E.description.trim(),
     examples: E.ex.split('\n').map((x: string) => x.trim()).filter(Boolean), slots: E.slots,
@@ -78,17 +108,20 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
     })
     return { tool: t.name, param_map: map }
   }
-  const servers: any[] = Object.values(tools.filter((t: any) => t.type === 'mcp' && t.server).reduce((m: any, t: any) => {
-    (m[t.server] ||= { ...t.mcp_server, tools: [] }).tools.push(t); return m }, {}))
+  const servers: any[] = mcpServers as any[]
   const bound = new Set(E.tools.map((b: Bind) => b.tool))
-  const groups: Record<string, any[]> = { http: [], mcp: [], cli: [], skill: [], workflow: [], builtin: [] }
-  tools.filter((t: any) => t.type !== 'mcp' && !t.maintenance && !bound.has(t.name)).forEach((t: any) => { (t.source === 'builtin' ? groups.builtin : groups[t.type])?.push(t) })
-  servers.forEach((v: any) => { const avail = v.tools.filter((t: any) => t.enabled && !t.remote_missing && !bound.has(t.name)).length; if (avail) groups.mcp.push({ ...v, avail }) })
-  const pickTy = pickTy0 && groups[pickTy0]?.length ? pickTy0 : (PICK_TYPES.find(([k]) => groups[k]?.length)?.[0] || '')
+  const typeCounts: Record<string, number> = {
+    http: facets.by_type?.http || 0, cli: facets.by_type?.cli || 0, skill: facets.by_type?.skill || 0,
+    workflow: facets.by_type?.workflow || 0, builtin: facets.builtin_bindable || 0,
+    mcp: servers.filter((v: any) => (v.tools || []).some((x: any) => x.enabled && !x.remote_missing && !bound.has(x.name))).length,
+  }
+  const pickTy = pickTy0
   const addTool = () => {
     if (!toolSel) { toast('请先选择工具'); return }
     if (toolSel.startsWith('srv:')) { setMcpPick(toolSel.slice(4)); return }
     const t = toolOf(toolSel)
+    if (!t) { toast('未找到该工具，请重新选择'); return }
+    setExtraTools(xs => xs.some(x => x.name === t.name) ? xs : [...xs, t])
     set('tools', [...E.tools, bindOf(t)]); setToolSel(''); toast(t.type === 'skill' ? `已关联技能 ${toolSel}` : `已关联 ${toolSel}，请确认入参映射`)
   }
   const setMap = (ti: number, p: string, src: string, v: string) => {
@@ -179,34 +212,39 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
             </div>
           })}
           {canEdit && (() => {
-            const all: any[] = pickTy === 'mcp' ? groups.mcp : (groups[pickTy] || [])
-            // CLI 命令多（如按官方目录接入的整套 CLI）时，按「命令包 › 业务分组」再分一级
-            const grpOf = (t: any) => t.cli?.pack ? [t.cli.pack, t.cli.pack_name || t.cli.pack, t.cli.group || ''] : null
-            const cliGroups: [string, string, number][] = pickTy !== 'cli' ? [] : Object.values(all.reduce((m: any, t: any) => {
-              const g = grpOf(t); if (!g) return m
-              ;(m[g[0]] ||= [g[0], g[1], 0])[2]++
-              if (g[2]) (m[g[0] + '|' + g[2]] ||= [g[0] + '|' + g[2], `${g[1]} › ${g[2]}`, 0])[2]++
-              return m }, {})).sort((a: any, b: any) => a[0].localeCompare(b[0])) as any
+            const mcpAvail = servers.map((v: any) => {
+              const avail = (v.tools || []).filter((x: any) => x.enabled && !x.remote_missing && !bound.has(x.name)).length
+              return { ...v, avail }
+            }).filter((v: any) => {
+              if (!v.avail) return false
+              const k = toolQ.trim().toLowerCase()
+              return !k || [v.name, v.display_name].some((s: string) => (s || '').toLowerCase().includes(k))
+            })
+            const packs: { pack: string; pack_name: string; count: number }[] = facets.packs || []
+            const groups: { pack: string; group: string; count: number }[] = facets.groups || []
+            const cliGroups: [string, string, number][] = pickTy !== 'cli' ? [] : [
+              ...packs.map((x: any) => [x.pack, x.pack_name || x.pack, x.count] as [string, string, number]),
+              ...groups.map((x: any) => [x.pack + '|' + x.group, `${packs.find((p: any) => p.pack === x.pack)?.pack_name || x.pack} › ${x.group}`, x.count] as [string, string, number]),
+            ]
             const grp = cliGroups.some(g => g[0] === cliGrp) ? cliGrp : ''
-            const items = !grp ? all : all.filter((t: any) => { const g = grpOf(t); return g && (grp.includes('|') ? g[0] + '|' + g[2] === grp : g[0] === grp) })
-            const k = toolQ.trim().toLowerCase()
-            const matched = items.filter((x: any) => !k || (pickTy === 'mcp' ? [x.name, x.display_name] : [x.name, x.display_name, x.description, x.cli?.command_template]).some((s: string) => (s || '').toLowerCase().includes(k)))
-            const shown = matched.slice(0, MAX_OPTS)
+            const items = pickTy === 'mcp' ? mcpAvail : (pickData?.items || []).filter((t: any) => !bound.has(t.name))
+            const shown = items
+            const pickTotal = pickTy === 'mcp' ? mcpAvail.length : (pickData?.total || 0)
             return <><div className="row" id="ePicker" style={{ flexWrap: 'wrap', gap: 8 }}>
               <select id="eToolType" value={pickTy} onChange={e => { setPickTy(e.target.value); sessionStorage.setItem('pickToolType', e.target.value); setToolSel(''); setToolQ(''); setCliGrp('') }}>
                 <option value="">— 选择类型 —</option>
-                {PICK_TYPES.filter(([k2]) => groups[k2]?.length).map(([k2, l]) => <option key={k2} value={k2}>{l}（{groups[k2].length}）</option>)}</select>
+                {PICK_TYPES.filter(([k2]) => typeCounts[k2]).map(([k2, l]) => <option key={k2} value={k2}>{l}（{typeCounts[k2]}）</option>)}</select>
               {cliGroups.length > 0 && <select id="eCliGrp" value={grp} onChange={e => { setCliGrp(e.target.value); setToolSel('') }}>
-                <option value="">全部命令包（{all.length}）</option>
+                <option value="">全部命令包（{facets.by_type?.cli || 0}）</option>
                 {cliGroups.map(([g, l, n]) => <option key={g} value={g}>{g.includes('|') ? '　' : ''}{l}（{n}）</option>)}</select>}
               <select id="eTool" value={toolSel} disabled={!pickTy} onChange={e => setToolSel(e.target.value)} style={{ maxWidth: 420 }}>
                 <option value="">{pickTy === 'mcp' ? '— 选择 MCP 服务 —' : '— 选择工具 —'}</option>
                 {pickTy === 'mcp' ? shown.map((v: any) => <option key={v.name} value={'srv:' + v.name}>{v.display_name}（{v.name} · {v.avail} 个可用工具）▸</option>)
-                  : shown.map((t: any) => <option key={t.name} value={t.name}>{t.display_name}（{t.name}）</option>)}
-                {matched.length > shown.length && <option disabled value="__more">…共 {matched.length} 个，只列出前 {MAX_OPTS} 个，请选分组或筛选</option>}</select>
-              {all.length > 5 && <input type="text" id="eToolQ" value={toolQ} onChange={e => setToolQ(e.target.value)} placeholder="筛选" style={{ width: 140 }} />}
+                  : shown.map((t: any) => <option key={t.name} value={t.name}>{t.display_name}（{t.name}）</option>)}</select>
+              {(pickTy === 'cli' || pickTotal > 5) && <input type="text" id="eToolQ" value={toolQ} onChange={e => setToolQ(e.target.value)} placeholder="筛选" style={{ width: 140 }} />}
               <Btn s id="toolAdd" onClick={addTool}>＋ 关联</Btn></div>
-              <div className="muted" style={{ marginTop: 4 }}>先选类型再选工具。技能无需映射入参；工作流按已同步入参映射（必填须映射或有默认值）；MCP 先选服务，再点「关联」下钻多选子工具；CLI 命令多时可先选命令包 / 业务分组；维护类平台内置工具不可选</div></>
+              {pickTy !== 'mcp' && pickData && <Pager page={pickPage} total={pickTotal} size={50} onPage={setPickPage} />}
+              <div className="muted" style={{ marginTop: 4 }}>先选类型再选工具。技能无需映射入参；工作流按已同步入参映射（必填须映射或有默认值）；MCP 先选服务，再点「关联」下钻多选子工具；CLI 命令多时可先选命令包 / 业务分组或搜索；维护类平台内置工具不可选</div></>
           })()}
         </div>
 
@@ -221,7 +259,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
     {pick && <KbPicker code={code} selected={E.kb_refs} onClose={() => setPick(false)} onOk={refs => { set('kb_refs', refs); setPick(false); toast(`已关联 ${refs.length} 项知识`) }} />}
     {mcpPick && (() => { const v = servers.find((x: any) => x.name === mcpPick); return v ? <McpPicker server={v} tools={v.tools} bound={E.tools.map((b: Bind) => b.tool)}
       onClose={() => { setMcpPick(null); setToolSel('') }}
-      onOk={names => { set('tools', [...E.tools, ...names.map(n => bindOf(toolOf(n)))]); setMcpPick(null); setToolSel(''); toast(`已关联 ${names.length} 个 MCP 工具，请确认入参映射`) }} /> : null })()}
+      onOk={names => { const ts = names.map(n => toolOf(n)).filter(Boolean); setExtraTools(xs => [...xs, ...ts.filter(t => !xs.some(x => x.name === t.name))]); set('tools', [...E.tools, ...ts.map(t => bindOf(t))]); setMcpPick(null); setToolSel(''); toast(`已关联 ${ts.length} 个 MCP 工具，请确认入参映射`) }} /> : null })()}
     {slotNew && <SlotForm slot={null} inline onClose={() => setSlotNew(false)} onDone={s => { setSlotNew(false); reloadSlots(); set('slots', [...E.slots, { name: s.name, required: false, ask: '' }]) }} />}
   </>
 }

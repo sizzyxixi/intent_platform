@@ -160,8 +160,13 @@ def get_import(import_id: str, actor=Depends(VIEW), db: Session = Depends(get_db
 
 
 # ---------------- 工具 ----------------
-@router.get("/tools")
-def list_tools(source: str | None = None, actor=Depends(VIEW), db: Session = Depends(get_db)):
+def _tool_item(d: dict, users, sp: dict) -> dict:
+    return {**d, "used_by": [{"code": u.code, "name": u.name, "space": u.space_id,
+                              "space_name": sp.get(u.space_id, u.space_id), "status": u.status} for u in users]}
+
+
+def _legacy_tool_list(db, source: str | None):
+    """无分页参数时保持原数组响应（兼容测试与旧调用方）。"""
     sp = kb_svc.space_names(db)
     usage = intent_svc.tool_usage(db)
     fp = [source, *[int(x) for x in tool_svc.fingerprint(db)]]
@@ -175,12 +180,43 @@ def list_tools(source: str | None = None, actor=Depends(VIEW), db: Session = Dep
             rows.append(d)
         _TOOL_CACHE.update(fp=fp, rows=rows)
         _save_cache_file()
-    out = []
-    for d in _TOOL_CACHE["rows"]:
-        users = usage.get(d["name"], [])
-        out.append({**d, "used_by": [{"code": u.code, "name": u.name, "space": u.space_id,
-                                      "space_name": sp.get(u.space_id, u.space_id), "status": u.status} for u in users]})
-    return out
+    return [_tool_item(d, usage.get(d["name"], []), sp) for d in _TOOL_CACHE["rows"]]
+
+
+@router.get("/tools")
+def list_tools(source: str | None = None,
+               typ: str | None = Query(None, alias="type", pattern="^(http|mcp|cli|skill|workflow)$"),
+               q: str | None = None,
+               pack: str | None = None,
+               group: str | None = None,
+               server: str | None = None,
+               status: str | None = Query(None, pattern="^(启用|停用|enabled|disabled)$"),
+               maintenance: bool | None = None,
+               exclude_type: str | None = None,
+               names: str | None = None,
+               page: int | None = Query(None, ge=1),
+               page_size: int | None = Query(None, ge=1, le=100),
+               actor=Depends(VIEW), db: Session = Depends(get_db)):
+    paged = any(v is not None for v in (page, page_size, typ, q, pack, group, server, status,
+                                        maintenance, exclude_type, names))
+    if not paged:
+        return _legacy_tool_list(db, source)
+    name_list = [x.strip() for x in (names or "").split(",") if x.strip()] or None
+    pg, ps = page or 1, page_size or 20
+    if name_list and page is None and page_size is None:
+        ps = min(100, max(len(name_list), 1))
+        pg = 1
+    filters = dict(source=source, typ=typ, q=q, pack=pack, group=group, server=server,
+                   status=status, maintenance=maintenance, exclude_type=exclude_type, names=name_list)
+    total, rows = tool_svc.list_page(db, pg, ps, **filters)
+    sp = kb_svc.space_names(db)
+    usage = intent_svc.tool_usage(db)
+    items = []
+    for t in rows:
+        d = tool_svc.admin_dict(t)
+        d.pop("input_schema", None)
+        items.append(_tool_item(d, usage.get(t.name, []), sp))
+    return {"items": items, "total": total, "page": pg, "page_size": ps, "facets": tool_svc.list_facets(db)}
 
 
 # 工具列表缓存（进程内，可选落盘 IP_TOOL_CACHE_FILE）：工具 / MCP 服务表没变化时不再整表读取；使用情况每次现查

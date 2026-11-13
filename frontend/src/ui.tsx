@@ -74,13 +74,17 @@ export function TagBadges({ tags }: { tags?: Record<string, string[]> }) {
   return <>{vals.map((v, i) => <span key={i} className="tg">{v}</span>)}</>
 }
 
-export function Pager({ page, total, size, onPage }: { page: number; total: number; size: number; onPage: (p: number) => void }) {
-  const pages = Math.max(1, Math.ceil(total / size))
-  if (pages <= 1) return null
+export function Pager({ page, total, size, onPage, onSize, sizes }: {
+  page: number; total: number; size: number; onPage: (p: number) => void
+  onSize?: (s: number) => void; sizes?: number[]
+}) {
+  const pages = Math.max(1, Math.ceil((total || 0) / size))
+  if (pages <= 1 && !onSize) return null
   return <div className="pager"><span className="muted">共 {total} 条</span>
-    <Btn s disabled={page <= 1} onClick={() => onPage(page - 1)}>上一页</Btn>
-    <span className="muted">{page} / {pages}</span>
-    <Btn s disabled={page >= pages} onClick={() => onPage(page + 1)}>下一页</Btn></div>
+    {onSize && (sizes || [20, 50, 100]).map(s => <Btn key={s} s={size !== s} p={size === s} onClick={() => onSize(s)}>{s} 条/页</Btn>)}
+    {pages > 1 && <><Btn s disabled={page <= 1} onClick={() => onPage(page - 1)}>上一页</Btn>
+      <span className="muted">{page} / {pages}</span>
+      <Btn s disabled={page >= pages} onClick={() => onPage(page + 1)}>下一页</Btn></>}</div>
 }
 
 export function useAsync<T>(fn: () => Promise<T>, deps: any[]): [T | undefined, () => void, any] {

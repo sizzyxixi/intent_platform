@@ -4,8 +4,9 @@ import { login } from './helpers'
 test('工具：注册 HTTP 工具 → 测试调用预览 → 删除', async ({ page }) => {
   await login(page)
   await page.goto('/#/tools/list')
-  // 24 个非 MCP 工具一行一个；MCP 工具按服务折叠
-  await expect(page.locator('#toolTbl tbody tr:not(.srvrow):not(.subrow)')).toHaveCount(24)
+  // 默认每页 20 条；MCP 工具按服务折叠，服务行在表格下方
+  await expect(page.locator('#toolTbl tbody tr:not(.srvrow):not(.subrow)')).toHaveCount(20)
+  await expect(page.locator('.pager')).toContainText('共 24 条')
   expect(await page.locator('#toolTbl tbody tr.srvrow').count()).toBeGreaterThanOrEqual(4)
   await page.click('#toolNew')
   await page.fill('#tN', 'e2e_query_color')
@@ -16,6 +17,7 @@ test('工具：注册 HTTP 工具 → 测试调用预览 → 删除', async ({ p
   await page.fill('#tO', '{"colors":["红","黑"]}')
   await page.click('#toolSave')
   await expect(page.getByTestId('toolEdit')).toHaveCount(0)
+  await page.fill('#toolQ', 'e2e_query_color')
   const row = page.locator('#toolTbl tbody tr', { hasText: 'e2e_query_color' })
   await expect(row).toBeVisible()
   await row.getByRole('button', { name: '测试调用' }).click()
@@ -71,6 +73,7 @@ test('接入与密钥：新建 Key 只显示一次 → 吊销', async ({ page, r
 test('工具：平台内置工具真实执行，显示状态与响应', async ({ page }) => {
   await login(page)
   await page.goto('/#/tools/list')
+  await page.fill('#toolQ', 'pf_list_tools')
   const row = page.locator('#toolTbl tbody tr[data-tool="pf_list_tools"]')
   await row.getByRole('button', { name: '测试调用' }).click()
   await page.click('#ttRun')
@@ -79,6 +82,7 @@ test('工具：平台内置工具真实执行，显示状态与响应', async ({
   await expect(page.locator('#ttOut')).toContainText('items')
   await page.keyboard.press('Escape')
   // 维护类（写）工具：未勾选确认不能执行
+  await page.fill('#toolQ', 'pf_write_slots')
   await page.locator('#toolTbl tbody tr[data-tool="pf_write_slots"]').getByRole('button', { name: '测试调用' }).click()
   await expect(page.locator('#ttRun')).toBeDisabled()
   await page.locator('#ttConfirm input').check()

@@ -3,7 +3,7 @@ import json
 import re
 import shlex
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
@@ -146,6 +146,93 @@ def list_tools(db: Session, source: str | None = None) -> list[Tool]:
         last = part[-1].name
     out.sort(key=lambda t: (t.position, t.name))
     return out
+
+
+def _escape_like(q: str) -> str:
+    return q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def apply_filters(stmt, *, source: str | None = None, typ: str | None = None, q: str | None = None,
+                  pack: str | None = None, group: str | None = None, server: str | None = None,
+                  status: str | None = None, maintenance: bool | None = None,
+                  exclude_type: str | None = None, names: list[str] | None = None):
+    """工具列表的服务端筛选（分页与按名取用共用）。"""
+    if names:
+        stmt = stmt.where(Tool.name.in_(names))
+    if source:
+        stmt = stmt.where(Tool.source == source)
+    if typ:
+        stmt = stmt.where(Tool.type == typ)
+    if exclude_type:
+        types = [x.strip() for x in exclude_type.split(",") if x.strip()]
+        if types:
+            stmt = stmt.where(Tool.type.notin_(types))
+    if pack:
+        stmt = stmt.where(Tool.config["pack"].astext == pack)
+    if group:
+        stmt = stmt.where(Tool.config["group"].astext == group)
+    if server:
+        stmt = stmt.where(Tool.server == server)
+    if maintenance is not None:
+        stmt = stmt.where(Tool.maintenance == maintenance)
+    if status in ("启用", "enabled"):
+        stmt = stmt.where(Tool.enabled.is_(True), Tool.remote_missing.is_(False))
+    elif status in ("停用", "disabled"):
+        stmt = stmt.where(or_(Tool.enabled.is_(False), Tool.remote_missing.is_(True)))
+    if q and q.strip():
+        pat = "%" + _escape_like(q.strip()) + "%"
+        stmt = stmt.where(or_(
+            Tool.name.ilike(pat, escape="\\"),
+            Tool.display_name.ilike(pat, escape="\\"),
+            Tool.description.ilike(pat, escape="\\"),
+            Tool.config["command_template"].astext.ilike(pat, escape="\\"),
+            Tool.config["group"].astext.ilike(pat, escape="\\"),
+        ))
+    return stmt
+
+
+def list_page(db: Session, page: int = 1, page_size: int = 20, **filters) -> tuple[int, list[Tool]]:
+    """分页列出工具。filters 见 apply_filters。"""
+    stmt = apply_filters(select(Tool), **filters)
+    total = db.scalar(select(func.count()).select_from(stmt.with_only_columns(Tool.name).order_by(None).subquery())) or 0
+    rows = list(db.scalars(stmt.order_by(Tool.position, Tool.name)
+                           .offset((page - 1) * page_size).limit(page_size)
+                           .options(selectinload(Tool.server_ref))))
+    return int(total), rows
+
+
+def list_facets(db: Session) -> dict:
+    """工具目录筛选项计数：非 MCP 工具按类型/来源，MCP 以服务为单位计入，外加 CLI 命令包与分组。"""
+    from ..models import McpServer
+    by_type: dict[str, int] = {}
+    by_source: dict[str, int] = {"external": 0, "builtin": 0}
+    tool_n = 0
+    for typ, src, n in db.execute(
+            select(Tool.type, Tool.source, func.count()).where(Tool.type != "mcp").group_by(Tool.type, Tool.source)):
+        by_type[typ] = by_type.get(typ, 0) + n
+        by_source[src] = by_source.get(src, 0) + n
+        tool_n += n
+    mcp_n = 0
+    for src, n in db.execute(select(McpServer.source, func.count()).group_by(McpServer.source)):
+        by_source[src] = by_source.get(src, 0) + n
+        mcp_n += n
+    packs, groups = [], []
+    pack_col, name_col, grp_col = Tool.config["pack"].astext, Tool.config["pack_name"].astext, Tool.config["group"].astext
+    for pack, pack_name, n in db.execute(
+            select(pack_col, name_col, func.count())
+            .where(Tool.type == "cli", pack_col.isnot(None), pack_col != "")
+            .group_by(pack_col, name_col).order_by(pack_col)):
+        packs.append({"pack": pack, "pack_name": pack_name or pack, "count": n})
+    for pack, group, n in db.execute(
+            select(pack_col, grp_col, func.count())
+            .where(Tool.type == "cli", pack_col.isnot(None), pack_col != "", grp_col.isnot(None), grp_col != "")
+            .group_by(pack_col, grp_col).order_by(pack_col, grp_col)):
+        groups.append({"pack": pack, "group": group, "count": n})
+    builtin_bindable = db.scalar(select(func.count()).select_from(Tool).where(
+        Tool.source == "builtin", Tool.maintenance.is_(False), Tool.type != "mcp")) or 0
+    return {"total": tool_n + mcp_n, "tool_count": tool_n, "mcp_servers": mcp_n,
+            "by_type": {**by_type, "mcp": mcp_n}, "by_source": by_source, "packs": packs, "groups": groups,
+            "builtin_bindable": int(builtin_bindable)}
 
 
 def fingerprint(db: Session) -> tuple:

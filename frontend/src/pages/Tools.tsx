@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
-import { api, download, errLines, fmt } from '../api'
+import { api, download, errLines, fmt, qs } from '../api'
 import demo from '../demoContent.json'
 import { useSession } from '../session'
-import { Badge, Btn, ErrBox, Modal, toast, useAsync } from '../ui'
+import { Badge, Btn, ErrBox, Modal, Pager, toast, useAsync } from '../ui'
 import { credText, serverEnd, syncText } from './McpServers'
 import ToolEdit, { KINDS, TypeTag, WF_PLAT, pTypeLabel } from './ToolEdit'
 
-const PAGE = 100
 const API_ROWS = (demo as any).API_ROWS as string[][]
 const MCP_ROWS = (demo as any).MCP_ROWS as string[][]
 
@@ -34,32 +33,40 @@ function End({ t }: { t: any }) {
 
 function ToolList() {
   const { canEdit } = useSession()
-  const [data, reload] = useAsync(() => Promise.all([api.get('/tools'), api.get('/mcp-servers')]), [])
   const [sf, setSf] = useState('')
   const [tf, setTf] = useState('')
   const [edit, setEdit] = useState<{ tool?: any; server?: any } | null>(null)
   const [test, setTest] = useState<any>(null)
   const [open, setOpen] = useState<Record<string, boolean>>({})
+  const [qIn, setQIn] = useState('')
   const [q, setQ] = useState('')
   const [pk, setPk] = useState('')
-  const [lim, setLim] = useState(PAGE)
-  useEffect(() => setLim(PAGE), [q, pk, tf, sf])
-  if (!data) return <div className="loading">加载中…</div>
-  const [all, servers] = data as [any[], any[]]
-  const nb = all.filter((t: any) => t.source === 'builtin').length
-  const nbSrv = servers.filter((v: any) => v.source === 'builtin').length
-  const flat = all.filter((t: any) => t.type !== 'mcp')
+  const [st, setSt] = useState('')
+  const [page, setPage] = useState(1)
+  const [size, setSize] = useState(20)
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    const t = setTimeout(() => { setQ(qIn); setPage(1) }, 300)
+    return () => clearTimeout(t)
+  }, [qIn])
+  const [servers, reloadSrv] = useAsync(() => api.get('/mcp-servers'), [n])
+  const [data, reloadTools] = useAsync(() => tf === 'mcp' ? Promise.resolve({ items: [], total: 0, facets: null })
+    : api.get('/tools' + qs({ page, page_size: size, q, type: tf, source: sf, pack: pk, status: st, exclude_type: 'mcp' })),
+    [page, size, q, tf, sf, pk, st, n])
+  const [facetHold] = useAsync(() => api.get('/tools' + qs({ page: 1, page_size: 1, exclude_type: 'mcp' })), [n])
+  const reload = () => { setN(x => x + 1); reloadSrv(); reloadTools() }
+  if (!servers || !data) return <div className="loading">加载中…</div>
+  const facets = data.facets || facetHold?.facets || { total: 0, tool_count: 0, mcp_servers: 0, by_type: {}, by_source: {}, packs: [] }
+  const ts: any[] = data.items || []
   const kw = q.trim().toLowerCase()
   const hit = (...xs: string[]) => !kw || xs.some(x => (x || '').toLowerCase().includes(kw))
-  const packs: [string, string, number][] = Object.values(flat.filter((t: any) => t.cli?.pack).reduce((m: any, t: any) => {
-    (m[t.cli.pack] ||= [t.cli.pack, t.cli.pack_name || t.cli.pack, 0])[2]++; return m }, {}))
-  const ts = flat.filter((t: any) => (!tf || t.type === tf) && (!sf || t.source === sf) && (!pk || t.cli?.pack === pk)
-    && hit(t.name, t.display_name, t.description, t.cli?.command_template, t.cli?.group))
-  const ss = servers.filter((v: any) => (!tf || tf === 'mcp') && (!sf || v.source === sf) && !pk && hit(v.name, v.display_name, v.description))
-  const subs = (v: any) => all.filter((t: any) => t.server === v.name)
-  const cnt = (k: string) => k === 'mcp' ? servers.length : flat.filter((t: any) => t.type === k).length
+  const ss = (servers as any[]).filter((v: any) => (!tf || tf === 'mcp') && (!sf || v.source === sf) && !pk && hit(v.name, v.display_name, v.description))
+  const packs: [string, string, number][] = (facets.packs || []).map((x: any) => [x.pack, x.pack_name || x.pack, x.count])
+  const cnt = (k: string) => facets.by_type?.[k] ?? 0
+  const srcN = (k: string) => facets.by_source?.[k] ?? 0
+  const setFilter = (fn: () => void) => { fn(); setPage(1) }
   const fb = (id: string, lab: string, list: [string, string, number][], cur: string, set: (x: string) => void) =>
-    <div className="row" id={id} style={{ marginTop: 8 }}><span className="muted">{lab}</span>{list.map(x => <Btn key={x[0] || 'all'} s={cur !== x[0]} p={cur === x[0]} onClick={() => set(x[0])}>{x[1]} {x[2]}</Btn>)}</div>
+    <div className="row" id={id} style={{ marginTop: 8 }}><span className="muted">{lab}</span>{list.map(x => <Btn key={x[0] || 'all'} s={cur !== x[0]} p={cur === x[0]} onClick={() => setFilter(() => set(x[0]))}>{x[1]} {x[2]}</Btn>)}</div>
   const del = async (t: any) => {
     if (!window.confirm(t.used_by?.length ? `工具 ${t.name} 被 ${t.used_by.length} 个意图使用（${t.used_by.map((u: any) => u.code).join('、')}），删除后这些意图的关联会被移除，已启用意图若因此校验不通过会转为草稿。确认删除？` : `确认删除工具 ${t.name}？`)) return
     try { const r = await api.del('/tools/' + t.name); reload(); toast('已删除' + (r.downgraded?.length ? `；${r.downgraded.length} 个启用意图转为草稿` : '')) } catch (e) { toast(errLines(e)[0]) }
@@ -77,22 +84,22 @@ function ToolList() {
   return <>
     <div className="card"><div className="row"><span className="sp" />
       {canEdit && <Btn p id="toolNew" onClick={() => setEdit({})}>＋ 注册工具</Btn>}</div>
-      {fb('toolSF', '按来源：', [['', '全部', flat.length + servers.length], ['external', '外部', flat.length - nb + servers.length - nbSrv], ['builtin', '平台内置', nb + nbSrv]], sf, setSf)}
-      {fb('toolTF', '按类型：', [['', '全部', flat.length + servers.length], ...KINDS.map(([k, l]) => [k, l, cnt(k)] as [string, string, number])], tf, setTf)}
+      {fb('toolSF', '按来源：', [['', '全部', facets.total], ['external', '外部', srcN('external')], ['builtin', '平台内置', srcN('builtin')]], sf, setSf)}
+      {fb('toolTF', '按类型：', [['', '全部', facets.total], ...KINDS.map(([k, l]) => [k, l, cnt(k)] as [string, string, number])], tf, setTf)}
       <div className="row" style={{ marginTop: 8 }}>
-        {packs.length > 0 && <select id="toolPack" value={pk} onChange={e => setPk(e.target.value)}><option value="">全部 CLI 命令包</option>
+        {packs.length > 0 && <select id="toolPack" value={pk} onChange={e => setFilter(() => setPk(e.target.value))}><option value="">全部 CLI 命令包</option>
           {packs.map(([k, l, n]) => <option key={k} value={k}>{l}（{n}）</option>)}</select>}
-        <input type="text" id="toolQ" value={q} onChange={e => setQ(e.target.value)} placeholder="搜索工具名 / 描述 / 命令" style={{ width: 240 }} />
-        <span className="muted">{ts.length + ss.length} 个</span></div></div>
+        <select id="toolSt" value={st} onChange={e => setFilter(() => setSt(e.target.value))}><option value="">全部状态</option><option value="启用">启用</option><option value="停用">停用</option></select>
+        <input type="text" id="toolQ" value={qIn} onChange={e => setQIn(e.target.value)} placeholder="搜索工具名 / 描述 / 命令" style={{ width: 240 }} />
+        <span className="muted">{(tf === 'mcp' ? ss.length : (data.total || 0) + ss.length)} 个</span></div></div>
     <div className="card tblwrap" style={{ padding: 0 }}><table id="toolTbl" className="fixed"><colgroup><col style={{ width: 190 }} /><col style={{ width: 80 }} /><col style={{ width: 64 }} /><col /><col style={{ width: 180 }} /><col style={{ width: 110 }} /><col style={{ width: 90 }} /><col style={{ width: 92 }} /></colgroup><thead><tr><th>工具</th><th>类型</th><th>来源</th><th>描述</th><th>接入</th><th>入参</th><th>被意图使用</th><th>操作</th></tr></thead><tbody>
-      {ts.slice(0, lim).map((t: any) => <tr key={t.name} data-tool={t.name}><td><b>{t.display_name}</b><div className="mono">{t.name}</div></td><td><TypeTag type={t.type} />{t.confirm_required && <div style={{ marginTop: 4 }}><Badge c="y">写操作需确认</Badge></div>}</td>
+      {ts.map((t: any) => <tr key={t.name} data-tool={t.name}><td><b>{t.display_name}</b><div className="mono">{t.name}</div></td><td><TypeTag type={t.type} />{t.confirm_required && <div style={{ marginTop: 4 }}><Badge c="y">写操作需确认</Badge></div>}</td>
         <td>{srcCell(t)}</td>
         <td className="muted"><div className="clamp3" title={t.description}>{t.description}</div></td><td><End t={t} /></td><td>{paramCell(t)}</td>
         <td>{usedBy(t.used_by)}</td>
         <td><Btn s onClick={() => setTest(t)}>测试调用</Btn> {t.source === 'builtin' ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>平台提供<br />不可编辑 / 删除</div>
           : canEdit && <><Btn s onClick={() => setEdit({ tool: t })}>编辑</Btn><div style={{ marginTop: 4 }}><a style={{ color: '#dc2626', fontSize: 12 }} onClick={() => del(t)}>删除</a></div></>}</td></tr>)}
-      {ts.length > lim && <tr id="toolMore"><td colSpan={8} className="muted" style={{ textAlign: 'center' }}>已显示 {lim} / {ts.length} 个，可用上方搜索或命令包缩小范围 · <a onClick={() => setLim(lim + PAGE)}>再显示 {Math.min(PAGE, ts.length - lim)} 个</a></td></tr>}
-      {ss.map((v: any) => { const sub = subs(v); const on = !!open[v.name]; const users = new Set(sub.flatMap((t: any) => (t.used_by || []).map((u: any) => u.code))); return [
+      {ss.map((v: any) => { const sub = v.tools || []; const on = !!open[v.name]; const users = new Set(sub.flatMap((t: any) => (t.used_by || []).map((u: any) => u.code))); return [
         <tr key={'s' + v.name} className="srvrow" data-server={v.name}><td onClick={() => setOpen({ ...open, [v.name]: !on })}><span className="caret">{on ? '▾' : '▸'}</span><b>{v.display_name}</b><div className="mono" style={{ paddingLeft: 14 }}>{v.name}</div></td>
           <td><Badge c="p">MCP 服务</Badge><div className="muted" style={{ marginTop: 4 }}><a onClick={() => setOpen({ ...open, [v.name]: !on })}>{v.tool_count} 个工具</a></div></td>
           <td>{v.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <span className="muted">外部</span>}{v.example_data && <div style={{ marginTop: 4 }}><Badge c="y" title="当前工具列表为示例数据，真实同步可拉取完整列表">示例数据</Badge></div>}</td>
@@ -112,7 +119,9 @@ function ToolList() {
           <td>{usedBy(t.used_by)}</td><td><Btn s onClick={() => setTest(t)}>测试调用</Btn></td></tr>)
           : [<tr key={'e' + v.name} className="subrow"><td colSpan={8} className="muted">还没有工具，点「同步工具」读取</td></tr>] : [])] })}
       {!ts.length && !ss.length && <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有符合条件的工具</td></tr>}
-    </tbody></table></div>
+    </tbody></table>
+      {tf !== 'mcp' && <Pager page={page} total={data.total || 0} size={size} onPage={setPage} onSize={s => { setSize(s); setPage(1) }} sizes={[20, 50, 100]} />}
+    </div>
     {edit && <ToolEdit tool={edit.tool} server={edit.server} onClose={() => setEdit(null)} onDone={n => { reload(); if (n) setOpen(o => ({ ...o, [n]: true })) }} />}
     {test && <ToolTest t={test} onClose={() => setTest(null)} />}
   </>
