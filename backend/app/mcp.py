@@ -23,7 +23,9 @@ router = APIRouter()
 TOOLS = json.loads((Path(__file__).parent / "mcp_tools.json").read_text(encoding="utf-8"))
 TOOL_MAP = {t["name"]: t for t in TOOLS}
 SCOPE = {"list_intents": "意图:读", "get_intent": "意图:读", "upsert_intents": "意图:写",
-         "search_knowledge": "知识:读", "import_knowledge": "知识:写", "list_tools": "工具:读"}
+         "search_knowledge": "知识:读", "import_knowledge": "知识:写", "list_tools": "工具:读",
+         "register_tool": "工具:写", "update_tool": "工具:写", "disable_tool": "工具:写",
+         "intent_bind_tool": ("意图:写", "工具:写"), "intent_unbind_tool": ("意图:写", "工具:写")}
 PROTOCOL = "2025-06-18"
 
 
@@ -64,9 +66,22 @@ def _idem(db: Session, ctx: KeyCtx, key: str, payload: dict, fn):
     return status, body
 
 
+def _need_idem(args: dict):
+    if not args.get("idempotency_key"):
+        raise ApiError(400, "IDEMPOTENCY_KEY_REQUIRED", "写入须提供 idempotency_key")
+
+
+def _scope_list(name: str) -> list[str]:
+    s = SCOPE[name]
+    return list(s) if isinstance(s, (list, tuple)) else [s]
+
+
 def call_tool(request: Request, db: Session, ctx: KeyCtx, name: str, args: dict, background: list):
-    if SCOPE[name] not in (ctx.key.scopes or []):
-        raise forbidden(f"该 Key 没有「{SCOPE[name]}」权限", "SCOPE_FORBIDDEN", required=SCOPE[name])
+    have = ctx.key.scopes or []
+    missing = [s for s in _scope_list(name) if s not in have]
+    if missing:
+        raise forbidden(f"该 Key 没有「{missing[0]}」权限", "SCOPE_FORBIDDEN", required=missing[0],
+                        required_all=_scope_list(name))
     if name == "list_intents":
         sp = resolve_space(request, db, ctx, args.get("space"))
         view = args.get("view") or "intents"
@@ -133,6 +148,63 @@ def call_tool(request: Request, db: Session, ctx: KeyCtx, name: str, args: dict,
         out = [tool_svc.api_dict(t) for t in ts if (not args.get("type") or t.type == args["type"]) and
                (not q or q in t.name.lower() or q in t.display_name.lower() or q in (t.description or "").lower())]
         return {"items": out}
+    if name in ("register_tool", "update_tool"):
+        if not args.get("dry_run"):
+            _need_idem(args)
+        from .models import Tool
+        payload = {k: v for k, v in args.items() if k not in ("idempotency_key", "dry_run", "space")}
+        if name == "update_tool":
+            payload["name"] = args["name"]
+            existing = tool_svc.get(db, args["name"])
+            if args.get("dry_run"):
+                tool_svc.validate_payload(payload, False, existing)
+                return {"ok": True, "dry_run": True, "action": "updated", "name": args["name"]}
+            st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, **{k: v for k, v in payload.items() if k != "secret"}},
+                             lambda: (tool_svc.api_dict(tool_svc.update(db, args["name"], payload, ctx.actor)) | {"action": "updated"}))
+        else:
+            existing = db.get(Tool, str(payload.get("name") or "").strip() or None) if payload.get("name") else None
+            if args.get("dry_run"):
+                tool_svc.validate_payload(payload, existing is None, existing)
+                return {"ok": True, "dry_run": True, "action": "updated" if existing else "created",
+                        "name": payload.get("name")}
+            def run_reg():
+                t, action = tool_svc.upsert(db, payload, ctx.actor)
+                return {**tool_svc.api_dict(t), "action": action}
+            st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, **{k: v for k, v in payload.items() if k != "secret"}}, run_reg)
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
+    if name == "disable_tool":
+        _need_idem(args)
+        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "name": args["name"]},
+                         lambda: ({**tool_svc.api_dict(tool_svc.set_enabled(db, args["name"], False, ctx.actor)),
+                                   "action": "disabled"}))
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
+    if name == "intent_bind_tool":
+        sp = resolve_space(request, db, ctx, args.get("space"))
+        it = intent_svc.get(db, args["code"], sp.id)
+        bind = {"tool": args["tool"], "param_map": args.get("param_map") or {}}
+        if args.get("dry_run"):
+            return {"ok": True, "dry_run": True, "code": it.code, "bind": intent_svc.preview_bind(db, it, bind)}
+        _need_idem(args)
+        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "space": sp.id, "code": it.code, **bind},
+                         lambda: (lambda u: {**intent_svc.api_detail(u[0]), "warnings": u[1]})(
+                             intent_svc.bind_tool(db, it, bind, ctx.actor)))
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
+    if name == "intent_unbind_tool":
+        _need_idem(args)
+        sp = resolve_space(request, db, ctx, args.get("space"))
+        it = intent_svc.get(db, args["code"], sp.id)
+        st, body = _idem(db, ctx, args["idempotency_key"],
+                         {"t": name, "space": sp.id, "code": it.code, "tool": args["tool"]},
+                         lambda: intent_svc.api_detail(intent_svc.unbind_tool(db, it, args["tool"], ctx.actor)))
+        if st >= 400:
+            raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))
+        return body
     raise ApiError(404, "TOOL_NOT_FOUND", f"未知工具 {name}")
 
 
@@ -158,7 +230,7 @@ async def mcp(request: Request, ctx: KeyCtx = Depends(api_key(None)), db: Sessio
     if method == "initialize":
         return JSONResponse(_rpc(mid, {"protocolVersion": params.get("protocolVersion") or PROTOCOL,
                                        "capabilities": {"tools": {"listChanged": False}},
-                                       "serverInfo": {"name": "intent-platform", "version": "0.17.0"}}))
+                                       "serverInfo": {"name": "intent-platform", "version": "0.18.0"}}))
     if method == "ping":
         return JSONResponse(_rpc(mid, {}))
     if method == "tools/list":

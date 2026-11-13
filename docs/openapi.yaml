@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
-  version: 0.17.0
+  version: 0.18.0
   description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
 
     给 AI 的总规则：
@@ -24,12 +24,14 @@ info:
 
     - 所有写请求都带 Idempotency-Key；单次最多 100 条；每个 Key 每分钟最多 60 次请求。
 
-    - 工具类型：http（API 接口）/ mcp（MCP 工具）/ cli（CLI 命令）/ skill（技能）/ workflow（工作流）。AI 只读工具目录，不注册、不调用工具。
+    - 工具类型：http（API 接口）/ mcp（MCP 工具）/ cli（CLI 命令）/ skill（技能）/ workflow（工作流）。持有「工具:写」的 Key 可通过 POST /api/v1/tools 按工具名幂等注册或更新（MCP 子工具须先登记服务再同步），用 POST /api/v1/tools/{name}:disable 停用；不能删除工具。绑定/解绑意图工具需要同时持有「意图:写」和「工具:写」。平台仍然不替 Bot 执行业务工具。
 
 
     - v0.15 起：skill 为含 SKILL.md 的技能包（无入参，槽位作为上下文交给 AI，可用 GET /api/v1/tools/{name}/skill-package 下载）；workflow 对接 Dify / Coze / 通用 HTTP 工作流；MCP 服务鉴权改为凭据列表 mcp_server.credentials（位置 + 名称 + 环境变量名，不含密钥值），auth 字段保留兼容；槽位类型新增 文件 / 图片。
 
     - v0.6 起 MCP 按「服务 → 子工具」登记：子工具名为 {服务名}.{远端工具名}，Tool.server 为服务名，Tool.mcp_server 由 0.5 的 URL 字符串改为连接信息对象（URL 在 mcp_server.url）；runtime-config 新增 mcp_servers（只含被用到的服务，密钥只给环境变量名 auth.token_env）。
+
+    - v0.18：开放接口新增「工具:写」。AI 可注册 / 更新 / 停用工具，并把工具绑定到意图（含 param_map）；对应 MCP 工具为 register_tool、update_tool、disable_tool、intent_bind_tool、intent_unbind_tool。写入须带 Idempotency-Key（dry_run 除外）。控制台创建 API Key 时可授予「工具:写」。开放接口不能删除工具。
 
     - v0.17：工具中心已接入西之月 xclaw-cli（7037 条 CLI 命令 + 5 个技能，cli 配置带 auth_env / pack / group / risk_level）；cli / mcp / workflow 工具的 confirm_required=true 表示写操作，Bot 必须先取得用户（或客服）确认再执行。使用方见 docs/使用方接入指南.md，运营方见 docs/运营方配置手册.md；docs/AI使用说明.md 为索引。
 
@@ -889,7 +891,7 @@ paths:
       description: '何时用：整理意图时了解有哪些已注册工具（全平台通用；含平台内置工具）（API 接口 / MCP 工具 / CLI 命令 / 技能 / 工作流）及其入参，以便在槽位中准备好工具需要的参数（如 sku、order_id）。
 
 
-        何时不用：AI 不能注册或调用工具；工具与意图的绑定由运营在平台上完成，执行在 Bot 侧。
+        何时不用：不要用它执行工具（执行在 Bot 侧）。注册、更新、停用请用下面的写入接口，且需要「工具:写」。绑定意图需要同时持有「意图:写」和「工具:写」。
 
 
         全局接口：知识库与工具全平台通用，不需要 X-Space-Id（传了也会忽略）。
@@ -918,6 +920,105 @@ paths:
           - external
           - builtin
         description: 按来源筛选
+
+    post:
+      tags:
+      - 工具
+      operationId: upsertTool
+      summary: 按工具名创建或更新
+      description: |
+        需要「工具:写」。以 name 为稳定编码做幂等写入：不存在则创建（201），已存在则更新（200）。
+        dry_run=true 时只校验不写入，也不需要 Idempotency-Key。
+        不能用本接口单独注册 MCP 子工具，请先 POST /api/v1/mcp-servers 再同步。
+        不能注册或修改平台内置工具。HTTP 的 secret 不会出现在响应里。
+        写操作类工具仍通过 config.confirm_required 标记，Bot 调用前须向用户确认。
+        工具全平台通用，不需要 X-Space-Id。开放接口不能删除工具，请用停用。
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolUpsert'
+            examples:
+              http:
+                summary: HTTP 工具
+                value:
+                  name: inventory_lookup
+                  type: http
+                  display_name: 库存查询
+                  description: 按商品编码查询当前可售库存。
+                  owner: 运营
+                  params:
+                  - name: sku
+                    type: string
+                    required: true
+                    description: 商品编码
+                  config:
+                    url: https://example.com/inventory
+                    method: GET
+                    auth: 无
+              cli:
+                summary: CLI 工具
+                value:
+                  name: order_query_cli
+                  type: cli
+                  display_name: 订单查询
+                  description: 在运行环境用命令行查询订单状态。
+                  owner: 运营
+                  params:
+                  - name: order_id
+                    type: string
+                    required: true
+                    description: 订单号
+                  config:
+                    bin: mycli
+                    command_template: mycli order get {order_id}
+                    auth: 无
+                    output_format: json
+                    confirm_required: false
+              dry_run:
+                summary: 只校验
+                value:
+                  name: inventory_lookup
+                  type: http
+                  display_name: 库存查询
+                  description: 按商品编码查询当前可售库存。
+                  owner: 运营
+                  params: []
+                  config:
+                    url: https://example.com/inventory
+                    method: GET
+                    auth: 无
+                  dry_run: true
+      responses:
+        '200':
+          description: 更新成功，或 dry_run 校验通过
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ToolWrite'
+                - $ref: '#/components/schemas/DryRunTool'
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolWrite'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /api/v1/tools/{name}/skill-package:
     get:
       tags:
@@ -954,6 +1055,364 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/tools/{name}:disable:
+    post:
+      tags:
+      - 工具
+      operationId: disableTool
+      summary: 停用工具
+      description: 需要「工具:写」。停用后工具不再出现在运行时配置中，也不能新绑定到意图；已绑定的已启用意图可能被降为草稿。开放接口不能删除工具。
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 已停用（若本来就是停用则原样返回）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolWrite'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/tools/{name}:
+    get:
+      tags:
+      - 工具
+      operationId: getTool
+      summary: 按名称读取一个工具
+      description: 需要「工具:读」。全局接口，不需要 X-Space-Id。
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 工具详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tool'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    put:
+      tags:
+      - 工具
+      operationId: updateTool
+      summary: 更新已注册工具
+      description: 需要「工具:写」。路径中的 name 不可更改。dry_run=true 只校验不写入。不能修改内置工具或 MCP 子工具的定义。
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolUpsert'
+      responses:
+        '200':
+          description: 更新成功，或 dry_run 校验通过
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ToolWrite'
+                - $ref: '#/components/schemas/DryRunTool'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/skill-packages:
+    post:
+      tags:
+      - 工具
+      operationId: uploadSkillPackage
+      summary: 上传技能包（暂存）
+      description: 需要「工具:写」。multipart 上传 files（及可选 paths），返回 package_id，再在 POST /api/v1/tools 里以 type=skill 引用。
+      responses:
+        '201':
+          description: 已暂存
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/mcp-servers:
+    post:
+      tags:
+      - 工具
+      operationId: createMcpServer
+      summary: 登记 MCP 服务
+      description: 需要「工具:写」。登记后调用 /sync/preview 与 /sync/apply 同步子工具。密钥不会出现在响应里。
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: 已登记
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/mcp-servers/{name}:
+    put:
+      tags:
+      - 工具
+      operationId: updateMcpServer
+      summary: 更新 MCP 服务连接信息
+      description: 需要「工具:写」。
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/mcp-servers/{name}/sync/preview:
+    post:
+      tags:
+      - 工具
+      operationId: previewMcpSync
+      summary: 预览 MCP 子工具同步
+      description: 需要「工具:写」。连接远端并对比，不写入。
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 同步预览
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/mcp-servers/{name}/sync/apply:
+    post:
+      tags:
+      - 工具
+      operationId: applyMcpSync
+      summary: 应用 MCP 子工具同步
+      description: 需要「工具:写」。
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: 同步结果
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/intents/{code}/tools:
+    post:
+      tags:
+      - 意图
+      operationId: bindIntentTool
+      summary: 把工具绑定到意图（或更新 param_map）
+      description: |
+        需要同时持有「意图:写」和「工具:写」，并指定 Key 绑定的空间。
+        已绑定同一工具时替换 param_map。已启用意图也可以绑定，成功后空间版本号会增加。
+        dry_run=true 只校验不写入。param_map 的 key 是工具入参名，value 为 {source, value}，source 通常为「槽位」。
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/IntentCode'
+      - $ref: '#/components/parameters/SpaceHeader'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolBindInput'
+            example:
+              tool: inventory_lookup
+              param_map:
+                sku:
+                  source: 槽位
+                  value: sku
+      responses:
+        '200':
+          description: 绑定后的意图，或 dry_run 预览
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/Intent'
+                - $ref: '#/components/schemas/DryRunBind'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/v1/intents/{code}/tools/{tool}:
+    delete:
+      tags:
+      - 意图
+      operationId: unbindIntentTool
+      summary: 从意图上解绑工具
+      description: 需要同时持有「意图:写」和「工具:写」。未绑定则原样返回意图。
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/IntentCode'
+      - name: tool
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/SpaceHeader'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 解绑后的意图
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Intent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /api/v1/runtime-config:
@@ -1490,6 +1949,115 @@ components:
           - reference
           - validate
           description: reference=参考（检索后用于回答/生成）；validate=校验（生成后比对，硬约束）
+
+    ToolUpsert:
+      type: object
+      required:
+      - name
+      - type
+      - display_name
+      - description
+      - owner
+      properties:
+        name:
+          type: string
+          description: 稳定编码，小写字母开头，仅小写字母 / 数字 / 下划线，最长 120
+        type:
+          type: string
+          enum:
+          - http
+          - cli
+          - skill
+          - workflow
+          - mcp
+        display_name:
+          type: string
+        description:
+          type: string
+        owner:
+          type: string
+        params:
+          type: array
+          items:
+            type: object
+        config:
+          type: object
+        dry_run:
+          type: boolean
+          description: true 时只校验不写入
+        secret:
+          type: string
+          description: HTTP 密钥，仅写入，不会在响应中返回
+    ToolWrite:
+      allOf:
+      - $ref: '#/components/schemas/Tool'
+      - type: object
+        required:
+        - action
+        properties:
+          action:
+            type: string
+            enum:
+            - created
+            - updated
+            - disabled
+          warnings:
+            type: array
+            items:
+              type: string
+    DryRunTool:
+      type: object
+      required:
+      - ok
+      - dry_run
+      - action
+      - name
+      properties:
+        ok:
+          type: boolean
+        dry_run:
+          type: boolean
+        action:
+          type: string
+          enum:
+          - created
+          - updated
+        name:
+          type: string
+    DryRunBind:
+      type: object
+      required:
+      - ok
+      - dry_run
+      - code
+      - bind
+      properties:
+        ok:
+          type: boolean
+        dry_run:
+          type: boolean
+        code:
+          type: string
+        bind:
+          $ref: '#/components/schemas/ToolBind'
+    ToolBindInput:
+      type: object
+      required:
+      - tool
+      properties:
+        tool:
+          type: string
+        param_map:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              source:
+                type: string
+              value:
+                type: string
+        dry_run:
+          type: boolean
     ToolBind:
       type: object
       required:
@@ -2111,7 +2679,7 @@ components:
           description: 写操作需确认：Bot 调用前须向用户确认（mcp / cli / workflow）
         enabled:
           type: boolean
-          description: type=mcp，子工具是否启用
+          description: 是否启用。停用后不再出现在运行时配置中，也不能新绑定到意图。开放接口只能停用，不能删除。
         remote_missing:
           type: boolean
           description: type=mcp，最近一次同步时远端已不存在但仍被意图使用（标红待处理）

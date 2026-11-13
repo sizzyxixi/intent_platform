@@ -291,6 +291,40 @@ def update(db: Session, it: Intent, data: dict, actor: Actor) -> tuple[Intent, l
     return it, warnings
 
 
+
+def preview_bind(db: Session, it: Intent, bind: dict) -> dict:
+    """校验绑定（不写入）。返回清洗后的 {tool, param_map}。"""
+    incoming = _clean_binds([bind])
+    if not incoming or not incoming[0].get("tool"):
+        raise unprocessable("请指定要绑定的工具")
+    name = incoming[0]["tool"]
+    data = as_dict(it)
+    data["tools"] = [b for b in (data.get("tools") or []) if b.get("tool") != name] + incoming
+    st = check_structure(db, data, RefIndex(db))
+    if st:
+        raise unprocessable("绑定校验不通过", problems=st)
+    return incoming[0]
+
+
+def bind_tool(db: Session, it: Intent, bind: dict, actor: Actor) -> tuple[Intent, list[str]]:
+    """把一个已注册工具绑到意图上（已绑定则更新 param_map）。"""
+    cleaned = preview_bind(db, it, bind)
+    tools = [b for b in (it.tools or []) if b.get("tool") != cleaned["tool"]]
+    tools.append(cleaned)
+    return update(db, it, {"tools": tools}, actor)
+
+
+def unbind_tool(db: Session, it: Intent, name: str, actor: Actor) -> Intent:
+    """从意图上解绑工具；未绑定则原样返回。"""
+    name = (name or "").strip()
+    cur = list(it.tools or [])
+    nxt = [b for b in cur if b.get("tool") != name]
+    if len(nxt) == len(cur):
+        return it
+    it, _ = update(db, it, {"tools": nxt}, actor)
+    return it
+
+
 def set_status(db: Session, it: Intent, status: str, actor: Actor) -> Intent:
     if status not in STATUSES:
         raise unprocessable("状态应为 草稿 / 启用 / 停用")

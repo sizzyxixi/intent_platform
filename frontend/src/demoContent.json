@@ -128,6 +128,72 @@
   ],
   [
    "GET",
+   "/api/v1/tools/{name}",
+   "工具:读",
+   "读取单个工具的调用规格（不含密钥）"
+  ],
+  [
+   "POST",
+   "/api/v1/tools",
+   "工具:写",
+   "按工具名创建或更新（HTTP / CLI / 技能 / 工作流；dry_run 只校验）。MCP 子工具请登记服务后同步"
+  ],
+  [
+   "PUT",
+   "/api/v1/tools/{name}",
+   "工具:写",
+   "更新已登记的外部工具"
+  ],
+  [
+   "POST",
+   "/api/v1/tools/{name}:disable",
+   "工具:写",
+   "停用工具（不删除）"
+  ],
+  [
+   "POST",
+   "/api/v1/skill-packages",
+   "工具:写",
+   "上传技能包，返回 package_id 供注册技能工具"
+  ],
+  [
+   "POST",
+   "/api/v1/mcp-servers",
+   "工具:写",
+   "登记 MCP 服务"
+  ],
+  [
+   "PUT",
+   "/api/v1/mcp-servers/{name}",
+   "工具:写",
+   "更新 MCP 服务"
+  ],
+  [
+   "POST",
+   "/api/v1/mcp-servers/{name}/sync/preview",
+   "工具:写",
+   "预览 MCP 工具同步"
+  ],
+  [
+   "POST",
+   "/api/v1/mcp-servers/{name}/sync/apply",
+   "工具:写",
+   "应用 MCP 工具同步"
+  ],
+  [
+   "POST",
+   "/api/v1/intents/{code}/tools",
+   "意图:写 + 工具:写",
+   "把工具绑定到意图并设置 param_map"
+  ],
+  [
+   "DELETE",
+   "/api/v1/intents/{code}/tools/{tool}",
+   "意图:写 + 工具:写",
+   "从意图上解绑工具"
+  ],
+  [
+   "GET",
    "/api/v1/runtime-config",
    "意图:读",
    "当前空间运行时配置（意图、槽位定义、兜底条件、知识用途、校验集、工具类型，带 version）"
@@ -157,6 +223,26 @@
   [
    "list_tools",
    "查看全部工具与入参（全局）"
+  ],
+  [
+   "register_tool",
+   "按工具名创建或更新外部工具（dry_run 可先校验）"
+  ],
+  [
+   "update_tool",
+   "更新已登记的外部工具"
+  ],
+  [
+   "disable_tool",
+   "停用外部工具（不删除）"
+  ],
+  [
+   "intent_bind_tool",
+   "把工具绑定到意图（param_map）"
+  ],
+  [
+   "intent_unbind_tool",
+   "从意图上解绑工具"
   ]
  ],
  "IM_TPL": {

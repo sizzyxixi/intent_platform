@@ -67,7 +67,7 @@ def get_space_or_404(db: Session, space_id: str) -> Space:
 
 
 # ---------------- 开放接口 API Key ----------------
-SCOPES = ("意图:读", "意图:写", "知识:读", "知识:写", "工具:读")
+SCOPES = ("意图:读", "意图:写", "知识:读", "知识:写", "工具:读", "工具:写")
 
 
 @dataclass
@@ -95,7 +95,10 @@ def _rate_limit(db: Session, key_id: str) -> None:
                        {"retry_after": retry}, headers={"Retry-After": str(retry)})
 
 
-def api_key(scope: str | None):
+def api_key(*scopes: str | None):
+    """校验 API Key。传入一个或多个权限时须全部具备；不传或仅 None 表示只验 Key。"""
+    required = [s for s in scopes if s]
+
     def dep(request: Request, db: Session = Depends(get_db)) -> KeyCtx:
         auth = request.headers.get("authorization", "")
         if not auth.lower().startswith("bearer "):
@@ -109,8 +112,11 @@ def api_key(scope: str | None):
         _rate_limit(db, k.id)
         k.last_used_at = utcnow()
         db.commit()
-        if scope and scope not in (k.scopes or []):
-            raise forbidden(f"该 Key 没有「{scope}」权限", "SCOPE_FORBIDDEN", required=scope)
+        have = k.scopes or []
+        missing = [s for s in required if s not in have]
+        if missing:
+            raise forbidden(f"该 Key 没有「{missing[0]}」权限", "SCOPE_FORBIDDEN", required=missing[0],
+                            required_all=required)
         actor = Actor("api_key", k.id, k.name, ip=_client_ip(request), request_id=request_id(request))
         request.state.api_key = k
         return KeyCtx(k, actor)

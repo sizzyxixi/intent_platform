@@ -257,7 +257,7 @@
  },
  {
   "name": "list_tools",
-  "description": "列出全部工具（外部：API 接口 / MCP 工具 / CLI 命令 / 技能 / 工作流；以及平台内置工具）及入参，用于在意图中准备对应槽位。全局，不区分空间。只读；不能注册或调用工具。",
+  "description": "列出全部工具（外部：API 接口 / MCP 工具 / CLI 命令 / 技能 / 工作流；以及平台内置工具）及入参。全局，不区分空间。只读。注册、更新、停用请用 register_tool / update_tool / disable_tool。",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -280,6 +280,219 @@
       "skill",
       "workflow"
      ]
+    }
+   }
+  }
+ },
+ {
+  "name": "register_tool",
+  "description": "按工具名创建或更新外部工具（HTTP / CLI / 技能 / 工作流）。MCP 子工具请先登记 MCP 服务再同步，不能单独注册。dry_run=true 只校验不写入。写入须带 idempotency_key。权限：工具:写。全局。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "name",
+    "type",
+    "display_name",
+    "description",
+    "owner"
+   ],
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "工具名（稳定编码），小写英文/数字/下划线，以字母开头"
+    },
+    "type": {
+     "type": "string",
+     "enum": [
+      "http",
+      "cli",
+      "skill",
+      "workflow"
+     ]
+    },
+    "display_name": {
+     "type": "string"
+    },
+    "description": {
+     "type": "string"
+    },
+    "owner": {
+     "type": "string"
+    },
+    "params": {
+     "type": "array",
+     "items": {
+      "type": "object"
+     }
+    },
+    "config": {
+     "type": "object",
+     "description": "按类型：http 含 url/method/auth；cli 含 bin/command_template 等；skill 含 package_id；workflow 含平台字段"
+    },
+    "secret": {
+     "type": "string",
+     "description": "HTTP 凭据（只写不读）"
+    },
+    "clear_secret": {
+     "type": "boolean"
+    },
+    "dry_run": {
+     "type": "boolean",
+     "default": false
+    },
+    "idempotency_key": {
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 64,
+     "description": "幂等键；dry_run 时可不传"
+    }
+   }
+  }
+ },
+ {
+  "name": "update_tool",
+  "description": "更新已登记的外部工具（不能改名、改类型）。MCP 子工具请用平台控制台启停。权限：工具:写。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "name"
+   ],
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "工具名（稳定编码），小写英文/数字/下划线，以字母开头"
+    },
+    "type": {
+     "type": "string",
+     "enum": [
+      "http",
+      "cli",
+      "skill",
+      "workflow"
+     ]
+    },
+    "display_name": {
+     "type": "string"
+    },
+    "description": {
+     "type": "string"
+    },
+    "owner": {
+     "type": "string"
+    },
+    "params": {
+     "type": "array",
+     "items": {
+      "type": "object"
+     }
+    },
+    "config": {
+     "type": "object",
+     "description": "按类型：http 含 url/method/auth；cli 含 bin/command_template 等；skill 含 package_id；workflow 含平台字段"
+    },
+    "secret": {
+     "type": "string",
+     "description": "HTTP 凭据（只写不读）"
+    },
+    "clear_secret": {
+     "type": "boolean"
+    },
+    "dry_run": {
+     "type": "boolean",
+     "default": false
+    },
+    "idempotency_key": {
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 64,
+     "description": "幂等键；dry_run 时可不传"
+    }
+   }
+  }
+ },
+ {
+  "name": "disable_tool",
+  "description": "停用外部工具（不删除）。已被意图使用时会记入审计，并可能把校验不再通过的已启用意图降为草稿。权限：工具:写。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "name",
+    "idempotency_key"
+   ],
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 64,
+     "description": "幂等键；dry_run 时可不传"
+    }
+   }
+  }
+ },
+ {
+  "name": "intent_bind_tool",
+  "description": "把已注册工具绑定到当前空间的意图，并设置 param_map（source 为 槽位 / 常量 / 上下文）。已绑定则更新映射。需要 意图:写 与 工具:写。dry_run 只校验。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "tool"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "tool": {
+     "type": "string"
+    },
+    "param_map": {
+     "type": "object",
+     "description": "{入参名: {source, value}}，source 为 槽位 / 常量 / 上下文"
+    },
+    "dry_run": {
+     "type": "boolean",
+     "default": false
+    },
+    "idempotency_key": {
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 64,
+     "description": "幂等键；dry_run 时可不传"
+    }
+   }
+  }
+ },
+ {
+  "name": "intent_unbind_tool",
+  "description": "从当前空间的意图上解绑工具。需要 意图:写 与 工具:写。未绑定则原样返回。",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "code",
+    "tool",
+    "idempotency_key"
+   ],
+   "properties": {
+    "space": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "tool": {
+     "type": "string"
+    },
+    "idempotency_key": {
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 64,
+     "description": "幂等键；dry_run 时可不传"
     }
    }
   }

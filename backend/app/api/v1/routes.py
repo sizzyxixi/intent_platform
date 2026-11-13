@@ -1,4 +1,4 @@
-"""开放接口 /api/v1（严格对应 docs/openapi.yaml 0.17.0）。"""
+"""开放接口 /api/v1（严格对应 docs/openapi.yaml 0.18.0）。"""
 import hashlib
 import json
 from datetime import datetime
@@ -13,14 +13,14 @@ from ...config import get_settings
 from ...db import get_db
 from ...deps import KeyCtx, api_key, cleanup_idempotency, resolve_space
 from ...errors import ApiError, bad_request, forbidden, unprocessable
-from ...models import IdempotencyRecord, ImportRecord, Space
+from ...models import IdempotencyRecord, ImportRecord, Space, Tool
 from ...services import importer, intents as intent_svc, knowledge as kb_svc, runtime, slots as slot_svc
-from ...services import spaces as space_svc, taxonomy as tax_svc, tools as tool_svc
+from ...services import mcp_servers as mcp_svc, spaces as space_svc, taxonomy as tax_svc, tools as tool_svc
 from ...services.common import STATUSES, utcnow
 from ...services.validation import RefIndex
 
 router = APIRouter(prefix="/api/v1")
-R_INT, W_INT, R_KB, W_KB, R_TOOL = "意图:读", "意图:写", "知识:读", "知识:写", "工具:读"
+R_INT, W_INT, R_KB, W_KB, R_TOOL, W_TOOL = "意图:读", "意图:写", "知识:读", "知识:写", "工具:读", "工具:写"
 
 
 async def _json(request: Request) -> Any:
@@ -357,6 +357,177 @@ def skill_package(name: str, version: int | None = Query(None, ge=1), ctx: KeyCt
     pkg, data = skill_svc.archive(db, name, version)
     return Response(data, media_type="application/zip", headers={
         "Content-Disposition": f'attachment; filename="{name}-v{pkg.version}.zip"', "X-Skill-Version": str(pkg.version)})
+
+
+@router.get("/tools/{name}")
+def get_tool(name: str, ctx: KeyCtx = Depends(api_key(R_TOOL)), db: Session = Depends(get_db)):
+    return tool_svc.api_dict(tool_svc.get(db, name))
+
+
+def _tool_write_result(t, action: str) -> dict:
+    return {**tool_svc.api_dict(t), "action": action}
+
+
+@router.post("/tools")
+async def upsert_tool(request: Request, ctx: KeyCtx = Depends(api_key(W_TOOL)), db: Session = Depends(get_db)):
+    """按工具名创建或更新（MCP 子工具除外，请登记 MCP 服务后同步）。dry_run=true 只校验不写入。"""
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+
+    def _validate_only():
+        name = str(payload.get("name") or "").strip()
+        existing = db.get(Tool, name) if name else None
+        tool_svc.validate_payload(payload, existing is None, existing)
+        return 200, {"ok": True, "dry_run": True, "action": "updated" if existing else "created", "name": name}
+
+    if payload.get("dry_run"):
+        return _validate_only()[1]
+
+    def run():
+        t, action = tool_svc.upsert(db, payload, ctx.actor)
+        db.flush()
+        return (200 if action == "updated" else 201), _tool_write_result(t, action)
+    return idempotent(request, db, ctx, {k: v for k, v in payload.items() if k != "secret"}, run)
+
+
+@router.put("/tools/{name}")
+async def update_tool(name: str, request: Request, ctx: KeyCtx = Depends(api_key(W_TOOL)),
+                     db: Session = Depends(get_db)):
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+    payload = {**payload, "name": name}
+    if payload.get("dry_run"):
+        existing = tool_svc.get(db, name)
+        tool_svc.validate_payload(payload, False, existing)
+        return {"ok": True, "dry_run": True, "action": "updated", "name": name}
+
+    def run():
+        t = tool_svc.update(db, name, payload, ctx.actor)
+        db.flush()
+        return 200, _tool_write_result(t, "updated")
+    return idempotent(request, db, ctx, {k: v for k, v in payload.items() if k != "secret"}, run)
+
+
+@router.post("/tools/{name}:disable")
+async def disable_tool(name: str, request: Request, ctx: KeyCtx = Depends(api_key(W_TOOL)),
+                      db: Session = Depends(get_db)):
+    raw = await request.body()
+    payload = json.loads(raw) if raw else {}
+    if payload and not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+    payload = payload or {"name": name}
+
+    def run():
+        t = tool_svc.set_enabled(db, name, False, ctx.actor)
+        db.flush()
+        return 200, _tool_write_result(t, "disabled")
+    return idempotent(request, db, ctx, payload, run)
+
+
+@router.post("/skill-packages", status_code=201)
+async def upload_skill_package(request: Request, ctx: KeyCtx = Depends(api_key(W_TOOL)),
+                               db: Session = Depends(get_db)):
+    """上传技能包（multipart files 或单个 zip），返回暂存 package_id，再在 POST /tools 里引用。"""
+    from ...services import skills as skill_svc
+    form = await request.form()
+    ups = [f for f in form.getlist("files") if hasattr(f, "read")]
+    paths = [str(x) for x in form.getlist("paths")]
+    files = []
+    for i, f in enumerate(ups):
+        name = paths[i] if i < len(paths) and paths[i] else (f.filename or "file")
+        files.append((name, await f.read()))
+    pkg = skill_svc.stage(db, files, ctx.actor)
+    db.commit()
+    return skill_svc.staged_dict(pkg)
+
+
+@router.post("/mcp-servers", status_code=201)
+async def create_mcp_server(request: Request, ctx: KeyCtx = Depends(api_key(W_TOOL)),
+                            db: Session = Depends(get_db)):
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+
+    def run():
+        sv = mcp_svc.create(db, payload, ctx.actor)
+        warnings = getattr(sv, "warnings", [])
+        db.flush()
+        return 201, {**mcp_svc.admin_dict(db, sv), "warnings": warnings, "action": "created"}
+    return idempotent(request, db, ctx, {k: v for k, v in payload.items() if k != "secret"}, run)
+
+
+@router.put("/mcp-servers/{name}")
+async def update_mcp_server(name: str, request: Request, ctx: KeyCtx = Depends(api_key(W_TOOL)),
+                            db: Session = Depends(get_db)):
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+
+    def run():
+        sv = mcp_svc.update(db, name, payload, ctx.actor)
+        warnings = getattr(sv, "warnings", [])
+        db.flush()
+        return 200, {**mcp_svc.admin_dict(db, sv), "warnings": warnings, "action": "updated"}
+    return idempotent(request, db, ctx, {k: v for k, v in payload.items() if k != "secret"}, run)
+
+
+@router.post("/mcp-servers/{name}/sync/preview")
+async def preview_mcp_sync(name: str, request: Request, ctx: KeyCtx = Depends(api_key(W_TOOL)),
+                           db: Session = Depends(get_db)):
+    from fastapi.concurrency import run_in_threadpool
+    body = await _json(request)
+    sv = mcp_svc.get(db, name)
+    return await run_in_threadpool(mcp_svc.preview, db, sv, body if isinstance(body, dict) else {}, ctx.actor)
+
+
+@router.post("/mcp-servers/{name}/sync/apply")
+async def apply_mcp_sync(name: str, request: Request, ctx: KeyCtx = Depends(api_key(W_TOOL)),
+                         db: Session = Depends(get_db)):
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+
+    def run():
+        sv = mcp_svc.get(db, name)
+        res = mcp_svc.apply(db, sv, payload, ctx.actor)
+        db.flush()
+        return 200, {**res, "server": mcp_svc.admin_dict(db, sv)}
+    return idempotent(request, db, ctx, payload, run)
+
+
+@router.post("/intents/{code}/tools")
+async def bind_intent_tool(code: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT, W_TOOL)),
+                           db: Session = Depends(get_db)):
+    """绑定或更新意图的工具与 param_map。需要「意图:写」和「工具:写」。"""
+    payload = await _json(request)
+    if not isinstance(payload, dict):
+        raise bad_request("请求体应为对象")
+    sp = resolve_space(request, db, ctx)
+    it = intent_svc.get(db, code, sp.id)
+    if payload.get("dry_run"):
+        cleaned = intent_svc.preview_bind(db, it, payload)
+        return {"ok": True, "dry_run": True, "code": it.code, "bind": cleaned}
+
+    def run():
+        updated, warnings = intent_svc.bind_tool(db, it, payload, ctx.actor)
+        db.flush()
+        return 200, {**intent_svc.api_detail(updated), "warnings": warnings}
+    return idempotent(request, db, ctx, {"code": code, "space": sp.id, **payload}, run)
+
+
+@router.delete("/intents/{code}/tools/{tool}")
+def unbind_intent_tool(code: str, tool: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT, W_TOOL)),
+                       db: Session = Depends(get_db)):
+    sp = resolve_space(request, db, ctx)
+    it = intent_svc.get(db, code, sp.id)
+
+    def run():
+        updated = intent_svc.unbind_tool(db, it, tool, ctx.actor)
+        db.flush()
+        return 200, intent_svc.api_detail(updated)
+    return idempotent(request, db, ctx, {"code": code, "space": sp.id, "tool": tool, "op": "unbind"}, run)
 
 
 # ---------------- 运行时配置 ----------------

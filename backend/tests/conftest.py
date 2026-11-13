@@ -104,7 +104,7 @@ def full_key(client):
     from app.services.common import SYSTEM
     with SessionLocal() as db:
         _, tok = keys.create(db, {"name": "测试全权限", "spaces": ["cs", "mc"],
-                                  "scopes": ["意图:读", "意图:写", "知识:读", "知识:写", "工具:读"]}, SYSTEM)
+                                  "scopes": ["意图:读", "意图:写", "知识:读", "知识:写", "工具:读", "工具:写"]}, SYSTEM)
         db.commit()
     return Api(client, tok)
 

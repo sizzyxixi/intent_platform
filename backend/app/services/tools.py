@@ -72,7 +72,7 @@ def skill_download_path(name: str) -> str:
 def api_dict(t: Tool) -> dict:
     c = t.config or {}
     d = {"name": t.name, "display_name": t.display_name, "type": t.type, "description": t.description,
-         "params": [_param_out(p) for p in t.params], "source": t.source}
+         "params": [_param_out(p) for p in t.params], "source": t.source, "enabled": t.enabled}
     if t.type != "skill":
         d["input_schema"] = input_schema(t)
     if t.type == "http":
@@ -443,6 +443,39 @@ def delete(db: Session, name: str, actor: Actor) -> None:
                        used_by=[u.code for u in users])
     db.delete(t)
     audit.record(db, actor, "tool.delete", "tool", name, f"删除工具 {t.display_name}", None)
+
+
+def upsert(db: Session, data: dict, actor: Actor) -> tuple[Tool, str]:
+    """按工具名（稳定编码）创建或更新。MCP 子工具不能走这条路径。"""
+    name = str(data.get("name") or "").strip()
+    existing = db.get(Tool, name) if name else None
+    if existing:
+        return update(db, name, data, actor), "updated"
+    return create(db, data, actor), "created"
+
+
+def set_enabled(db: Session, name: str, enabled: bool, actor: Actor) -> Tool:
+    """停用或重新启用外部工具（开放接口只提供停用；内置工具不可改）。"""
+    t = get(db, name)
+    if t.source == "builtin":
+        raise forbidden("平台内置工具不可启停", "BUILTIN_READONLY")
+    if t.enabled == bool(enabled):
+        return t
+    t.enabled = bool(enabled)
+    t.updated_at = utcnow()
+    db.flush()
+    users = intent_svc.users_of_tool(db, name)
+    verb = "启用" if t.enabled else "停用"
+    for u in users:
+        intent_svc.add_log(u, actor.name, f"工具 {name} 已{verb}")
+    space_svc.bump_versions(db, {u.space_id for u in users if u.status == "启用"})
+    downgraded = []
+    if not t.enabled:
+        downgraded = intent_svc.recheck_enabled(db, users, actor.name, f"工具 {name} 已停用")
+    audit.record(db, actor, "tool.enable" if t.enabled else "tool.disable", "tool", name,
+                 f"{verb}工具 {t.display_name}", None,
+                 {"enabled": t.enabled, "used_by": [u.code for u in users], "downgraded": downgraded})
+    return t
 
 
 # ---------------- CLI 命令渲染（Bot 执行规则的参考实现） ----------------

@@ -212,7 +212,7 @@ function Access() {
           : <tr><td colSpan={9} className="muted" style={{ textAlign: 'center' }}>{keys ? '还没有 Key' : '加载中…'}</td></tr>}</tbody></table>}
       <div className="muted" style={{ marginTop: 6 }}>通过接口写入意图会在「意图管理 › 导入记录」留下「AI 工具（API）」记录；Key 只在创建时完整显示一次，平台只保存哈希。知识与工具类权限对所有空间生效；意图类权限只对绑定的空间生效。</div></div>
     <div className="card"><h3>REST 接口</h3><div className="muted" style={{ marginBottom: 6 }}>Base URL：{base} · Header：<span className="mono">Authorization: Bearer ipk_xxx</span> · <span className="mono">X-Space-Id: {sid}</span>（仅按空间的接口需要；不在 Key 绑定空间内返回 403）· 写接口需带 <span className="mono">Idempotency-Key</span>。全部接口已合并登记为「工具目录」里的平台内置工具。</div>
-      <table id="apiTbl"><thead><tr><th>方法</th><th>路径</th><th>权限</th><th>空间</th><th>说明</th></tr></thead><tbody>{API_ROWS.map(r => { const g = /^\/api\/v1\/(kbs|tools|imports)/.test(r[1]); return <tr key={r[0] + r[1]}>
+      <table id="apiTbl"><thead><tr><th>方法</th><th>路径</th><th>权限</th><th>空间</th><th>说明</th></tr></thead><tbody>{API_ROWS.map(r => { const g = /^\/api\/v1\/(kbs|tools|imports|mcp-servers|skill-packages)/.test(r[1]); return <tr key={r[0] + r[1]}>
         <td><Badge c={r[0] === 'GET' ? 'g' : 'b'}>{r[0]}</Badge></td><td className="mono">{r[1]}</td><td><Badge c={r[2].includes('写') ? 'y' : 'n'}>{r[2]}</Badge></td><td>{g ? <span className="muted">全局</span> : <Badge c="b">X-Space-Id</Badge>}</td><td>{r[3]}</td></tr> })}</tbody></table>
       <div className="grid g2" style={{ marginTop: 10 }}><div><b>示例：AI 工具写回意图</b><pre className="code">{`POST /api/v1/intents:batchUpsert\nX-Space-Id: ${sid}\nIdempotency-Key: 7f3a-20261110-0001\n` + JSON.stringify({ mode: 'merge', intents: [eg] }, null, 2)}</pre></div>
         <div><b>返回</b><pre className="code">{JSON.stringify({ space: sid, created: 1, updated: 0, skipped: 0, items: [{ code: eg.code, result: 'created', status: '草稿' }], new_slots: [], conflicts: [], import_id: 'IMP-1004' }, null, 2)}</pre></div></div></div>
@@ -234,7 +234,7 @@ function Access() {
 
 function NewKey({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const { spaces, space } = useSession()
-  const SC = ['意图:读', '意图:写', '知识:读', '知识:写', '工具:读']
+  const SC = ['意图:读', '意图:写', '知识:读', '知识:写', '工具:读', '工具:写']
   const [name, setName] = useState('')
   const [sps, setSps] = useState<string[]>([space.id])
   const [scs, setScs] = useState<string[]>(SC.filter(s => s.includes('读')))
