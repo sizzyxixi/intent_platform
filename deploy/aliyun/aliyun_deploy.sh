@@ -60,7 +60,33 @@ CUR="$(docker run --rm --network "$DB_NET" --env-file "$ENVF" "$IMG:latest" alem
 HEAD="$(docker run --rm --network "$DB_NET" --env-file "$ENVF" "$IMG:latest" alembic heads 2>/dev/null | awk '{print $1}' | tail -1)"
 echo "alembic current=$CUR head=$HEAD"
 if [ -n "$HEAD" ] && [ "$CUR" != "$HEAD" ]; then
+  set +e
   docker run --rm --network "$DB_NET" --env-file "$ENVF" "$IMG:latest" alembic upgrade head
+  up=$?
+  set -e
+  if [ "$up" -ne 0 ]; then
+    echo "业务账号无权变更表结构，改用 postgres 超级用户执行迁移（密码不落盘、不打印）"
+    MIGENV="$(mktemp)"
+    chmod 600 "$MIGENV"
+    docker exec moonclaw-db-postgres-1 printenv POSTGRES_PASSWORD | python3 -c '
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit, quote
+pw = sys.stdin.read().rstrip("\n")
+src, dst = Path(sys.argv[1]), Path(sys.argv[2])
+out = []
+for line in src.read_text().splitlines():
+    if line.startswith("IP_DATABASE_URL="):
+        u = urlsplit(line.split("=", 1)[1])
+        netloc = "postgres:%s@%s:%s" % (quote(pw, safe=""), u.hostname, u.port or 5432)
+        out.append("IP_DATABASE_URL=" + urlunsplit((u.scheme, netloc, u.path, u.query, u.fragment)))
+    else:
+        out.append(line)
+dst.write_text("\n".join(out) + "\n")
+' "$ENVF" "$MIGENV"
+    docker run --rm --network "$DB_NET" --env-file "$MIGENV" "$IMG:latest" alembic upgrade head
+    rm -f "$MIGENV"
+  fi
 fi
 
 docker rm -f "$APP" >/dev/null 2>&1 || true
