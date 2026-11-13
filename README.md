@@ -1,6 +1,6 @@
-# 意图管理平台（生产版 v0.16）
+# 意图管理平台（生产版 v0.17）
 
-基于 demo（`intent-platform/index.html` + `src3/`）开发的生产可用版本。界面、交互和种子数据以 demo 为准，接口严格按 `docs/openapi.yaml` 0.16.0 实现。
+基于 demo（`intent-platform/index.html` + `src3/`）开发的生产可用版本。界面、交互和种子数据以 demo 为准，接口严格按 `docs/openapi.yaml` 0.17.0 实现。需求见 `docs/意图管理平台_全局需求文档.md`（v0.17），给 AI / Bot 的读写与调用说明见 `docs/AI使用说明.md`。
 
 - **意图管理**：意图列表（左侧第一层分类筛选，列按层级名生成）/ 槽位 / 空间设置（含分类层级：0～5 层分类 + 意图，层数与名称按空间配置，插入 / 删除层级先预览再确认）/ 导入记录。「新建意图」弹窗有「管理分类」入口直达分类层级设置。槽位类型含文件 / 图片。按业务空间（`cs` 1688 智能客服、`mc` Moonclaw）隔离意图和槽位。
 - **知识库**：全平台通用。可新建知识库、导入文档（异步构建）、编辑切片和标签、检索。
@@ -17,6 +17,7 @@
   - 快照在 `backend/seed/westmonth/`；刷新：先 `xclaw-cli catalog index --json > index.json` 并下载 `skills list` 给出的 zip，再 `python -m app.westmonth refresh-fixture --catalog index.json --skills-dir <zip目录> --cli-version <版本>`，最后 `python -m app.westmonth import`（幂等；快照里没有了的命令若仍被意图使用则保留）。
   - 工具目录接口按名分批读取（`IP_TOOL_LIST_BATCH`，默认 200）并缓存，表没变化时不再整表读取；数据库很远时可设 `IP_TOOL_CACHE_FILE=/路径/tools_cache.json` 让缓存落盘，重启后不用重新拉取。
   - 工具中心按「CLI 命令包」筛选、搜索、分页显示；意图里选 CLI 时可先选「命令包 › 业务分组」。
+- **1688 智能客服（`cs`）数据**：按《意图 × 工具调用映射维护表》v1 生成（阶段 → 意图，17 个意图，真实 xclaw-cli 工具绑定，5 个规则知识库），源文件与生成脚本在 `backend/seed/cs_1688/`；`python -m app.cs1688 backup --out <文件>` → `apply --yes --backup <文件>`（幂等，不影响其他空间），`status` 查看。
 - **用户与审计**（仅管理员）：账号分 admin / editor / viewer 三种角色；所有写操作都记审计日志。
 
 ## 技术栈
@@ -35,7 +36,7 @@
 backend/    FastAPI 应用（app/）、Alembic 迁移、种子数据 seed/demo_state.json、tests/
 frontend/   React 控制台（src/）、Playwright 用例（e2e/）
 deploy/     docker-compose.yml、nginx.conf、.env.example
-docs/       AI接入说明.md、openapi.yaml、需求文档（控制台「接入与密钥」直接展示与下载）
+docs/       AI使用说明.md、AI接入说明.md、openapi.yaml、需求文档（控制台「接入与密钥」直接展示与下载）
 scripts/    e2e-server.sh（e2e 专用后端）、export_demo_seed.cjs（从 demo 重新导出种子）
 screenshots/ 主要页面截图（e2e 生成）
 ```
@@ -185,8 +186,8 @@ CI 配置见 `.github/workflows/ci.yml`：在 postgres 服务上跑 pytest、前
 ## 已知限制
 
 - 单句测试用例句的二元组相似度模拟识别（返回 `simulated: true`），分数与 Bot 实际使用的模型不同，只用来自查例句是否合理。
-- 工具「测试调用」只生成请求预览（`executed: false`），平台不执行外部工具；实际执行在 Bot 侧。平台主动连接外部服务只有两处：MCP 在线同步（只调 initialize / tools/list，不调 tools/call）和工作流「在线读取入参」（Dify `GET /parameters`、Coze `GET /v1/workflows/{id}`，密钥由操作人临时输入、不保存；平台不读取服务器环境变量）。
-- 种子里的 `sellersprite` MCP 服务只有 4 个示例子工具（标「示例数据」），需要真实凭据在线同步才能拿到完整列表；示例技能的技能包内容（除 SKILL.md 外）是占位文件。
+- 工具「测试调用」默认只生成请求预览；管理员可真实执行一次（CLI 在后端机器上执行、HTTP / MCP / 工作流真实请求，写操作须 `confirm=true`，记审计），可用 `IP_TOOL_TEST_ENABLED` / `IP_TOOL_TEST_CLI_ENABLED` 关闭。线上执行仍在 Bot 侧。平台主动连接外部服务的场景：测试调用、MCP 在线同步（initialize / tools/list）、工作流「在线读取入参」（密钥由操作人临时输入、不保存）。
+- 示例外部工具和示例 MCP 服务已清除（`python -m app.westmonth purge-examples`）；Moonclaw（`mc`）空间的意图与知识库仍是演示数据。
 - MCP 在线同步和工作流在线读取入参会让平台服务器访问登记的地址，部署时请用出站网络策略限制可访问的范围（平台未内置地址白名单）。
 - 知识构建在后端进程内用后台任务完成，进程重启时会把卡在「构建中」的任务标为失败，需要重新导入。超大文件建议以后改用独立队列（如 Celery/RQ）。
 - 图片（png/jpg/webp）不做 OCR，导入后显示「构建失败」并给出原因。

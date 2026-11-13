@@ -1,14 +1,15 @@
 # 意图管理平台 · 给 AI 的接入说明
 
-> 读者：运营使用的 AI 工具（如 Claude、Cursor、自建 Agent），以及读取运行时配置的 Bot / 智能体。请在每次会话开始时完整阅读本说明。
-> 接口定义见同目录 `openapi.yaml`（OpenAPI 3.0）。Base URL：`https://intent.example.com`，鉴权：`Authorization: Bearer ipk_xxx`，空间：意图类接口带 `X-Space-Id: {space_id}`，知识库与工具接口全局、不需要。
+> 读者：运营使用的 AI 工具（如 Claude、Cursor、自建 Agent），以及读取运行时配置的 Bot / 智能体。
+> **完整的读写与调用说明见同目录 `AI使用说明.md`（先读它）**；本文是规则速查：字段规则、槽位规则、错误处理和 6 个 MCP 工具的完整定义（第 9 节，与平台实现一致）。两者冲突时以 `AI使用说明.md` 和 `openapi.yaml` 为准。
+> 接口定义见同目录 `openapi.yaml`（OpenAPI 3.0.3，0.17.0）。Base URL：平台部署地址（`IP_PUBLIC_BASE_URL`），鉴权：`Authorization: Bearer ipk_xxx`，空间：意图类接口带 `X-Space-Id: {space_id}`，知识库与工具接口全局、不需要。
 
 ## 1. 平台是什么
 
 意图管理平台是**通用的意图与知识管理平台**，服务多个 Bot 和智能体（如 1688 智能客服、Moonclaw 跨境智能体）。
 - **业务空间**：每个 Bot / 智能体对应一个空间。意图、意图分类、槽位、意图导入记录、运行时配置及其版本按空间隔离；**知识库和工具在平台级统一登记**，任何空间的意图都能关联。
 - **意图**：用户想办的一件事，比如「问是否有现货」「生成产品主图」。每个意图有编码、名称、分类路径、意图描述、例句、槽位（处理前要拿到的信息），以及由运营关联的知识和工具。
-- **分类层级（v0.6 起按空间动态配置）**：每个空间在「空间设置」里自定义层数和每层名称，最后一层固定是意图，上面有 0～5 层分类。例如 1688 智能客服是「大类 → 问题桶 → 意图」，别的空间可能是「业务线 → 场景 → 子场景 → 意图」。意图必须挂在**最末一层分类**下；分类路径用 `category_path` 表示（从第一层到最末层）。**不要假设固定是两层分类**，每次先读 `GET /api/v1/taxonomy`。
+- **分类层级（v0.6 起按空间动态配置）**：每个空间在「空间设置」里自定义层数和每层名称，最后一层固定是意图，上面有 0～5 层分类。例如 1688 智能客服是「阶段 → 意图」，Moonclaw 是「大类 → 问题桶 → 意图」，别的空间可能是「业务线 → 场景 → 子场景 → 意图」。意图必须挂在**最末一层分类**下；分类路径用 `category_path` 表示（从第一层到最末层）。**不要假设固定是两层分类**，每次先读 `GET /api/v1/taxonomy`。
 - **空间设置**：每个空间一份，统一规定识别阈值、澄清、槽位追问次数、工具失败重试和最终动作（转人工 / 交给通用助手 / 告知无法处理）。意图上**不再配置兜底条件**（见第 5 节）。
 - **工具**：技术在平台「工具中心」登记的外部能力，共 5 种类型：`http`（API 接口）、`mcp`（MCP 工具）、`cli`（CLI 命令）、`skill`（技能：含 SKILL.md 的技能包）、`workflow`（工作流：Dify / Coze / 通用 HTTP）。MCP 按「**MCP 服务 → 子工具**」两级登记：一个第三方 MCP 服务通常包含一批工具，平台同步它的 tools/list，意图只关联其中具体的子工具（工具名形如 `{服务名}.{远端工具名}`，如 `compliance.check_ip_risk`）。平台只登记，**执行在 Bot / 智能体侧**（见第 12 节）。本说明里的接口本身也作为「平台内置」工具登记在工具中心（见第 13 节）。
 - **槽位**：按空间维护的槽位列表（如 `platform`、`site`、`sku`），每个空间一份、互不可见；意图只能从本空间的槽位里选。
@@ -35,9 +36,9 @@
 
 | 字段 | 规则 |
 |---|---|
-| code | 全大写，单词用下划线连接，全局唯一，创建后不可改。第一层分类有编码时用 `{空间前缀}.{第一层编码}.{英文名}`（如 1688 智能客服 `B.STOCK.PREORDER`、Moonclaw `M.DESIGN.MAIN`）；第一层没有编码时用 `{空间前缀}.{英文名}` |
+| code | 全大写，单词用下划线连接，全局唯一，创建后不可改。第一层分类有编码时用 `{空间前缀}.{第一层编码}.{英文名}`（如 1688 智能客服 `B.PRE.STOCK`、Moonclaw `M.DESIGN.MAIN`）；第一层没有编码时用 `{空间前缀}.{英文名}` |
 | name | 中文短名，≤ 30 字，同一空间内不能重名 |
-| category_path | 分类路径数组，从第一层到最末层，每段写该层分类的 `code` 或 `name`，如 `["STOCK", "现货"]`；必须取自当前空间的 taxonomy，**不要自建**。旧字段 `l1` / `l2` 仍可用于两层分类的空间，但已不推荐 |
+| category_path | 分类路径数组，从第一层到最末层，每段写该层分类的 `code` 或 `name`，如 `["PRE"]`（1688 智能客服）或 `["DESIGN", "主图与白底图"]`（Moonclaw）；必须取自当前空间的 taxonomy，**不要自建**。旧字段 `l1` / `l2` 仍可用于两层分类的空间，但已不推荐 |
 | description（意图描述） | **至少 15 个字**。写清三件事：用户想做什么；什么情况算这个意图；什么情况不算（用「→ 编码/名称」指出易混淆意图）。示例：用户想为商品生成符合平台规范的主图；"做主图""首图"算；只要换白底不算（→ M.DESIGN.WHITE_BG） |
 | examples | **至少 3 条**，用用户原话风格，不重复，不含手机号/微信等隐私 |
 | slots | `[{name, required, ask}]`。`name` 用本空间槽位列表里的英文名；`ask` 可省略，省略时继承该槽位的默认追问话术，只有需要特殊说法时才填 |
@@ -49,7 +50,7 @@
 ## 4. 槽位规则
 
 - **按空间**：槽位属于某个空间，其他空间看不到；同一个英文名在不同空间是两份独立的槽位。
-- **先读后用**：写意图前 `GET /api/v1/slots`，按英文名、显示名和含义匹配本空间已有槽位。例如本空间已有 `qty` 就用 `qty`，不要写 `quantity`、`num`、`count`；已有 `sku` 就不要写「商品」「链接」。**不要新建同义槽位**（MVP 平台不做同义名自动归一，需要你自己避免）。
+- **先读后用**：写意图前 `GET /api/v1/slots`，按英文名、显示名和含义匹配本空间已有槽位。例如本空间已有 `qty` 就用 `qty`，不要写 `quantity`、`num`、`count`；已有 `offer_id` 就不要写 `product`、`link`。**不要新建同义槽位**（MVP 平台不做同义名自动归一，需要你自己避免）。
 - 槽位字段只有 4 项：英文名 + 显示名、类型（文本 / 数字 / 日期 / 枚举 / 文件 / 图片）、可选值（仅枚举）、默认追问话术。文件 / 图片槽位的值是文件链接，工具的 file / file_list 入参只能映射到这两类槽位。
 - 确实没有合适的槽位时，可以 `POST /api/v1/slots` 在本空间新建：`name` 小写英文 + 下划线；必填 `display_name`、`type`、`default_ask`；枚举类型要给 `options`。本空间已有同名槽位返回 409。
 - 在 batchUpsert 里写了本空间不存在的槽位名时，平台会在本空间自动新建为「文本」槽位（默认追问「请补充{name}」），并在 `new_slots` 列出，请提醒运营去「意图管理 › 槽位」补全显示名和追问话术。所以写入前务必用英文名并先查重。
@@ -153,7 +154,7 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
         },
         "category": {
           "type": "string",
-          "description": "分类路径筛选，每段填编码或名称，用 / 分隔，可只写前几层，如 STOCK 或 STOCK/现货"
+          "description": "分类路径筛选，每段填编码或名称，用 / 分隔，可只写前几层，如 PRE（1688 智能客服）或 DESIGN/主图与白底图（Moonclaw）"
         },
         "status": {
           "type": "string",
@@ -194,7 +195,7 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
         },
         "code": {
           "type": "string",
-          "pattern": "^[A-Z]{1,4}\\.[A-Z]+\\.[A-Z0-9_]+$"
+          "pattern": "^[A-Z]{1,4}(\\.[A-Z0-9_]+){1,6}$"
         }
       }
     }
@@ -251,7 +252,7 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
                 },
                 "minItems": 0,
                 "maxItems": 5,
-                "description": "从第 1 层到最末层分类的完整路径，每段填编码或名称（先用 list_intents view=taxonomy 读取），如 [\"STOCK\", \"现货\"]。空间有分类层时必填；0.5 版的 l1 / l2 仍兼容"
+                "description": "从第 1 层到最末层分类的完整路径，每段填编码或名称（先用 list_intents view=taxonomy 读取），如 [\"PRE\"]（1688 智能客服）或 [\"DESIGN\", \"主图与白底图\"]（Moonclaw）。空间有分类层时必填；0.5 版的 l1 / l2 仍兼容"
               },
               "l1": {
                 "type": "string",
@@ -447,7 +448,7 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
 |---|---|---|
 | `http`（API 接口） | `method`、`url`、`auth`、`input_schema` | 按 method + url 发请求；GET 把入参放 query，其他放 JSON body；凭据由 Bot 侧密钥托管提供，平台不下发密钥 |
 | `mcp`（MCP 子工具） | `server`（服务名）、`mcp_server`（连接信息：`transport`、`url` 或 `command`/`args`/`env`、`auth`）、`mcp_tool`（远端工具名）、`input_schema`（同步自远端的 inputSchema）、`confirm_required` | 按 `mcp_server` 连接（同一服务只建一个会话），调用 `tools/call`，`name`=mcp_tool，`arguments`=入参；`confirm_required=true` 时先向用户确认再调用 |
-| `cli`（CLI 命令） | `cli.bin`、`cli.command_template`、`cli.auth`、`cli.login_command`、`cli.install`、`cli.verified_version`、`cli.output_format`、`cli.confirm_required`、`input_schema` | 在 Bot 的运行环境里执行：未安装时按 `install` 安装；未登录或返回 `AUTH_REQUIRED` 时按 `login_command` 引导完成授权（不要向用户索要账号密码、cookie、token）；把模板里的 `{参数名}` 替换为入参值，**选填参数为空时连同它前面的 `--选项` 一起省略**，值含空格时加引号；以参数数组方式执行，不拼接 shell 字符串；`output_format=json` 时把 stdout 解析为 JSON；`confirm_required=true` 时先向用户确认再执行 |
+| `cli`（CLI 命令） | `cli.bin`、`cli.command_template`、`cli.auth`、`cli.auth_env`（凭据环境变量名）、`cli.login_command`、`cli.install`、`cli.verified_version`、`cli.output_format`、`cli.confirm_required`、`input_schema` | 在 Bot 的运行环境里执行：未安装时按 `install` 安装；凭据放在 `auth_env` 指定的环境变量里；未登录或返回授权类错误时按 `login_command` 完成授权（不要向用户索要账号密码、cookie、token）；把模板里的 `{参数名}` 替换为入参值，**选填参数为空时连同它前面的 `--选项` 一起省略**，值含空格时加引号；以参数数组方式执行，不拼接 shell 字符串；`output_format=json` 时把 stdout 解析为 JSON；`confirm_required=true` 时先向用户确认再执行 |
 | `skill`（技能） | `skill.name`、`skill.version`、`skill.description`、`skill.files`、`skill.download_path`（无 `input_schema`） | 用 `GET /api/v1/tools/{name}/skill-package` 下载技能包（zip，按 `version` 缓存，重新上传会 +1），把 SKILL.md 交给 AI 执行；**不做入参映射**，本意图抽取的槽位作为上下文一并交给 AI；输出格式按意图的回复要求 |
 | `workflow`（工作流） | `workflow.platform`（dify / coze / generic）、`workflow.response_mode`、`workflow.auth_env`、`workflow.timeout_sec`、`workflow.output_mapping`、`workflow.confirm_required`、平台字段、`input_schema` | **dify**：`POST {base_url}/workflows/run`，body `{"inputs": 入参, "response_mode": ..., "user": ...}`，`user.mode=session` 时用会话用户、`constant` 时用 `user.value`；**coze**：`POST https://api.{region}/v1/workflow/run`（streaming 用 `/v1/workflow/stream_run`），body `{"workflow_id", "parameters": 入参}`，按需加 `workflow_version`、`is_async`、`bot_id`、`app_id`、`ext`；**generic**：按 `url` + `method` 发送 `{"inputs": 入参}`。凭据取环境变量 `auth_env`，放在 `Authorization: Bearer ...`；`file` / `file_list` 入参传文件链接；必填入参未映射时用 `input_schema` 里的 `default`；按 `output_mapping` 从返回里取值（如 `data.outputs.result` → `result`）；`confirm_required=true` 时先向用户确认 |
 
@@ -462,12 +463,13 @@ MCP 地址：`https://intent.example.com/mcp`，请求头 `Authorization: Bearer
 
 Bot 按顺序处理：`location=header` 放请求头（`scheme=Bearer` 时值为 `Bearer ${env}`）；`location=query` 追加为 URL 参数；`location=env`（stdio 服务）把 `${env}` 的值放进进程环境变量 `name`，并按 `command` + `args` 在 Bot 机器上启动。旧字段 `auth`（第一条凭据的摘要，含 `token_env`）仍保留以兼容 v0.6，新接入请读 `credentials`。
 
-CLI 示例（Moonclaw 空间，命令来自西之月开放平台 CLI 文档 https://open.westmonth.com/cli）：
+CLI 示例（1688 智能客服空间「获取商品」，命令来自西之月开放平台 CLI 官方目录 https://open.westmonth.com/cli）：
 
 ```
-模板：xclaw-cli mall mall-product detail get --sku {sku} --locale {locale} --include-mainpicture {include_mainpicture} --json
-入参：sku=SKU00022155（槽位 sku），locale 为空，include_mainpicture=1（常量）
-执行：xclaw-cli mall mall-product detail get --sku SKU00022155 --include-mainpicture 1 --json
+模板：xclaw-cli platform alibaba product get --shop-id {shop_id} --product-id {product_id} --web-site {web_site} --scene {scene} --json
+入参：shop_id ← 槽位 shop_id，product_id ← 槽位 offer_id，web_site=1688（常量），scene=1688（常量）
+执行：xclaw-cli platform alibaba product get --shop-id <店铺ID> --product-id <商品ID> --web-site 1688 --scene 1688 --json
+凭据：环境变量 XCLAW_UMC_TOKEN，或事先 xclaw-cli auth login
 ```
 
 ## 13. 平台内置工具（本平台自己的接口）

@@ -374,7 +374,7 @@ def meta(actor=Depends(VIEW), db: Session = Depends(get_db)):
 
 @router.get("/docs/{name}")
 def get_doc_file(name: str, actor=Depends(VIEW)):
-    files = {"ai-guide": "AI接入说明.md", "openapi": "openapi.yaml", "requirements": "意图管理平台_全局需求文档.md"}
+    files = {"ai-usage": "AI使用说明.md", "ai-guide": "AI接入说明.md", "openapi": "openapi.yaml", "requirements": "意图管理平台_全局需求文档.md"}
     if name not in files:
         raise not_found("文档不存在")
     from ...config import get_settings

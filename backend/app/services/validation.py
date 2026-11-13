@@ -82,7 +82,7 @@ def validate(it: dict, idx: RefIndex) -> list[str]:
     if not (it.get("name") or "").strip():
         e.append("名称不能为空")
     if not INTENT_CODE_RE.match(it.get("code") or ""):
-        e.append("编码格式应为 前缀.分类编码.意图（大写，如 B.STOCK.AVAIL / M.DESIGN.MAIN）")
+        e.append("编码格式应为 前缀.分类编码.意图（大写，如 B.PRE.STOCK / M.DESIGN.MAIN）")
     if "category_id" in it:
         n, depth = idx.categories(it["space_id"])
         cid = it.get("category_id")

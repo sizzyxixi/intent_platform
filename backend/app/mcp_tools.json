@@ -22,7 +22,7 @@
     },
     "category": {
      "type": "string",
-     "description": "分类路径筛选，每段填编码或名称，用 / 分隔，可只写前几层，如 STOCK 或 STOCK/现货"
+     "description": "分类路径筛选，每段填编码或名称，用 / 分隔，可只写前几层，如 PRE（1688 智能客服）或 DESIGN/主图与白底图（Moonclaw）"
     },
     "status": {
      "type": "string",
@@ -63,7 +63,7 @@
     },
     "code": {
      "type": "string",
-     "pattern": "^[A-Z]{1,4}\\.[A-Z]+\\.[A-Z0-9_]+$"
+     "pattern": "^[A-Z]{1,4}(\\.[A-Z0-9_]+){1,6}$"
     }
    }
   }
@@ -120,7 +120,7 @@
         },
         "minItems": 0,
         "maxItems": 5,
-        "description": "从第 1 层到最末层分类的完整路径，每段填编码或名称（先用 list_intents view=taxonomy 读取），如 [\"STOCK\", \"现货\"]。空间有分类层时必填；0.5 版的 l1 / l2 仍兼容"
+        "description": "从第 1 层到最末层分类的完整路径，每段填编码或名称（先用 list_intents view=taxonomy 读取），如 [\"PRE\"]（1688 智能客服）或 [\"DESIGN\", \"主图与白底图\"]（Moonclaw）。空间有分类层时必填；0.5 版的 l1 / l2 仍兼容"
        },
        "l1": {
         "type": "string",

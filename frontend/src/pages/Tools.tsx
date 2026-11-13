@@ -173,12 +173,12 @@ function Access() {
   const [docs, setDocs] = useState<Record<string, string>>({})
   const [newKey, setNewKey] = useState(false)
   useEffect(() => {
-    ['ai-guide', 'openapi'].forEach(n => api.get<string>('/docs/' + n).then(t => setDocs(d => ({ ...d, [n]: t }))).catch(e => setDocs(d => ({ ...d, [n]: '加载失败：' + errLines(e)[0] }))))
+    ['ai-usage', 'ai-guide', 'openapi'].forEach(n => api.get<string>('/docs/' + n).then(t => setDocs(d => ({ ...d, [n]: t }))).catch(e => setDocs(d => ({ ...d, [n]: '加载失败：' + errLines(e)[0] }))))
   }, [])
   const base = meta?.public_base_url || window.location.origin
   const spName = (id: string) => spaces.find(s => s.id === id)?.name || id
   const eg = sid === 'mc' ? { code: 'M.VIDEO.GIF', name: '商品动图 GIF', category_path: ['VIDEO', '商品视频'], description: '用户想把商品图做成循环播放的 GIF 动图，用于详情页或社媒；"做个动图""GIF"算；要 MP4 视频不算（→ 图生视频）', examples: ['这张图做成 GIF 动图', '详情页放个循环动图', '把三张图做成轮播 GIF'], slots: [{ name: 'product_image', required: true }, { name: 'ratio', required: false, ask: '动图用什么比例？' }] }
-    : { code: 'B.STOCK.PREORDER', name: '预售/订货', category_path: ['STOCK', '现货'], description: '用户想在缺货时先下单预订；问能否预定、先拍后发算；问何时补货不算（→ 补货/到货时间）', examples: ['没货能先拍吗', '可以预定吗', '预售什么时候发'], slots: [{ name: 'sku', required: true, ask: '请问是哪一款？' }] }
+    : { code: 'B.PRE.PAYMENT', name: '付款方式咨询（示例）', category_path: ['PRE'], description: '示例：买家询问支持哪些付款方式；问「能用信用卡吗」算；已下单要改价不算（→ 售中改价改单）', examples: ['支持什么付款方式', '可以用信用卡付吗', '能先发货后付款吗'], slots: [{ name: 'offer_id', required: false }] }
   const revoke = async (k: any) => {
     if (!window.confirm('吊销后使用该 Key 的 AI 工具将无法访问，确认？')) return
     try { await api.post(`/api-keys/${k.id}/revoke`); reloadKeys(); toast('已吊销') } catch (e) { toast(errLines(e)[0]) }
@@ -212,8 +212,8 @@ function Access() {
       <pre className="code">{`GET /api/v1/runtime-config?since_version=${sp.version - 1}\nX-Space-Id: ${sid}\nAuthorization: Bearer ipk_xxx\n\n→ 200 { "space": "${sid}", "version": ${sp.version}, "slots": [...], "intents": [...], "validation_sets": [...], "tools": [...] }\n→ 304 since_version 与当前 version 相同，无变化`}</pre>
       <div className="muted">当前空间 version：<b className="mono" id="rtVer">{sp.version}</b> · 已启用意图 {en} 个</div>
       <div className="note w" style={{ margin: '8px 0 0' }}>本空间的意图启用、停用或编辑后，version 会递增（各空间版本独立）；Bot 发现版本变化后应重新拉取，并清空意图识别缓存。</div></div>
-    <div className="card"><h3>给 AI 的接入说明</h3><div className="muted" style={{ marginBottom: 8 }}>把下面两个文件交给运营使用的 AI 工具：先读说明，再按 OpenAPI 调用。</div>
-      {([['ai-guide', 'AI接入说明.md', 'text/markdown'], ['openapi', 'openapi.yaml', 'application/yaml']] as const).map(([n, label, mt]) => <div key={n} style={{ marginBottom: 12 }}>
+    <div className="card"><h3>给 AI 的接入说明</h3><div className="muted" style={{ marginBottom: 8 }}>把下面的文件交给 AI 工具或 Bot：先读 AI使用说明（怎么读、怎么写、怎么调用工具），规则速查看 AI接入说明，字段以 OpenAPI 为准。</div>
+      {([['ai-usage', 'AI使用说明.md', 'text/markdown'], ['ai-guide', 'AI接入说明.md', 'text/markdown'], ['openapi', 'openapi.yaml', 'application/yaml']] as const).map(([n, label, mt]) => <div key={n} style={{ marginBottom: 12 }}>
         <div className="row"><b className="mono">{label}</b><span className="sp" /><Btn s onClick={() => copy(n, label)}>复制</Btn> <Btn s onClick={() => { download(label, docs[n] || '', mt); toast('已下载 ' + label) }}>下载</Btn></div>
         <pre className="code" id={'doc_' + n} style={{ maxHeight: 260 }}>{docs[n] ?? '加载中…'}</pre></div>)}</div>
     <div className="card"><h3>MCP 服务</h3><div className="muted" style={{ marginBottom: 6 }}>支持 MCP 的 AI 工具（如 Claude、Cursor 等）添加以下配置即可直接调用（意图类工具可传 space 参数，默认取 Key 绑定的第一个空间；知识与工具类不需要）：</div>

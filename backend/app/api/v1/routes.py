@@ -1,4 +1,4 @@
-"""开放接口 /api/v1（严格对应 docs/openapi.yaml 0.5.0）。"""
+"""开放接口 /api/v1（严格对应 docs/openapi.yaml 0.17.0）。"""
 import hashlib
 import json
 from datetime import datetime

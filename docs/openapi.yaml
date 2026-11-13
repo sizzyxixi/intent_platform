@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
-  version: 0.16.0
+  version: 0.17.0
   description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
 
     给 AI 的总规则：
@@ -18,7 +18,7 @@ info:
 
     - 不自建分类，不删除任何数据，不覆盖已启用意图。
 
-    - v0.6 起分类层级由各空间自行配置（0～5 层分类 + 最末层意图，如 1688 = 大类 / 问题桶 / 意图）：先读 GET /api/v1/taxonomy 的 levels 与 categories，写入时用 category_path 给出从第 1 层到最末层的完整路径（每段填编码或名称）。0.5 版的 l1 / l2 字段在写入与筛选时仍兼容，输出中已移除。
+    - v0.6 起分类层级由各空间自行配置（0～5 层分类 + 最末层意图，如 1688 智能客服 = 阶段 / 意图，Moonclaw = 大类 / 问题桶 / 意图）：先读 GET /api/v1/taxonomy 的 levels 与 categories，写入时用 category_path 给出从第 1 层到最末层的完整路径（每段填编码或名称）。0.5 版的 l1 / l2 字段在写入与筛选时仍兼容，输出中已移除。
 
     - v0.5 起意图上不再有 fallback（兜底条件）；兜底由空间设置（GET/PUT /api/v1/recognition，运行时配置中的 recognition）统一处理，写入时带 fallback 会被忽略。
 
@@ -30,6 +30,8 @@ info:
     - v0.15 起：skill 为含 SKILL.md 的技能包（无入参，槽位作为上下文交给 AI，可用 GET /api/v1/tools/{name}/skill-package 下载）；workflow 对接 Dify / Coze / 通用 HTTP 工作流；MCP 服务鉴权改为凭据列表 mcp_server.credentials（位置 + 名称 + 环境变量名，不含密钥值），auth 字段保留兼容；槽位类型新增 文件 / 图片。
 
     - v0.6 起 MCP 按「服务 → 子工具」登记：子工具名为 {服务名}.{远端工具名}，Tool.server 为服务名，Tool.mcp_server 由 0.5 的 URL 字符串改为连接信息对象（URL 在 mcp_server.url）；runtime-config 新增 mcp_servers（只含被用到的服务，密钥只给环境变量名 auth.token_env）。
+
+    - v0.17：工具中心已接入西之月 xclaw-cli（7037 条 CLI 命令 + 5 个技能，cli 配置带 auth_env / pack / group / risk_level）；cli / mcp / workflow 工具的 confirm_required=true 表示写操作，Bot 必须先取得用户（或客服）确认再执行。完整的 AI 读写说明见 docs/AI使用说明.md。
 
     - 本接口自身也作为「平台内置」工具登记在工具中心（8 个能力，source=builtin）；其中写回意图、槽位写入/删除、导入知识为维护类，不能关联到意图，只给维护用 AI 通过 API Key 调用。
 
@@ -245,23 +247,25 @@ paths:
               example:
                 levels:
                 - depth: 1
-                  name: 大类
-                - depth: 2
-                  name: 问题桶
+                  name: 阶段
                 intent_level_name: 意图
                 categories:
-                - code: STOCK
-                  name: 库存与货期
+                - code: PRE
+                  name: 售前
                   depth: 1
-                  children:
-                  - code: null
-                    name: 现货
-                    depth: 2
-                    children: []
-                  - code: null
-                    name: 货期
-                    depth: 2
-                    children: []
+                  children: []
+                - code: MID
+                  name: 售中
+                  depth: 1
+                  children: []
+                - code: POST
+                  name: 售后
+                  depth: 1
+                  children: []
+                - code: NONE
+                  name: 非询盘
+                  depth: 1
+                  children: []
         '401':
           $ref: '#/components/responses/Unauthorized'
         '429':
@@ -471,20 +475,18 @@ paths:
             example:
               mode: merge
               intents:
-              - code: B.STOCK.PREORDER
-                name: 预售/订货
+              - code: B.PRE.PAYMENT
+                name: 付款方式咨询（示例）
                 category_path:
-                - STOCK
-                - 现货
-                description: 用户想在缺货时先下单预订；问能否预定、先拍后发算；问何时补货不算（→ B.STOCK.RESTOCK_ETA）
+                - PRE
+                description: 示例：买家询问支持哪些付款方式；问「能用信用卡吗」算；已下单问改价不算（→ B.MID.CHANGE_ORDER）
                 examples:
-                - 没货能先拍吗
-                - 可以预定吗
-                - 先下单等补货可以吗
+                - 支持什么付款方式
+                - 可以用信用卡付吗
+                - 能先发货后付款吗
                 slots:
-                - name: sku
-                  required: true
-                  ask: 请问是哪一款？
+                - name: offer_id
+                  required: false
       responses:
         '200':
           description: 写入结果（部分成功也返回 200，失败项在 conflicts 中）
@@ -497,14 +499,16 @@ paths:
                 updated: 0
                 skipped: 1
                 items:
-                - code: B.STOCK.PREORDER
+                - code: B.PRE.PAYMENT
                   result: created
                   status: 草稿
                 conflicts:
-                - code: B.SHIP.URGE
-                  reason: DUPLICATE_NAME
-                  message: 与已有意图 B.STOCK.AVAIL 同名
-                import_id: IMP-1012
+                - code: B.BAD
+                  reason: UNKNOWN_CATEGORY
+                  message: 分类「XX」不存在（第一层：阶段）
+                import_id: IMP-1008
+                space: cs
+                new_slots: []
                 ignored_fields: []
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -750,10 +754,9 @@ paths:
               $ref: '#/components/schemas/ChunkUpdate'
             example:
               cells:
-                问题: 包邮吗
-                答案: 单笔满 ¥300 包邮（新疆西藏除外）
-                意图编码: B.PRICE.FREIGHT
-                适用范围: 全店
+                意图: 库存查询
+                阶段: 售前
+                高转化收束动作: 有现货+截单+需要多少/拍下占库存
       responses:
         '200':
           description: 更新后的切片
@@ -925,7 +928,7 @@ paths:
         required: true
         schema:
           type: string
-        example: gen_image_skill
+        example: xclaw_platform
       - name: version
         in: query
         required: false
@@ -982,11 +985,11 @@ paths:
                 $ref: '#/components/schemas/RuntimeConfig'
               example:
                 space:
-                  id: mc
-                  name: Moonclaw 跨境智能体
-                  bot: Moonclaw 智能体
-                version: 7
-                generated_at: '2026-11-10T02:30:00Z'
+                  id: cs
+                  name: 1688 智能客服
+                  bot: 客服 Bot（吴钢）
+                version: 60
+                generated_at: '2026-11-11T09:41:35Z'
                 recognition:
                   threshold: 0.6
                   candidate_min: 0.3
@@ -994,162 +997,227 @@ paths:
                   max_clarify: 2
                   max_slot_ask: 2
                   tool_retry: 1
-                  final_action: general_assistant
-                  final_action_label: 交给通用助手
+                  final_action: handoff_human
+                  final_action_label: 转人工
                   clarify_prompt: 我想确认一下，您是想要以下哪一项？
                   final_message: null
                 taxonomy:
                   levels:
                   - depth: 1
-                    name: 大类
-                  - depth: 2
-                    name: 问题桶
+                    name: 阶段
                   intent_level_name: 意图
                   categories:
-                  - code: DESIGN
-                    name: 电商设计
+                  - code: PRE
+                    name: 售前
                     depth: 1
-                    children:
-                    - code: null
-                      name: 主图与白底图
-                      depth: 2
-                      children: []
+                    children: []
+                  - code: MID
+                    name: 售中
+                    depth: 1
+                    children: []
+                  - code: POST
+                    name: 售后
+                    depth: 1
+                    children: []
+                  - code: NONE
+                    name: 非询盘
+                    depth: 1
+                    children: []
                 slots:
-                - name: product_image
-                  display_name: 商品图
+                - name: shop_id
+                  display_name: 店铺
                   type: 文本
-                  default_ask: 请上传商品原图或图片链接
-                - name: platform
-                  display_name: 平台
-                  type: 枚举
-                  options:
-                  - TikTok
-                  - Shopee
-                  - Amazon
-                  - Lazada
-                  - '1688'
-                  default_ask: 请问是哪个平台？
+                  default_ask: （不向买家追问：由 Bot 按会话所属的 1688 店铺带入 ERP 店铺 ID）
+                - name: order_id
+                  display_name: 订单号
+                  type: 文本
+                  default_ask: 麻烦发一下订单号～
                 intents:
-                - code: M.DESIGN.MAIN
-                  name: 产品主图
+                - code: B.MID.CHANGE_ORDER
+                  name: 售中改价改单
                   category_path:
-                  - code: DESIGN
-                    name: 电商设计
-                  - code: null
-                    name: 主图与白底图
-                  description: 用户想为商品生成符合目标平台规范的电商主图（Listing 首图）；"做主图""首图"算；只要换白底不算（→ 白底图），已有主图改尺寸不算（→ 多平台主图适配）
+                  - code: MID
+                    name: 售中
+                  description: 买家已拍下或已下单，要求修改订单价格、数量或运费；说「拍好了帮我改价」「数量改成 200」算；还没下单的议价不算（→ 比价中）
                   examples:
-                  - 帮我给这款蓝牙耳机做一张亚马逊美国站主图
-                  - TikTok 美区的首图帮我出一张
-                  - 这张实拍图能不能做成 Temu 能过审的主图
+                  - 拍好了帮我改下价
+                  - 订单数量改成200件
+                  - 改好价我就付款
+                  - 运费能帮我改一下吗
                   slots:
-                  - name: product_image
+                  - name: order_id
                     required: true
-                    ask: 请上传商品原图或图片链接
+                    ask: 麻烦发一下订单号～
                     ask_overridden: false
-                  - name: platform
-                    required: true
-                    ask: 要发布到哪个平台？
-                    ask_overridden: true
+                  - name: target_price
+                    required: false
+                    ask: 您期望的价格是多少？
+                    ask_overridden: false
+                  - name: shop_id
+                    required: false
+                    ask: （不向买家追问：由 Bot 按会话所属的 1688 店铺带入 ERP 店铺 ID）
+                    ask_overridden: false
                   knowledge:
-                  - kb_id: kb_spec
-                    doc_id: P1
-                    chunk_id: P1-1
-                    usage: reference
-                  - kb_id: kb_spec
-                    doc_id: P1
-                    chunk_id: P1-3
+                  - kb_id: kb_cs_reply
                     usage: validate
-                  - kb_id: kb_ban
-                    doc_id: BW
+                    doc_id: RULE
+                    chunk_id: RULE-13
+                  - kb_id: kb_cs_conf
+                    usage: validate
+                    doc_id: CONF
                     chunk_id: '*'
-                    usage: validate
+                  - kb_id: kb_cs_close
+                    usage: reference
+                    doc_id: CLOSE
+                    chunk_id: CLOSE-13
                   tools:
-                  - tool: gen_image_skill
-                    type: skill
-                    param_map: {}
+                  - tool: xclaw_platform_alibaba_trade_order_modifyorderprice_call
+                    type: cli
+                    param_map:
+                      shop_id:
+                        value: shop_id
+                        source: 槽位
+                      carriage:
+                        value: carriage
+                        source: 槽位
+                      order_id:
+                        value: order_id
+                        source: 槽位
+                      entry_discounts:
+                        value: entry_discounts
+                        source: 槽位
+                  - tool: xclaw_platform_alibaba_product_get
+                    type: cli
+                    param_map:
+                      scene:
+                        value: '1688'
+                        source: 常量
+                      shop_id:
+                        value: shop_id
+                        source: 槽位
+                      web_site:
+                        value: '1688'
+                        source: 常量
+                      product_id:
+                        value: offer_id
+                        source: 槽位
                 validation_sets:
-                - kb_id: kb_ban
-                  kb_name: 违禁词库
-                  doc_id: BW
-                  doc_name: 违禁词示例.xlsx
-                  chunk_id: '*'
+                - kb_id: kb_cs_reply
+                  kb_name: 1688客服-回复规则与禁止项
+                  doc_id: RULE
+                  doc_name: 回复规则与禁止项_v1.json
+                  chunk_id: RULE-13
                   used_by:
-                  - M.DESIGN.MAIN
+                  - B.MID.CHANGE_ORDER
                   items:
-                  - chunk_id: BW-1
-                    content: '词：No.1
+                  - chunk_id: RULE-13
+                    content: '意图：售中改价改单
 
-                      平台：TikTok
+                      阶段：售中
 
-                      站点：US
+                      台账意图对照：售中询盘
 
-                      语言：en
+                      必填槽位：order_id, target_price/qty
 
-                      类型：极限词
+                      主工具(按序)：apply_change_price
 
-                      替换建议：Top rated'
-                    cells:
-                      词: No.1
-                      平台: TikTok
-                      站点: US
-                      语言: en
-                      类型: 极限词
-                      替换建议: Top rated
+                      辅工具：get_price_quote; lock_or_hold_stock
+
+                      置信≥0.85：申请或改价结果+付款安排
+
+                      置信0.60–0.85：clarify_slot(单号/改几)
+
+                      低置信：handoff_human 超授权
+
+                      禁止：未改先说已改好
+
+                      备注：桶口径含转单信号，率偏高属预期
+
+                      全量会话量：21124
+
+                      文字转单率：1'
                     tags:
                       platform:
-                      - TikTok
-                      site:
-                      - US
+                      - '1688'
+                      site: []
                       language:
-                      - en
-                      category:
-                      - 通用
+                      - zh
+                      category: []
+                    cells:
+                      备注: 桶口径含转单信号，率偏高属预期
+                      意图: 售中改价改单
+                      禁止: 未改先说已改好
+                      阶段: 售中
+                      低置信: handoff_human 超授权
+                      辅工具: get_price_quote; lock_or_hold_stock
+                      必填槽位: order_id, target_price/qty
+                      置信≥0.85: 申请或改价结果+付款安排
+                      全量会话量: '21124'
+                      文字转单率: '1'
+                      主工具(按序): apply_change_price
+                      置信0.60–0.85: clarify_slot(单号/改几)
+                      台账意图对照: 售中询盘
+                mcp_servers: []
                 tools:
-                - name: gen_image_skill
-                  display_name: 生图技能
-                  type: skill
-                  description: 按商品图与平台规范生成电商主图/海报（示例技能）
-                  params: []
-                  source: external
-                  skill:
-                    name: 生图技能
-                    version: 1
-                    description: 按商品图与平台规范生成电商主图/海报（示例技能）
-                    files:
-                    - path: SKILL.md
-                      size: 412
-                    - path: scripts/generate.py
-                      size: 280
-                    download_path: /api/v1/tools/gen_image_skill/skill-package
-                - name: xclaw_mall_mall_product_rank_list_query
-                  display_name: 爆款排行数据列表
+                - name: xclaw_platform_alibaba_trade_order_modifyorderprice_call
+                  display_name: 修改订单价格
                   type: cli
-                  description: 爆款排行数据列表
+                  description: 修改订单价格
                   params:
-                  - name: delivery_region_id
+                  - name: shop_id
+                    type: string
+                    required: true
+                    description: ERP 店铺ID。PlatformDispatcher 会将该值传给 Alibaba 模块入口。
+                  - name: order_id
                     type: number
                     required: true
-                    description: 【区域id】特殊区域集  100=海外  1000=全部
-                  - name: nums
+                    description: 订单id
+                  - name: carriage
                     type: number
-                    required: false
-                    description: 【前limit条数据】默认10
+                    required: true
+                    description: 订单修改之后的运费，单位为分
+                  - name: entry_discounts
+                    type: string
+                    required: true
+                    description: 改价明细,discount值的单位为分，正数为涨价，负数为减价
+                  source: external
+                  input_schema:
+                    type: object
+                    properties:
+                      shop_id:
+                        type: string
+                        description: ERP 店铺ID。PlatformDispatcher 会将该值传给 Alibaba 模块入口。
+                      order_id:
+                        type: number
+                        description: 订单id
+                      carriage:
+                        type: number
+                        description: 订单修改之后的运费，单位为分
+                      entry_discounts:
+                        type: string
+                        description: 改价明细,discount值的单位为分，正数为涨价，负数为减价
+                    required:
+                    - shop_id
+                    - order_id
+                    - carriage
+                    - entry_discounts
                   cli:
                     bin: xclaw-cli
-                    command_template: xclaw-cli mall mall-product rank-list query --delivery-region-id {delivery_region_id} --nums {nums} --json
+                    command_template: xclaw-cli platform alibaba trade-order-modifyorderprice call --shop-id {shop_id} --order-id {order_id} --carriage {carriage} --entry-discounts {entry_discounts} --json
                     auth: CLI 内置登录（OAuth）
-                    auth_env: XCLAW_UMC_TOKEN
                     login_command: xclaw-cli auth login
-                    install: curl -fsSL https://open.westmonth.com/install | bash
+                    install: curl -fsSL https://open.westmonth.com/install | bash（Windows：irm https://open.westmonth.com/install.ps1 | iex）
                     verified_version: 2.2.10
                     output_format: json
-                    confirm_required: false
-                    pack: mall
-                    pack_name: 商城解决方案
-                    group: mall-product
-                    source_ref: mall.mall-product.rank-list.query
-                  source: external
+                    confirm_required: true
+                    output_description: JSON（--json）；参数与返回以 xclaw-cli schema platform alibaba trade-order-modifyorderprice call --json 为准
+                    auth_env: XCLAW_UMC_TOKEN
+                    pack: platform
+                    pack_name: 第三方跨境平台 OpenAPI 转发，包含商品、订单、物流、库存、营销、店铺等能力
+                    group: alibaba
+                    source_ref: platform.alibaba.trade-order-modifyorderprice.call
+                    risk_level: low
+                  confirm_required: true
         '304':
           description: since_version 与当前版本相同，配置无变化
         '401':
@@ -1276,7 +1344,7 @@ components:
       required: true
       schema:
         type: string
-        example: kb_aq
+        example: kb_cs_reply
     SpaceHeader:
       name: X-Space-Id
       in: header
@@ -1341,7 +1409,7 @@ components:
             message: 与已有文档同名，覆盖会影响 1 个已关联意图
             details:
               affected_intents:
-              - B.STOCK.QTY
+              - B.PRE.STOCK
     PayloadTooLarge:
       description: 单次超过 100 条或文件过大
       content:
@@ -1427,7 +1495,7 @@ components:
       properties:
         tool:
           type: string
-          example: query_stock
+          example: xclaw_platform_alibaba_product_get
         param_map:
           type: object
           additionalProperties:
@@ -1684,10 +1752,10 @@ components:
       properties:
         kb_id:
           type: string
-          example: kb_aq
+          example: kb_cs_reply
         name:
           type: string
-          example: 客服AQ
+          example: 1688客服-回复规则与禁止项
         type:
           type: string
           enum:
@@ -1782,7 +1850,7 @@ components:
           items:
             type: string
           example:
-          - B.STOCK.AVAIL
+          - B.PRE.STOCK
         updated_at:
           type: string
           format: date-time
@@ -1868,10 +1936,10 @@ components:
       properties:
         name:
           type: string
-          example: query_stock
+          example: xclaw_platform_alibaba_product_get
         display_name:
           type: string
-          example: 查库存
+          example: 获取商品
         description:
           type: string
         method:
@@ -2078,7 +2146,7 @@ components:
             download_path:
               type: string
               nullable: true
-              example: /api/v1/tools/gen_image_skill/skill-package
+              example: /api/v1/tools/xclaw_platform/skill-package
               description: 技能包 zip 下载地址（需 工具:读 权限）
         workflow:
           type: object
@@ -2658,9 +2726,7 @@ components:
                 type: string
           example:
           - depth: 1
-            name: 大类
-          - depth: 2
-            name: 问题桶
+            name: 阶段
         intent_level_name:
           type: string
           example: 意图

@@ -199,7 +199,7 @@ def create(db: Session, sp: Space, data: dict, actor: Actor) -> Intent:
         errs.append(cerr)
     rule = tax_svc.code_rule(t, cid)
     if not INTENT_CODE_RE.match(code):
-        errs.append(f"编码格式应为 {rule}XXX（大写字母 / 数字 / 下划线，用点分隔，如 B.STOCK.AVAIL）")
+        errs.append(f"编码格式应为 {rule}XXX（大写字母 / 数字 / 下划线，用点分隔，如 B.PRE.STOCK）")
     elif not cerr and not code.startswith(rule):
         errs.append(f"编码应以 {rule} 开头")
     if not name:
