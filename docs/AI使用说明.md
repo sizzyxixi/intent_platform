@@ -4,17 +4,172 @@
 > 本说明与代码一致（平台 v0.17，`openapi.yaml` 0.17.0）。字段细节以 `openapi.yaml` 为准；6 个 MCP 工具的完整 inputSchema 见 `AI接入说明.md` 第 9 节。
 > 文中示例来自 1688 智能客服空间（`cs`）的真实数据；换成你所在的空间时，结构完全相同。
 
-## 环境地址
+## 0. 接入前配置（必读）
 
-| 项 | 值 |
-|---|---|
-| 生产地址 | `http://intent.47.86.15.93.sslip.io` |
-| API Base | `http://intent.47.86.15.93.sslip.io/api/v1` |
-| MCP 端点 | `http://intent.47.86.15.93.sslip.io/mcp`（`POST`，JSON-RPC 2.0） |
-| 鉴权方式 | 请求头 `Authorization: Bearer ipk_…`。意图类接口另带 `X-Space-Id`（或 `?space=`） |
-| API Key | 管理员在控制台「工具中心 › 接入与密钥管理」创建；完整 Key 只显示一次 |
+没有可用的 API Key，就不要调用任何接口。下面约定 Key 从哪来、放到哪、怎么自检。示例里的 `ipk_xxx` / `ipk_…` 只表示 Key 的格式（前缀是 `ipk_`），**不是**能用的密钥。
 
-本地开发时把上面的生产地址换成 `http://127.0.0.1:8000`（API Base 为 `http://127.0.0.1:8000/api/v1`，MCP 为 `http://127.0.0.1:8000/mcp`）。下文路径都以生产地址为前缀，也可用环境变量 `BASE`。
+### 0.1 环境地址
+
+| 项 | 生产环境 | 本地开发 |
+|---|---|---|
+| 平台地址 | `http://intent.47.86.15.93.sslip.io` | `http://127.0.0.1:8000` |
+| API Base | `http://intent.47.86.15.93.sslip.io/api/v1` | `http://127.0.0.1:8000/api/v1` |
+| MCP 端点 | `http://intent.47.86.15.93.sslip.io/mcp`（`POST`，JSON-RPC 2.0） | `http://127.0.0.1:8000/mcp` |
+| 鉴权 | 请求头 `Authorization: Bearer <API Key>`。意图类接口另带 `X-Space-Id`（或 `?space=`） | 同左 |
+
+下文示例默认用生产地址，并用环境变量 `INTENT_PLATFORM_BASE_URL`、`INTENT_PLATFORM_API_KEY`、`INTENT_PLATFORM_SPACE`（也可用 `BASE` 作为地址的别名）。
+
+### 0.2 管理员如何创建 API Key
+
+只有**管理员**能创建。在控制台按这个路径操作（与页面文案一致）：
+
+1. 打开 `http://intent.47.86.15.93.sslip.io/`（本地则为 `http://127.0.0.1:8000/`），用管理员账号登录。
+2. 左侧菜单点「**工具中心**」，再点页内标签「**接入与密钥**」（地址是 `/#/tools/access`）。
+3. 点「**＋ 新建 Key**」，填写：
+   - **名称**：用来识别调用方，例如 `ai-agent-default`。
+   - **绑定空间**（至少 1 个，可多选）：只约束意图、槽位、分类、空间设置、运行时配置。知识库和工具目录不受绑定限制。给 1688 智能客服接入时勾选「1688 智能客服」（空间 ID：`cs`）。
+   - **权限**：`意图:读`、`意图:写`、`知识:读`、`知识:写`、`工具:读`。线上 Bot / 只读智能体勾选三个「读」即可（表单默认就是这三个）。只有要整理意图或导入知识时，才再勾选对应的「写」。
+4. 点「创建」。完整 Key **只显示这一次**，关闭窗口后平台只保留哈希，无法再查看。请立刻复制并按 0.3 交给调用方，不要把 Key 写进代码仓库或公开聊天。
+
+吊销在同一页的 Key 列表里操作。吊销后该 Key 再调用会返回 401 `KEY_REVOKED`。
+
+### 0.3 你必须从哪里读取 Key（约定）
+
+按这个顺序查找，**找到第一个就用，不要再往下搜**：
+
+1. 环境变量 `INTENT_PLATFORM_API_KEY`。同时读取（若已设置）：
+   - `INTENT_PLATFORM_BASE_URL`（未设置时用生产地址 `http://intent.47.86.15.93.sslip.io`）
+   - `INTENT_PLATFORM_SPACE`（未设置时用 `cs`，或配置文件里的 `space_id`）
+2. 配置文件 `~/.intent-platform/config.json`，权限必须是 `600`（仅文件所有者可读写）。字段如下：
+
+```json
+{
+  "base_url": "http://intent.47.86.15.93.sslip.io",
+  "api_key": "ipk_…",
+  "space_id": "cs"
+}
+```
+
+**如果上面两处都没有 Key：立即停止，向人要 Key，或请管理员按 0.2 创建并写入环境变量 / 该配置文件。禁止在 `~/.xclaw/`、`~/.workbuddy/`、插件目录、项目仓库、浏览器配置或其他目录里搜索 `ipk_`。那些位置即使出现类似字符串，也不是本平台的 API Key。**
+
+### 0.4 自检
+
+先装载配置，再请求 `GET /api/v1/spaces`。成功后再做别的调用。
+
+```bash
+if [ -z "$INTENT_PLATFORM_API_KEY" ] && [ -f "$HOME/.intent-platform/config.json" ]; then
+  eval "$(python3 - <<'PY'
+import json, os, shlex
+d = json.load(open(os.path.expanduser("~/.intent-platform/config.json")))
+print("export INTENT_PLATFORM_API_KEY="+shlex.quote(d["api_key"]))
+print("export INTENT_PLATFORM_BASE_URL="+shlex.quote(d.get("base_url") or "http://intent.47.86.15.93.sslip.io"))
+print("export INTENT_PLATFORM_SPACE="+shlex.quote(d.get("space_id") or "cs"))
+PY
+)"
+fi
+: "${INTENT_PLATFORM_BASE_URL:=http://intent.47.86.15.93.sslip.io}"
+: "${INTENT_PLATFORM_SPACE:=cs}"
+if [ -z "$INTENT_PLATFORM_API_KEY" ]; then
+  echo "未找到 API Key。请管理员按《AI使用说明》0.2 创建，写入环境变量 INTENT_PLATFORM_API_KEY 或文件 ~/.intent-platform/config.json（chmod 600）。不要在其他目录搜索。"
+  exit 1
+fi
+
+curl -sS -D - "$INTENT_PLATFORM_BASE_URL/api/v1/spaces" \
+  -H "Authorization: Bearer $INTENT_PLATFORM_API_KEY"
+```
+
+
+键绑定了 `cs`、且具备 `意图:读` 时，成功响应是 **200**，例如：
+
+```json
+[{"space_id": "cs", "name": "1688 智能客服", "description": "1688 店铺询盘的智能客服试点",
+  "bot": "客服 Bot（吴钢）", "code_prefix": "B"}]
+```
+
+返回的是该 Key **绑定的空间**，不会列出未绑定的空间。每个响应带 `X-Request-Id`。
+
+| 结果 | 含义 | 你该怎么做 |
+|---|---|---|
+| 200 且列出预期空间 | Key 有效，可以继续 | 进入「第一次调用」或第 3 节 |
+| 401 `UNAUTHORIZED`，文案含「缺少 API Key」 | 没带 `Authorization: Bearer ipk_…`，或格式不对 | 检查环境变量 / 配置文件是否已装载，请求头是否写对；不要改路径重试 |
+| 401 `KEY_REVOKED` | Key 已被吊销 | 停止，请管理员重新创建 |
+| 403 `SPACE_FORBIDDEN` | `X-Space-Id` 不在 Key 的绑定范围内（例如绑定了 `cs` 却传 `mc`） | 改用绑定的空间，或请管理员给这个 Key 加上该空间 |
+| 403 `SCOPE_FORBIDDEN` | 缺少该接口所需权限（例如只读 Key 去写槽位） | 停止，说明缺的权限（`details.required`），请管理员补发或另开写权限 Key |
+
+自检失败就停，向人说明上表里的原因，不要换地址反复试，也不要搜索其他目录找 Key。
+
+## 第一次调用（端到端）
+
+以生产环境、1688 智能客服空间（`cs`）为例。下面每一步的接口形态都按当前生产环境核对过。平台**没有**「识别意图」的开放接口：识别是你根据运行时配置在本地完成的。
+
+**第 1 步：自检。** 按 0.4 调用 `GET /api/v1/spaces`，得到 200 和空间列表后再继续。
+
+**第 2 步：拉运行时配置。**
+
+```bash
+curl -sS -D - "$INTENT_PLATFORM_BASE_URL/api/v1/runtime-config?since_version=0" \
+  -H "Authorization: Bearer $INTENT_PLATFORM_API_KEY" \
+  -H "X-Space-Id: $INTENT_PLATFORM_SPACE"
+```
+
+第一次或本地没有缓存时，`since_version=0`（不要省略到误传一个对不上的旧版本还以为失败）。成功是 **200**，响应头有 `ETag: "cs-v61"`（版本号会随配置变化增加）。顶层字段：
+
+```json
+{
+  "space": {"id": "cs", "name": "1688 智能客服", "bot": "客服 Bot（吴钢）"},
+  "version": 61,
+  "generated_at": "2026-11-13T08:17:31.641680Z",
+  "recognition": {"threshold": 0.6, "candidate_min": 0.3, "max_candidates": 3, "max_clarify": 2,
+                  "max_slot_ask": 2, "tool_retry": 1, "final_action": "handoff_human",
+                  "final_action_label": "转人工", "clarify_prompt": "我想确认一下，您是想要以下哪一项？",
+                  "final_message": null},
+  "taxonomy": {"levels": [{"depth": 1, "name": "阶段"}], "intent_level_name": "意图",
+               "categories": [{"code": "PRE", "name": "售前"}, {"code": "MID", "name": "售中"},
+                              {"code": "POST", "name": "售后"}, {"code": "NONE", "name": "非询盘"}]},
+  "slots": [{"name": "shop_id", "display_name": "店铺", "type": "文本",
+             "default_ask": "（不向买家追问：由 Bot 按会话所属的 1688 店铺带入 ERP 店铺 ID）"},
+            {"name": "order_id", "display_name": "订单号", "type": "文本", "default_ask": "麻烦发一下订单号～"}],
+  "intents": [ ],
+  "validation_sets": [ ],
+  "tools": [ ],
+  "mcp_servers": [ ]
+}
+```
+
+当前生产环境是 **17 条已启用意图、4 个被引用的工具、18 组校验知识**。把整份配置缓存下来，记下 `version`。再用同一个 `since_version`（例如 61）请求，版本没变会返回 **304**，响应头仍是 `ETag: "cs-v61"`，没有 body。
+
+**第 3 步：识别 / 路由意图。** 用 `intents[].description` 和 `intents[].examples` 对用户原话打分（算法由你决定）。例如用户说「拍好了帮我改下价」——这是意图 `B.MID.CHANGE_ORDER`（售中改价改单）的标准例句之一。若你的 Top1 是该意图且置信度 ≥ `recognition.threshold`（0.6），即命中；否则按第 3.2 节澄清或走最终动作。平台不提供 `/recognize` 之类的接口。
+
+命中后看该意图的槽位：`order_id` 必填（向买家要订单号）；`shop_id`、`carriage`、`entry_discounts` 等以「（不向买家追问：…）」开头，不要问买家，来源见第 3.4 节后的「店铺 ID 与西之月登录」。
+
+**第 4 步：取知识。** 该意图的 `knowledge` 里，`usage=validate` 的完整内容已在顶层 `validation_sets` 中（例如 `kb_cs_reply` 的 RULE-13、`kb_cs_conf` 整篇），生成回复后必须逐条对照。需要再检索时：
+
+```bash
+curl -sS "$INTENT_PLATFORM_BASE_URL/api/v1/kbs/kb_cs_reply/search" \
+  -H "Authorization: Bearer $INTENT_PLATFORM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"改价","top_k":2}'
+```
+
+成功是 **200**，数组里每一项形如：`score`、`kb_name`、`doc_name`、`chunk`（`chunk_id`、`doc_id`、`content`、`cells`、`effective_tags`、`linked_intents`、`kb_id` 在 `chunk` 内）。检索「改价」时，第一条即为 `RULE-13`，`linked_intents` 含 `B.MID.CHANGE_ORDER`，禁止项包括「未改先说已改好」。
+
+**第 5 步：解析绑定的工具。** 在 `intents[].tools` 里找到 `param_map`，再到顶层 `tools[]` 按 `name` 取定义。`B.MID.CHANGE_ORDER` 当前绑定：
+
+- `xclaw_platform_alibaba_product_get`（查询商品，读）：`--shop-id` ← 槽位 `shop_id`，`--product-id` ← 槽位 `offer_id`，`--web-site` / `--scene` 为常量 `1688`
+- `xclaw_platform_alibaba_trade_order_modifyorderprice_call`（改价，`confirm_required=true`）：还需要 `order_id`、`carriage`、`entry_discounts`；没有人工确认不得调用
+
+**第 6 步：调用工具。** 先按第 3.4 节把 `cli.command_template` 里的 `{参数}` 换成入参，拼成 argv。两个前提缺一不可，否则不要执行：
+
+1. 运行环境已登录西之月：执行过 `xclaw-cli auth login`，或已设置环境变量 `XCLAW_UMC_TOKEN`（工具定义里 `cli.auth_env` / `cli.login_command` 即此）。
+2. 已经有 `shop_id`（见「店铺 ID 与西之月登录」）。没有就回到槽位处理：不向买家追问，向使用你的人或接入层要；不要编造，也不要改去跑 `platform alibaba product list` 来「找」店铺（那条命令本身也要求 `--shop-id`）。
+
+读商品在入参齐全、已登录时的 argv 示例（值请换成真实的店铺 ID 和商品 ID）：
+
+```
+["xclaw-cli","platform","alibaba","product","get","--shop-id","<ERP店铺ID>","--product-id","<商品ID>","--web-site","1688","--scene","1688","--json"]
+```
+
+改价是写操作，还须先按第 3.5 节取得确认，金额单位是分。
 
 ## 1. 你面对的是什么
 
@@ -43,8 +198,8 @@
 
 | 项 | 值 |
 |---|---|
-| Base URL | 生产环境：`http://intent.47.86.15.93.sslip.io`（API：`http://intent.47.86.15.93.sslip.io/api/v1`）。本地开发为 `http://127.0.0.1:8000`。下文路径都以它为前缀 |
-| 鉴权 | 请求头 `Authorization: Bearer ipk_…`（管理员在控制台「工具中心 › 接入与密钥管理」创建，完整 Key 只显示一次） |
+| Base URL | 见第 0.1 节。优先用 `INTENT_PLATFORM_BASE_URL` |
+| 鉴权 | 请求头 `Authorization: Bearer $INTENT_PLATFORM_API_KEY`。Key 的创建、存放和自检见第 0 节，不要使用文档里的 `ipk_xxx` 占位符去发请求 |
 | 权限 scope | `意图:读`、`意图:写`、`知识:读`、`知识:写`、`工具:读`。线上 Bot 通常只有三个「读」；维护型 AI 另有两个「写」 |
 | 空间 | 意图类接口（spaces、taxonomy、recognition、slots、intents、runtime-config）带 `X-Space-Id: cs`（或 `?space=cs`）；不传时用 Key 绑定的第一个空间；不在绑定范围返回 403 `SPACE_FORBIDDEN`。知识库、导入任务、工具接口全局，不需要空间 |
 | MCP | `POST {Base URL}/mcp`，JSON-RPC 2.0，同一个 Key；意图类工具可传 `space` 参数 |
@@ -54,15 +209,10 @@ MCP 客户端配置示例：
 
 ```json
 { "mcpServers": { "intent-platform": { "url": "http://intent.47.86.15.93.sslip.io/mcp",
-    "headers": { "Authorization": "Bearer ipk_xxx", "X-Space-Id": "cs" } } } }
+    "headers": { "Authorization": "Bearer <INTENT_PLATFORM_API_KEY>", "X-Space-Id": "cs" } } } }
 ```
 
-先确认身份和范围：
-
-```http
-GET /api/v1/spaces
-Authorization: Bearer ipk_xxx
-```
+先按第 0.4 节确认身份和范围（`GET /api/v1/spaces`）。不要把 Key 写进长期存放的 MCP 配置文件明文里（除非该文件权限为 600，并与 `~/.intent-platform/config.json` 同样保密）。
 
 ```json
 [{"space_id": "cs", "name": "1688 智能客服", "description": "1688 店铺询盘的智能客服试点",
@@ -73,21 +223,21 @@ Authorization: Bearer ipk_xxx
 
 ### 3.1 拉取并缓存运行时配置
 
-```http
-GET /api/v1/runtime-config?since_version=60
-Authorization: Bearer ipk_xxx
-X-Space-Id: cs
+```bash
+curl -sS -D - "$INTENT_PLATFORM_BASE_URL/api/v1/runtime-config?since_version=61" \
+  -H "Authorization: Bearer $INTENT_PLATFORM_API_KEY" \
+  -H "X-Space-Id: $INTENT_PLATFORM_SPACE"
 ```
 
-- 版本没变：`304`，响应头 `ETag: "cs-v60"`，继续用本地缓存。
-- 版本变了：`200` 返回完整配置。替换本地缓存，并**清空意图识别缓存**（例句、向量等）。
+- 版本没变：`304`，响应头 `ETag: "cs-v61"`（版本号以实际返回为准），继续用本地缓存。
+- 版本变了：`200` 返回完整配置。替换本地缓存，并**清空意图识别缓存**（例句、向量等）。`space` 是对象 `{"id","name","bot"}`，不是字符串。
 - 建议定时轮询（如每分钟一次）；不要每轮对话都拉。
 
 顶层结构：
 
 | 字段 | 内容 |
 |---|---|
-| `space` / `version` / `generated_at` | 空间、版本、生成时间 |
+| `space` / `version` / `generated_at` | 空间对象 `{"id","name","bot"}`、版本、生成时间 |
 | `recognition` | 空间设置：`threshold`、`candidate_min`、`max_candidates`、`max_clarify`、`max_slot_ask`、`tool_retry`、`final_action`（`handoff_human` / `general_assistant` / `decline`）、`clarify_prompt`、`final_message` |
 | `taxonomy` | `levels`、`intent_level_name`、`categories` 分类树 |
 | `slots` | 本空间槽位定义（name、display_name、type、options、default_ask） |
@@ -96,7 +246,7 @@ X-Space-Id: cs
 | `tools` | 被已启用意图用到的工具的完整定义（类型、入参 schema、调用方式、`confirm_required`） |
 | `mcp_servers` | 被用到的 MCP 服务连接信息（不含密钥） |
 
-真实片段（cs，v60，已截短）：
+真实片段（cs，v61，已截短；`space` 为对象）：
 
 ```json
 {
@@ -185,6 +335,32 @@ argv：["xclaw-cli","platform","alibaba","product","get","--shop-id","<店铺ID>
 
 参数的确切含义和返回结构以 `cli.output_description` 指向的 `xclaw-cli schema … --json` 为准，不要猜字段。
 
+### 店铺 ID 与西之月登录
+
+cs 的 17 个已启用意图里，有 15 个带槽位 `shop_id`（显示名「店铺」，**不是**向买家追问的必填项）。绑定到这些意图上的西之月 CLI，入参 `--shop-id` 都映射到这个槽位。没有 `shop_id` **不要调用**这些命令。
+
+`shop_id` 从哪里来，按这个顺序：
+
+1. **会话上下文（设计预期）**：询盘来自某一家已授权的 1688 店铺时，由接入层（IM / 客服工作台）把该店铺的 ERP 店铺 ID 注入会话，你写入槽位 `shop_id`。槽位的默认追问是「（不向买家追问：由 Bot 按会话所属的 1688 店铺带入 ERP 店铺 ID）」，不要把这句话发给买家。
+2. **本平台目前没有「空间级运行时变量」或「默认店铺 ID」**。空间设置只有识别阈值、澄清、追问、工具重试和最终动作，运行时配置里也没有 `shop_id` 字段。不要臆造 `GET /api/v1/spaces/{id}/vars` 或类似接口。
+3. 会话里没有时：向使用你的人要这个店铺的 ERP 店铺 ID，拿到再调用工具。
+4. 若运行环境已经登录西之月，可以列出已授权店铺供人挑选（有多家时不要自己猜）：
+
+```bash
+xclaw-cli mall platform-store shop list --platform-code alibaba --json
+```
+
+这条命令没有必填参数，可选 `--platform-code alibaba` 只看 1688。也可以用 `xclaw-cli operate customer shop alibaba get --page 1 --size 20 --json`（`page`、`size` 必填）。
+
+不要用 `xclaw-cli platform alibaba product list` 去「发现店铺」：它是「指定店铺的商品列表」，**必填** `--shop-id`，没有店铺 ID 时这条命令会直接失败。
+
+调用任何 `xclaw-cli` 之前，运行环境必须先具备西之月凭证，任选一种即可：
+
+- 执行 `xclaw-cli auth login`（通过 UMC OAuth 登录 MoonClaw）；或
+- 设置环境变量 `XCLAW_UMC_TOKEN`
+
+工具定义里写的是 `cli.auth_env = XCLAW_UMC_TOKEN`、`cli.login_command = xclaw-cli auth login`。未登录就执行，属于运行环境问题：转人工并记录，不要向用户索要账号或 token。可用 `xclaw-cli auth status --json` 查看当前登录状态。
+
 ### 3.5 写操作与「需确认」
 
 - 工具的 `confirm_required=true`（顶层或 `cli` / `mcp` / `workflow` 内）表示它会改动外部数据。调用前**必须先得到确认**：面向用户的场景要用户明确同意；客服类场景按空间规则由人工确认（cs 的 R1：输出草稿，由人点发送）。没有确认就不调用。
@@ -210,10 +386,10 @@ argv：["xclaw-cli","platform","alibaba","product","get","--shop-id","<店铺ID>
   - 读切片：`GET /api/v1/kbs/{kb_id}/chunks?doc_id=…&q=…`。
 
 ```json
-[{"score": 0.9, "kb_id": "kb_cs_reply", "kb_name": "1688客服-回复规则与禁止项", "doc_name": "回复规则与禁止项_v1.json",
-  "chunk": {"chunk_id": "RULE-13", "doc_id": "RULE", "order": 13,
+[{"score": 0.9, "kb_name": "1688客服-回复规则与禁止项", "doc_name": "回复规则与禁止项_v1.json",
+  "chunk": {"chunk_id": "RULE-13", "doc_id": "RULE", "kb_id": "kb_cs_reply", "order": 13,
             "content": "意图：售中改价改单\n阶段：售中\n…\n禁止：未改先说已改好\n…",
-            "cells": {"意图": "售中改价改单", "禁止": "未改先说已改好", "主工具(按序)": "apply_change_price", "…": "…"},
+            "cells": {"意图": "售中改价改单", "禁止": "未改先说已改好", "主工具(按序)": "apply_change_price"},
             "effective_tags": {"platform": ["1688"], "site": [], "language": ["zh"], "category": []},
             "linked_intents": ["B.MID.CHANGE_ORDER"]}}]
 ```
@@ -222,7 +398,7 @@ argv：["xclaw-cli","platform","alibaba","product","get","--shop-id","<店铺ID>
 
 ## 4. 写路径：维护型 AI 怎么写入
 
-你的职责是帮运营**整理意图和知识**，写回草稿，由运营审核、关联知识与工具后启用。需要 `意图:写` / `知识:写`。
+你的职责是帮运营**整理意图和知识**，写回草稿，由运营审核、关联知识与工具后启用。需要具备 `意图:写` / `知识:写` 的 Key（第 0.2 节创建时勾选对应权限；只有三个「读」的 Key 会返回 403 `SCOPE_FORBIDDEN`）。
 
 分类节点、分类层级、工具注册、以及意图上的知识关联 / 工具绑定，**没有**开放给 API Key 或 MCP `intent_platform` 工具（不要臆造 `/api/v1` 或 MCP 接口去写它们）。这些只在控制台完成，后台走的是登录会话下的 `/api/admin` 接口，不接受 API Key。
 
@@ -255,7 +431,7 @@ argv：["xclaw-cli","platform","alibaba","product","get","--shop-id","<店铺ID>
 
 ```http
 POST /api/v1/intents:batchUpsert
-Authorization: Bearer ipk_xxx
+Authorization: Bearer $INTENT_PLATFORM_API_KEY
 X-Space-Id: cs
 Idempotency-Key: 7f3a-20261111-0001
 Content-Type: application/json
@@ -317,9 +493,9 @@ Content-Type: application/json
 3. 导入（REST 用 multipart；MCP `import_knowledge` 用 base64）：
 
 ```bash
-BASE=http://intent.47.86.15.93.sslip.io
+BASE=${INTENT_PLATFORM_BASE_URL:-http://intent.47.86.15.93.sslip.io}
 curl -X POST "$BASE/api/v1/kbs/kb_cs_reply/documents:import" \
-  -H "Authorization: Bearer $IP_API_KEY" -H "Idempotency-Key: 7f3a-20261111-0004" \
+  -H "Authorization: Bearer $INTENT_PLATFORM_API_KEY" -H "Idempotency-Key: 7f3a-20261111-0004" \
   -F "files=@回复规则补充.csv"
 ```
 
@@ -350,7 +526,7 @@ curl -X POST "$BASE/api/v1/kbs/kb_cs_reply/documents:import" \
 | HTTP | 常见 code | 你下一步 |
 |---|---|---|
 | 400 | `BAD_REQUEST`、`IDEMPOTENCY_KEY_REQUIRED`、`IDEMPOTENCY_KEY_INVALID`（超过 64 字符）、`HEADER_MISMATCH`、`UNSUPPORTED_EXTENSION`、`EMPTY_FILE`、`BAD_CONTENT_TYPE`、`NOT_A_SKILL`（对非技能工具下载技能包） | 读 `message` / `details` 修正后再提，不要原样重试 |
-| 401 | `UNAUTHORIZED`、`KEY_REVOKED` | 停止调用，报告运营检查 Key |
+| 401 | `UNAUTHORIZED`（缺少 API Key）、`KEY_REVOKED` | 按第 0.4 节处理：没配 Key 就向人要，已吊销就请管理员重发；不要到其他目录搜索 Key |
 | 403 | `SCOPE_FORBIDDEN`、`SPACE_FORBIDDEN`、`ENABLE_FORBIDDEN`、`ENABLED_PROTECTED` | 不重试；说明缺什么权限或改由运营在控制台操作 |
 | 404 | `INTENT_NOT_FOUND`、`KB_NOT_FOUND`、`CHUNK_NOT_FOUND`、`SLOT_NOT_FOUND`、`IMPORT_NOT_FOUND`、`TOOL_NOT_FOUND` | 重新列表查询确认 ID |
 | 409 | `IDEMPOTENCY_CONFLICT`、`SLOT_EXISTS`、`SLOT_IN_USE`、`OVERWRITE_REQUIRED` | 幂等冲突换新键；覆盖类等运营确认；槽位已存在就复用 |
@@ -386,7 +562,7 @@ curl -X POST "$BASE/api/v1/kbs/kb_cs_reply/documents:import" \
 
 - 不编造库存、价格、交期、物流、退款结果；工具没给就不说。
 - 写操作先确认；没确认不调用 `confirm_required=true` 的工具。
-- 不向用户索要账号、密码、token、cookie；凭据只在运行环境里。
+- 不向用户索要账号、密码、token、cookie；凭据只在运行环境里。本平台 API Key 只从第 0.3 节约定的环境变量或 `~/.intent-platform/config.json` 读取，找不到就停下来问人。
 - 不跨空间写入；不自建分类；不建同义槽位；不删除任何数据；不启用意图；未经确认不覆盖知识文档。
 - 维护时不要用 `runtime-config` 当整理依据（它只含已启用意图）；整理用 intents 系列接口。
 
