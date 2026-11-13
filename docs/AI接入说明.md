@@ -1,8 +1,8 @@
 # 意图管理平台 · 给 AI 的接入说明
 
 > 读者：运营使用的 AI 工具（如 Claude、Cursor、自建 Agent），以及读取运行时配置的 Bot / 智能体。
-> **完整的读写与调用说明见同目录 `AI使用说明.md`（先读它）**；本文是规则速查：字段规则、槽位规则、错误处理和 6 个 MCP 工具的完整定义（第 9 节，与平台实现一致）。两者冲突时以 `AI使用说明.md` 和 `openapi.yaml` 为准。
-> 接口定义见同目录 `openapi.yaml`（OpenAPI 3.0.3，0.17.0）。生产环境 Base URL：`http://intent.47.86.15.93.sslip.io`（API：`http://intent.47.86.15.93.sslip.io/api/v1`，MCP：`http://intent.47.86.15.93.sslip.io/mcp`）；本地开发为 `http://127.0.0.1:8000`。鉴权：`Authorization: Bearer $INTENT_PLATFORM_API_KEY`。Key 的创建、存放位置和自检见 `AI使用说明.md` 第 0 节（环境变量 `INTENT_PLATFORM_API_KEY` 或文件 `~/.intent-platform/config.json`）；文档里的 `ipk_xxx` 只是格式占位，不是可用密钥。空间：意图类接口带 `X-Space-Id: {space_id}`，知识库与工具接口全局、不需要。
+> **使用方先读同目录 `使用方接入指南.md`；运营方先读 `运营方配置手册.md`。** `AI使用说明.md` 是这两份的索引。本文是规则速查：字段规则、槽位规则、错误处理和 6 个 MCP 工具的完整定义（第 9 节，与平台实现一致）。冲突时以上述指南和 `openapi.yaml` 为准。
+> 接口定义见同目录 `openapi.yaml`（OpenAPI 3.0.3，0.17.0）。生产环境 Base URL：`http://intent.47.86.15.93.sslip.io`（API：`http://intent.47.86.15.93.sslip.io/api/v1`，MCP：`http://intent.47.86.15.93.sslip.io/mcp`）；本地开发为 `http://127.0.0.1:8000`。鉴权：`Authorization: Bearer $INTENT_PLATFORM_API_KEY`。Key 的创建、存放位置和自检见 `使用方接入指南.md` 第 1 节（环境变量 `INTENT_PLATFORM_API_KEY` 或文件 `~/.intent-platform/config.json`）；文档里的 `ipk_xxx` 只是格式占位，不是可用密钥。空间：意图类接口带 `X-Space-Id: {space_id}`，知识库与工具接口全局、不需要。
 
 ## 1. 平台是什么
 

@@ -1,6 +1,6 @@
 # 意图管理平台（生产版 v0.17）
 
-基于 demo（`intent-platform/index.html` + `src3/`）开发的生产可用版本。界面、交互和种子数据以 demo 为准，接口严格按 `docs/openapi.yaml` 0.17.0 实现。需求见 `docs/意图管理平台_全局需求文档.md`（v0.17），给 AI / Bot 的读写与调用说明见 `docs/AI使用说明.md`。
+基于 demo（`intent-platform/index.html` + `src3/`）开发的生产可用版本。界面、交互和种子数据以 demo 为准，接口严格按 `docs/openapi.yaml` 0.17.0 实现。需求见 `docs/意图管理平台_全局需求文档.md`（v0.17）。使用方（Bot / 业务系统）见 `docs/使用方接入指南.md`，运营方见 `docs/运营方配置手册.md`；`docs/AI使用说明.md` 是这两份的索引。
 
 - **意图管理**：意图列表（左侧第一层分类筛选，列按层级名生成）/ 槽位 / 空间设置（含分类层级：0～5 层分类 + 意图，层数与名称按空间配置，插入 / 删除层级先预览再确认）/ 导入记录。「新建意图」弹窗有「管理分类」入口直达分类层级设置。槽位类型含文件 / 图片。按业务空间（`cs` 1688 智能客服、`mc` Moonclaw）隔离意图和槽位。
 - **知识库**：全平台通用。可新建知识库、导入文档（异步构建）、编辑切片和标签、检索。
@@ -36,7 +36,7 @@
 backend/    FastAPI 应用（app/）、Alembic 迁移、种子数据 seed/demo_state.json、tests/
 frontend/   React 控制台（src/）、Playwright 用例（e2e/）
 deploy/     docker-compose.yml、nginx.conf、.env.example
-docs/       AI使用说明.md、AI接入说明.md、openapi.yaml、需求文档（控制台「接入与密钥」直接展示与下载）
+docs/       使用方接入指南.md、运营方配置手册.md、AI使用说明.md（索引）、AI接入说明.md、openapi.yaml、需求文档（控制台「接入与密钥」直接展示与下载）
 scripts/    e2e-server.sh（e2e 专用后端）、export_demo_seed.cjs（从 demo 重新导出种子）
 screenshots/ 主要页面截图（e2e 生成）
 ```
@@ -121,6 +121,8 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 | `IP_MCP_STDIO_ENABLED` | false | 是否允许在平台服务器上启动 stdio MCP 服务做在线同步（会执行登记的命令，仅管理员可触发）。默认关闭，stdio 服务用「手动导入」 |
 
 ## Bot / AI 工具接入
+
+使用方的完整步骤见 `docs/使用方接入指南.md`，运营方配置见 `docs/运营方配置手册.md`（`docs/AI使用说明.md` 是索引）。下面是仓库内的摘要。
 
 1. 管理员在「工具中心 › 接入与密钥」新建 API Key：绑定空间、勾选权限（意图:读/写、知识:读/写、工具:读）。Token 只显示一次，平台只保存 sha256 哈希，可随时吊销。
 2. **REST**（`/api/v1/*`，见 `docs/openapi.yaml`）

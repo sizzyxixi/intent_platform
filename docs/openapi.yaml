@@ -31,7 +31,7 @@ info:
 
     - v0.6 起 MCP 按「服务 → 子工具」登记：子工具名为 {服务名}.{远端工具名}，Tool.server 为服务名，Tool.mcp_server 由 0.5 的 URL 字符串改为连接信息对象（URL 在 mcp_server.url）；runtime-config 新增 mcp_servers（只含被用到的服务，密钥只给环境变量名 auth.token_env）。
 
-    - v0.17：工具中心已接入西之月 xclaw-cli（7037 条 CLI 命令 + 5 个技能，cli 配置带 auth_env / pack / group / risk_level）；cli / mcp / workflow 工具的 confirm_required=true 表示写操作，Bot 必须先取得用户（或客服）确认再执行。完整的 AI 读写说明见 docs/AI使用说明.md。
+    - v0.17：工具中心已接入西之月 xclaw-cli（7037 条 CLI 命令 + 5 个技能，cli 配置带 auth_env / pack / group / risk_level）；cli / mcp / workflow 工具的 confirm_required=true 表示写操作，Bot 必须先取得用户（或客服）确认再执行。使用方见 docs/使用方接入指南.md，运营方见 docs/运营方配置手册.md；docs/AI使用说明.md 为索引。
 
     - 本接口自身也作为「平台内置」工具登记在工具中心（8 个能力，source=builtin）；其中写回意图、槽位写入/删除、导入知识为维护类，不能关联到意图，只给维护用 AI 通过 API Key 调用。
 

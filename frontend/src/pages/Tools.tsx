@@ -182,7 +182,7 @@ function Access() {
   const [docs, setDocs] = useState<Record<string, string>>({})
   const [newKey, setNewKey] = useState(false)
   useEffect(() => {
-    ['ai-usage', 'ai-guide', 'openapi'].forEach(n => api.get<string>('/docs/' + n).then(t => setDocs(d => ({ ...d, [n]: t }))).catch(e => setDocs(d => ({ ...d, [n]: '加载失败：' + errLines(e)[0] }))))
+    ;(['consumer', 'operator', 'ai-usage', 'ai-guide', 'openapi'] as const).forEach(n => api.get<string>('/docs/' + n).then(t => setDocs(d => ({ ...d, [n]: t }))).catch(e => setDocs(d => ({ ...d, [n]: '加载失败：' + errLines(e)[0] }))))
   }, [])
   const base = meta?.public_base_url || window.location.origin
   const spName = (id: string) => spaces.find(s => s.id === id)?.name || id
@@ -221,8 +221,8 @@ function Access() {
       <pre className="code">{`GET /api/v1/runtime-config?since_version=${sp.version - 1}\nX-Space-Id: ${sid}\nAuthorization: Bearer ipk_xxx\n\n→ 200 { "space": "${sid}", "version": ${sp.version}, "slots": [...], "intents": [...], "validation_sets": [...], "tools": [...] }\n→ 304 since_version 与当前 version 相同，无变化`}</pre>
       <div className="muted">当前空间 version：<b className="mono" id="rtVer">{sp.version}</b> · 已启用意图 {en} 个</div>
       <div className="note w" style={{ margin: '8px 0 0' }}>本空间的意图启用、停用或编辑后，version 会递增（各空间版本独立）；Bot 发现版本变化后应重新拉取，并清空意图识别缓存。</div></div>
-    <div className="card"><h3>给 AI 的接入说明</h3><div className="muted" style={{ marginBottom: 8 }}>把下面的文件交给 AI 工具或 Bot：先读 AI使用说明（怎么读、怎么写、怎么调用工具），规则速查看 AI接入说明，字段以 OpenAPI 为准。</div>
-      {([['ai-usage', 'AI使用说明.md', 'text/markdown'], ['ai-guide', 'AI接入说明.md', 'text/markdown'], ['openapi', 'openapi.yaml', 'application/yaml']] as const).map(([n, label, mt]) => <div key={n} style={{ marginBottom: 12 }}>
+    <div className="card"><h3>接入说明文档</h3><div className="muted" style={{ marginBottom: 8 }}>使用方（Bot / 业务系统）先读「使用方接入指南」；运营方先读「运营方配置手册」。AI使用说明是索引，保留以便旧链接可用。规则速查看 AI接入说明，字段以 OpenAPI 为准。</div>
+      {([['consumer', '使用方接入指南.md', 'text/markdown'], ['operator', '运营方配置手册.md', 'text/markdown'], ['ai-usage', 'AI使用说明.md', 'text/markdown'], ['ai-guide', 'AI接入说明.md', 'text/markdown'], ['openapi', 'openapi.yaml', 'application/yaml']] as const).map(([n, label, mt]) => <div key={n} style={{ marginBottom: 12 }}>
         <div className="row"><b className="mono">{label}</b><span className="sp" /><Btn s onClick={() => copy(n, label)}>复制</Btn> <Btn s onClick={() => { download(label, docs[n] || '', mt); toast('已下载 ' + label) }}>下载</Btn></div>
         <pre className="code" id={'doc_' + n} style={{ maxHeight: 260 }}>{docs[n] ?? '加载中…'}</pre></div>)}</div>
     <div className="card"><h3>MCP 服务</h3><div className="muted" style={{ marginBottom: 6 }}>支持 MCP 的 AI 工具（如 Claude、Cursor 等）添加以下配置即可直接调用（意图类工具可传 space 参数，默认取 Key 绑定的第一个空间；知识与工具类不需要）：</div>
