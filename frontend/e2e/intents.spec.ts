@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { login, watchErrors } from './helpers'
+import { login, pickTool, watchErrors } from './helpers'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -50,7 +50,7 @@ test('新建意图 → 启用校验失败 → 补齐后启用', async ({ page })
   await expect(page.locator('#eRefs tr')).toHaveCount(1)
   // 关联工具
   await page.selectOption('#eToolType', 'http')
-  await page.selectOption('#eTool', 'query_stock')
+  await pickTool(page, 'query_stock')
   await page.click('#toolAdd')
   await page.click('#eCheck')
   await expect(page.locator('#toast')).toContainText('校验通过')

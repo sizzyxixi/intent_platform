@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { login, watchErrors } from './helpers'
+import { login, watchErrors, pickTool } from './helpers'
 
 // e2e-server.sh 同时启动了测试用最小 MCP 服务（tests/mini_mcp_server.py，3 个工具）
 const MCP = `http://127.0.0.1:${process.env.E2E_MCP_PORT || 8766}`
@@ -48,7 +48,7 @@ test('MCP：注册服务 → 在线同步 → 意图下钻绑定 → 远端变�
   await page.locator('#intentTbl tbody tr').first().locator('button', { hasText: '编辑' }).click()
   await expect(page.getByTestId('intentEditor')).toBeVisible()
   await page.selectOption('#eToolType', 'mcp')
-  await page.selectOption('#eTool', 'srv:shop')
+  await pickTool(page, 'srv:shop')
   await page.click('#toolAdd')
   const pick = page.getByTestId('mcpPick')
   await expect(pick).toBeVisible()

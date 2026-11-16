@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { api, errLines, fmt, qs } from '../api'
 import { useSession } from '../session'
-import { Badge, Btn, Drawer, ErrBox, Pager, ST_C, toast, useAsync } from '../ui'
+import { Badge, Btn, Drawer, ErrBox, ST_C, toast, useAsync } from '../ui'
 import KbPicker from './KbPicker'
 import { SlotForm } from './Slots'
 import { Tax, leaves } from '../taxonomy'
@@ -34,21 +34,14 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   const [pick, setPick] = useState(false)
   const [slotNew, setSlotNew] = useState(false)
   const [toolSel, setToolSel] = useState('')
-  const [toolQ, setToolQ] = useState('')
   const [pickTy0, setPickTy] = useState(() => sessionStorage.getItem('pickToolType') || '')
   const [mcpPick, setMcpPick] = useState<string | null>(null)
   const [cliGrp, setCliGrp] = useState('')
   const body = useRef<HTMLDivElement>(null)
   const [slots, reloadSlots] = useAsync(() => api.get(`/spaces/${space.id}/slots`), [space.id])
   const [tax] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
-  const [pickPage, setPickPage] = useState(1)
-  const [toolQDeb, setToolQDeb] = useState('')
   const [extraTools, setExtraTools] = useState<any[]>([])
-  useEffect(() => {
-    const tmr = setTimeout(() => { setToolQDeb(toolQ); setPickPage(1) }, 300)
-    return () => clearTimeout(tmr)
-  }, [toolQ])
-  useEffect(() => { setPickPage(1); setToolSel(''); setToolQ('') }, [pickTy0, cliGrp])
+  useEffect(() => { setToolSel('') }, [pickTy0, cliGrp])
   const boundKey = E ? E.tools.map((b: Bind) => b.tool).join(',') : ''
   const [boundResp] = useAsync(
     () => !E ? Promise.resolve(undefined) : boundKey
@@ -58,18 +51,6 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   const [mcpServers] = useAsync(() => api.get('/mcp-servers'), [])
   const packOf = cliGrp.includes('|') ? cliGrp.split('|')[0] : cliGrp
   const groupOf = cliGrp.includes('|') ? cliGrp.slice(cliGrp.indexOf('|') + 1) : ''
-  const [pickData] = useAsync(() => {
-    if (!pickTy0 || pickTy0 === 'mcp') return Promise.resolve({ items: [] as any[], total: 0 })
-    return api.get('/tools' + qs({
-      page: pickPage, page_size: 50, q: toolQDeb,
-      type: pickTy0 === 'builtin' ? undefined : pickTy0,
-      source: pickTy0 === 'builtin' ? 'builtin' : undefined,
-      pack: packOf || undefined,
-      group: groupOf || undefined,
-      maintenance: false,
-      exclude_type: pickTy0 === 'builtin' ? 'mcp' : undefined,
-    }))
-  }, [pickTy0, toolQDeb, cliGrp, pickPage])
   useEffect(() => {
     api.get(`/intents/${code}`).then(x => {
       setD(x)
@@ -89,7 +70,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   const cur = opts.find(o => o.id === E.category_id)
   const lvNames = tax.levels
   const facets = facetsResp.facets || {}
-  const catalog: any[] = [...(boundResp.items || []), ...extraTools, ...(pickData?.items || []),
+  const catalog: any[] = [...(boundResp.items || []), ...extraTools,
     ...(mcpServers as any[]).flatMap((v: any) => v.tools || [])]
   const toolOf = (name: string) => catalog.find((t: any) => t.name === name)
   const slotDef = (name: string) => slots.find((s: any) => s.name === name)
@@ -146,7 +127,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
     return { tool: t.name, param_map: map }
   }
   const servers: any[] = mcpServers as any[]
-  const bound = new Set(E.tools.map((b: Bind) => b.tool))
+  const bound = new Set<string>(E.tools.map((b: Bind) => b.tool))
   const typeCounts: Record<string, number> = {
     http: facets.by_type?.http || 0, cli: facets.by_type?.cli || 0, skill: facets.by_type?.skill || 0,
     workflow: facets.by_type?.workflow || 0, builtin: facets.builtin_bindable || 0,
@@ -270,11 +251,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
             const mcpAvail = servers.map((v: any) => {
               const avail = (v.tools || []).filter((x: any) => x.enabled && !x.remote_missing && !bound.has(x.name)).length
               return { ...v, avail }
-            }).filter((v: any) => {
-              if (!v.avail) return false
-              const k = toolQ.trim().toLowerCase()
-              return !k || [v.name, v.display_name].some((s: string) => (s || '').toLowerCase().includes(k))
-            })
+            }).filter((v: any) => v.avail)
             const packs: { pack: string; pack_name: string; count: number }[] = facets.packs || []
             const groups: { pack: string; group: string; count: number }[] = facets.groups || []
             const cliGroups: [string, string, number][] = pickTy !== 'cli' ? [] : [
@@ -282,24 +259,18 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
               ...groups.map((x: any) => [x.pack + '|' + x.group, `${packs.find((p: any) => p.pack === x.pack)?.pack_name || x.pack} › ${x.group}`, x.count] as [string, string, number]),
             ]
             const grp = cliGroups.some(g => g[0] === cliGrp) ? cliGrp : ''
-            const items = pickTy === 'mcp' ? mcpAvail : (pickData?.items || []).filter((t: any) => !bound.has(t.name))
-            const shown = items
-            const pickTotal = pickTy === 'mcp' ? mcpAvail.length : (pickData?.total || 0)
             return <><div className="row" id="ePicker" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <select id="eToolType" value={pickTy} onChange={e => { setPickTy(e.target.value); sessionStorage.setItem('pickToolType', e.target.value); setToolSel(''); setToolQ(''); setCliGrp('') }}>
+              <select id="eToolType" value={pickTy} onChange={e => { setPickTy(e.target.value); sessionStorage.setItem('pickToolType', e.target.value); setToolSel(''); setCliGrp('') }}>
                 <option value="">— 选择类型 —</option>
                 {PICK_TYPES.filter(([k2]) => typeCounts[k2]).map(([k2, l]) => <option key={k2} value={k2}>{l}（{typeCounts[k2]}）</option>)}</select>
               {cliGroups.length > 0 && <select id="eCliGrp" value={grp} onChange={e => { setCliGrp(e.target.value); setToolSel('') }}>
                 <option value="">全部命令包（{facets.by_type?.cli || 0}）</option>
                 {cliGroups.map(([g, l, n]) => <option key={g} value={g}>{g.includes('|') ? '　' : ''}{l}（{n}）</option>)}</select>}
-              <select id="eTool" value={toolSel} disabled={!pickTy} onChange={e => setToolSel(e.target.value)} style={{ maxWidth: 420 }}>
-                <option value="">{pickTy === 'mcp' ? '— 选择 MCP 服务 —' : '— 选择工具 —'}</option>
-                {pickTy === 'mcp' ? shown.map((v: any) => <option key={v.name} value={'srv:' + v.name}>{v.display_name}（{v.name} · {v.avail} 个可用工具）▸</option>)
-                  : shown.map((t: any) => <option key={t.name} value={t.name}>{t.display_name}（{t.name}）</option>)}</select>
-              {(pickTy === 'cli' || pickTotal > 5) && <input type="text" id="eToolQ" value={toolQ} onChange={e => setToolQ(e.target.value)} placeholder="筛选" style={{ width: 140 }} />}
+              <ToolCombobox key={pickTy + '|' + cliGrp} typ={pickTy} pack={packOf} group={groupOf}
+                bound={bound} value={toolSel} mcpItems={mcpAvail} disabled={!pickTy}
+                onChange={(name, tool) => { setToolSel(name); if (tool) setExtraTools(xs => xs.some(x => x.name === tool.name) ? xs : [...xs, tool]) }} />
               <Btn s id="toolAdd" onClick={addTool}>＋ 关联</Btn></div>
-              {pickTy !== 'mcp' && pickData && <Pager page={pickPage} total={pickTotal} size={50} onPage={setPickPage} />}
-              <div className="muted" style={{ marginTop: 4 }}>先选类型再选工具。技能无需映射入参；工作流按已同步入参映射（必填须映射或有默认值）；MCP 先选服务，再点「关联」下钻多选子工具；CLI 命令多时可先选命令包 / 业务分组或搜索；维护类平台内置工具不可选</div></>
+              <div className="muted" style={{ marginTop: 4 }}>先选类型，再在输入框里搜索工具。下拉列表限高，滚动可继续加载。已关联的工具会标明，不能重复选。技能无需映射入参；工作流按已同步入参映射（必填须映射或有默认值）；MCP 先选服务，再点「关联」下钻多选子工具；CLI 命令多时可先选命令包 / 业务分组再搜索；维护类平台内置工具不可选</div></>
           })()}
         </div></> : <div className="muted" id="eNoBind" style={{ margin: '8px 0 16px' }}>当前处理方式不使用知识库和工具，关联入口已隐藏。如需绑定，请改回「工具与知识流程」。</div>}
 
@@ -317,6 +288,142 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
       onOk={names => { const ts = names.map(n => toolOf(n)).filter(Boolean); setExtraTools(xs => [...xs, ...ts.filter(t => !xs.some(x => x.name === t.name))]); set('tools', [...E.tools, ...ts.map(t => bindOf(t))]); setMcpPick(null); setToolSel(''); toast(`已关联 ${ts.length} 个 MCP 工具，请确认入参映射`) }} /> : null })()}
     {slotNew && <SlotForm slot={null} inline onClose={() => setSlotNew(false)} onDone={s => { setSlotNew(false); reloadSlots(); set('slots', [...E.slots, { name: s.name, required: false, ask: '' }]) }} />}
   </>
+}
+
+
+const COMBO_PAGE = 30
+
+function ToolCombobox({ typ, pack, group, bound, value, onChange, disabled, mcpItems }: {
+  typ: string; pack?: string; group?: string; bound: Set<string>; value: string
+  onChange: (name: string, tool?: any) => void; disabled?: boolean; mcpItems: any[]
+}) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const [qDeb, setQDeb] = useState('')
+  const [items, setItems] = useState<any[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [done, setDone] = useState(true)
+  const [hi, setHi] = useState(-1)
+  const box = useRef<HTMLDivElement>(null)
+  const list = useRef<HTMLDivElement>(null)
+  const pageRef = useRef(1)
+  const loadingRef = useRef(false)
+  const filtersRef = useRef('')
+  const labelOf = (name: string) => {
+    if (name.startsWith('srv:')) {
+      const v = mcpItems.find((x: any) => x.name === name.slice(4))
+      return v ? `${v.display_name}（${v.name} · ${v.avail} 个可用工具）` : name
+    }
+    const t = items.find((x: any) => x.name === name)
+    return t ? `${t.display_name}（${t.name}）` : name
+  }
+  useEffect(() => {
+    const tmr = setTimeout(() => setQDeb(q), 300)
+    return () => clearTimeout(tmr)
+  }, [q])
+  const fetchPage = useCallback((pg: number, append: boolean, f: string) => {
+    if (!typ || typ === 'mcp') return
+    loadingRef.current = true
+    setLoading(true)
+    api.get('/tools' + qs({
+      page: pg, page_size: COMBO_PAGE, q: qDeb,
+      type: typ === 'builtin' ? undefined : typ,
+      source: typ === 'builtin' ? 'builtin' : undefined,
+      pack: pack || undefined,
+      group: group || undefined,
+      maintenance: false,
+      exclude_type: typ === 'builtin' ? 'mcp' : undefined,
+    })).then((d: any) => {
+      if (filtersRef.current !== f) return
+      setTotal(d.total || 0)
+      setItems(prev => {
+        const base = append ? prev : []
+        const seen = new Set(base.map((t: any) => t.name))
+        return [...base, ...(d.items || []).filter((t: any) => !seen.has(t.name))]
+      })
+      pageRef.current = pg
+      setDone(!(d.items || []).length || pg * COMBO_PAGE >= (d.total || 0))
+    }).catch(() => { if (filtersRef.current === f) setDone(true) })
+      .finally(() => { if (filtersRef.current === f) { loadingRef.current = false; setLoading(false) } })
+  }, [typ, pack, group, qDeb])
+  useEffect(() => {
+    if (!typ || typ === 'mcp') { setItems([]); setTotal(0); setDone(true); setLoading(false); return }
+    const f = [typ, pack || '', group || '', qDeb].join('|')
+    filtersRef.current = f
+    pageRef.current = 1
+    setDone(false)
+    fetchPage(1, false, f)
+  }, [typ, pack, group, qDeb, fetchPage])
+  const mcpShown = typ === 'mcp' ? mcpItems.filter((v: any) => {
+    const k = q.trim().toLowerCase()
+    return !k || [v.name, v.display_name, v.description].some((s: string) => (s || '').toLowerCase().includes(k))
+  }) : []
+  const rows = typ === 'mcp' ? mcpShown.map((v: any) => ({
+    key: 'srv:' + v.name, label: v.display_name, sub: `${v.name} · ${v.avail} 个可用工具`, disabled: false, raw: v,
+  })) : items.map((t: any) => ({
+    key: t.name, label: t.display_name, sub: t.name, disabled: bound.has(t.name), raw: t,
+  }))
+  const enabledIdx = () => rows.map((r, i) => r.disabled ? -1 : i).filter(i => i >= 0)
+  const onScroll = (e: any) => {
+    const el = e.currentTarget
+    if (typ === 'mcp' || loadingRef.current || done) return
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 48) {
+      const f = filtersRef.current
+      fetchPage(pageRef.current + 1, true, f)
+    }
+  }
+  useEffect(() => {
+    if (!open) return
+    const h = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false) }
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', h)
+    document.addEventListener('keydown', k)
+    return () => { document.removeEventListener('mousedown', h); document.removeEventListener('keydown', k) }
+  }, [open])
+  const pick = (r: { key: string; disabled: boolean; raw: any }) => {
+    if (r.disabled) return
+    onChange(r.key, typ === 'mcp' ? undefined : r.raw)
+    setQ('')
+    setOpen(false)
+  }
+  const onKey = (e: { key: string; preventDefault: () => void }) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (!open) { setOpen(true); return }
+      const en = enabledIdx()
+      if (!en.length) return
+      const cur = en.indexOf(hi)
+      const next = e.key === 'ArrowDown' ? en[(cur + 1) % en.length] : en[(cur - 1 + en.length) % en.length]
+      setHi(next)
+      const el = list.current?.querySelector(`[data-name="${CSS.escape(rows[next].key)}"]`) as HTMLElement | null
+      el?.scrollIntoView({ block: 'nearest' })
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const en = enabledIdx()
+      const i = en.includes(hi) ? hi : en[0]
+      if (i != null && rows[i]) pick(rows[i])
+    } else if (e.key === 'Escape') setOpen(false)
+  }
+  const shown = value && !q ? labelOf(value) : q
+  return <div className="combo" ref={box}>
+    <input type="text" id="eTool" value={shown} disabled={disabled} autoComplete="off"
+      placeholder={typ === 'mcp' ? '搜索并选择 MCP 服务' : '搜索并选择工具'}
+      onFocus={e => { if (!disabled) { setOpen(true); if (value && !q) e.currentTarget.select() } }}
+      onChange={e => { setQ(e.target.value); setOpen(true); if (value) onChange('') }}
+      onKeyDown={onKey} />
+    {open && !disabled && <div className="combo-list" id="eToolList" ref={list} onScroll={onScroll} role="listbox">
+      {typ === 'mcp' && !mcpShown.length && <div className="combo-empty">{q.trim() ? '没有符合条件的服务' : '没有可关联的 MCP 服务'}</div>}
+      {typ && typ !== 'mcp' && !loading && !rows.length && <div className="combo-empty">{qDeb.trim() ? '没有符合条件的工具' : '没有可关联的工具'}</div>}
+      {rows.map((r, i) => <div key={r.key} className={'combo-item' + (r.disabled ? ' disabled' : '') + (i === hi ? ' on' : '')}
+        data-name={r.key} role="option" aria-disabled={r.disabled || undefined} aria-selected={value === r.key}
+        onMouseEnter={() => setHi(i)} onMouseDown={e => { e.preventDefault(); pick(r) }}>
+        <span>{r.label}</span><span className="mono muted">{r.sub}</span>
+        {r.disabled && <span className="muted" style={{ marginLeft: 'auto' }}>已关联</span>}
+      </div>)}
+      {typ !== 'mcp' && (loading || !done) && <div className="combo-empty">{loading ? '加载中…' : `已加载 ${items.length} / ${total}，滚动继续加载`}</div>}
+    </div>}
+  </div>
 }
 
 function SingleTest({ code, draft }: { code: string; draft: () => any }) {

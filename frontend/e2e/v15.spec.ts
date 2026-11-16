@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import path from 'path'
-import { login, watchErrors } from './helpers'
+import { login, pickTool, watchErrors } from './helpers'
 
 // v0.15：分类入口、统一的注册工具（MCP 凭据 / 技能包 / 工作流）、意图里两级选择工具
 const MCP = `http://127.0.0.1:${process.env.E2E_MCP_PORT || 8766}`
@@ -84,6 +84,7 @@ test('v15：技能（文件夹上传 SKILL.md）与工作流（Dify / Coze）', 
   await page.screenshot({ path: out('技能上传') })
   await page.click('#toolSave')
   await expect(page.getByTestId('toolEdit')).toHaveCount(0)
+  await page.fill('#toolQ', 'poster_maker')
   await expect(page.locator('tr[data-tool="poster_maker"]')).toContainText('技能包 v1 · 3 个文件')
 
   // 工作流 · Dify
@@ -106,6 +107,7 @@ test('v15：技能（文件夹上传 SKILL.md）与工作流（Dify / Coze）', 
   await page.screenshot({ path: out('工作流-Dify') })
   await page.click('#toolSave')
   await expect(page.getByTestId('toolEdit')).toHaveCount(0)
+  await page.fill('#toolQ', 'dify_poster')
   await expect(page.locator('tr[data-tool="dify_poster"]')).toContainText('写操作需确认')
 
   // 工作流 · Coze
@@ -131,6 +133,7 @@ test('v15：技能（文件夹上传 SKILL.md）与工作流（Dify / Coze）', 
   await page.screenshot({ path: out('工作流-Coze') })
   await page.click('#toolSave')
   await expect(page.getByTestId('toolEdit')).toHaveCount(0)
+  await page.fill('#toolQ', 'coze_translate')
   const row = page.locator('tr[data-tool="coze_translate"]')
   await expect(row).toContainText('Coze · coze.cn · 7428000000000000001 · 流式')
   await row.getByRole('button', { name: '测试调用' }).click()
@@ -155,15 +158,19 @@ test('v15：意图编辑 · 两级选择工具（类型 → 工具）+ 技能 / 
   const ty = page.locator('#eToolType')
   await expect(ty.locator('option', { hasText: /^工作流（\d+）$/ })).toHaveCount(1)
   await ty.selectOption('workflow')
-  await page.selectOption('#eTool', 'dub_subtitle_skill')
+  await pickTool(page, 'dub_subtitle_skill')
   await page.click('#toolAdd')
   const wf = ed.locator('[data-bound="dub_subtitle_skill"]')
   await expect(wf).toContainText('默认值')
   await ty.selectOption('mcp')
-  await expect(page.locator('#eTool option', { hasText: '卖家精灵' })).toHaveCount(1)
+  await page.locator('#eTool').click()
+  await expect(page.locator('#eToolList .combo-item', { hasText: '卖家精灵' })).toHaveCount(1)
   await ty.selectOption('http')
-  await expect(page.locator('#eToolQ')).toBeVisible() // 多于 5 个时出现筛选
-  await page.fill('#eToolQ', '库存')
+  await expect(page.locator('#eTool')).toBeVisible()
+  await page.locator('#eTool').click()
+  await page.fill('#eTool', '库存')
+  await expect(page.locator('#eToolList .combo-item').first()).toBeVisible()
+  await expect(page.locator('#eToolList')).toContainText('库存')
   await settle(page)
   await wf.scrollIntoViewIfNeeded()
   await page.screenshot({ path: out('意图编辑-关联工具二级') })

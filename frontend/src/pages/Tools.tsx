@@ -41,6 +41,7 @@ function ToolList() {
   const [qIn, setQIn] = useState('')
   const [q, setQ] = useState('')
   const [pk, setPk] = useState('')
+  const [grp, setGrp] = useState('')
   const [st, setSt] = useState('')
   const [page, setPage] = useState(1)
   const [size, setSize] = useState(20)
@@ -51,8 +52,8 @@ function ToolList() {
   }, [qIn])
   const [servers, reloadSrv] = useAsync(() => api.get('/mcp-servers'), [n])
   const [data, reloadTools] = useAsync(() => tf === 'mcp' ? Promise.resolve({ items: [], total: 0, facets: null })
-    : api.get('/tools' + qs({ page, page_size: size, q, type: tf, source: sf, pack: pk, status: st, exclude_type: 'mcp' })),
-    [page, size, q, tf, sf, pk, st, n])
+    : api.get('/tools' + qs({ page, page_size: size, q, type: tf, source: sf, pack: pk, group: grp, status: st, exclude_type: 'mcp' })),
+    [page, size, q, tf, sf, pk, grp, st, n])
   const [facetHold] = useAsync(() => api.get('/tools' + qs({ page: 1, page_size: 1, exclude_type: 'mcp' })), [n])
   const reload = () => { setN(x => x + 1); reloadSrv(); reloadTools() }
   if (!servers || !data) return <div className="loading">加载中…</div>
@@ -60,7 +61,7 @@ function ToolList() {
   const ts: any[] = data.items || []
   const kw = q.trim().toLowerCase()
   const hit = (...xs: string[]) => !kw || xs.some(x => (x || '').toLowerCase().includes(kw))
-  const ss = (servers as any[]).filter((v: any) => (!tf || tf === 'mcp') && (!sf || v.source === sf) && !pk && hit(v.name, v.display_name, v.description))
+  const ss = (servers as any[]).filter((v: any) => (!tf || tf === 'mcp') && (!sf || v.source === sf) && !pk && !grp && hit(v.name, v.display_name, v.description))
   const packs: [string, string, number][] = (facets.packs || []).map((x: any) => [x.pack, x.pack_name || x.pack, x.count])
   const cnt = (k: string) => facets.by_type?.[k] ?? 0
   const srcN = (k: string) => facets.by_source?.[k] ?? 0
@@ -87,15 +88,28 @@ function ToolList() {
       {fb('toolSF', '按来源：', [['', '全部', facets.total], ['external', '外部', srcN('external')], ['builtin', '平台内置', srcN('builtin')]], sf, setSf)}
       {fb('toolTF', '按类型：', [['', '全部', facets.total], ...KINDS.map(([k, l]) => [k, l, cnt(k)] as [string, string, number])], tf, setTf)}
       <div className="row" style={{ marginTop: 8 }}>
-        {packs.length > 0 && <select id="toolPack" value={pk} onChange={e => setFilter(() => setPk(e.target.value))}><option value="">全部 CLI 命令包</option>
+        {(!tf || tf === 'cli') && packs.length > 0 && <select id="toolPack" value={pk} onChange={e => setFilter(() => { setPk(e.target.value); setGrp('') })}><option value="">全部 CLI 命令包</option>
           {packs.map(([k, l, n]) => <option key={k} value={k}>{l}（{n}）</option>)}</select>}
+        {(!tf || tf === 'cli') && (() => {
+          const packName = Object.fromEntries(packs.map(([k, l]) => [k, l]))
+          const allG: { pack: string; group: string; count: number }[] = (facets.groups || []).filter((x: any) => !pk || x.pack === pk)
+          const byG = new Map<string, { count: number; packs: string[] }>()
+          allG.forEach((x: any) => {
+            const c = byG.get(x.group) || { count: 0, packs: [] as string[] }
+            c.count += x.count; c.packs.push(x.pack); byG.set(x.group, c)
+          })
+          const groups = [...byG.entries()].map(([g, c]) => [g, pk || c.packs.length === 1 ? (pk ? g : `${packName[c.packs[0]] || c.packs[0]} › ${g}`) : g, c.count] as [string, string, number])
+          if (!groups.length) return null
+          return <select id="toolGroup" value={grp} onChange={e => setFilter(() => setGrp(e.target.value))}><option value="">全部业务分组</option>
+            {groups.map(([k, l, n]) => <option key={k} value={k}>{l}（{n}）</option>)}</select>
+        })()}
         <select id="toolSt" value={st} onChange={e => setFilter(() => setSt(e.target.value))}><option value="">全部状态</option><option value="启用">启用</option><option value="停用">停用</option></select>
         <input type="text" id="toolQ" value={qIn} onChange={e => setQIn(e.target.value)} placeholder="搜索工具名 / 描述 / 命令" style={{ width: 240 }} />
         <span className="muted">{(tf === 'mcp' ? ss.length : (data.total || 0) + ss.length)} 个</span></div></div>
     <div className="card tblwrap" style={{ padding: 0 }}><table id="toolTbl" className="fixed"><colgroup><col style={{ width: 190 }} /><col style={{ width: 80 }} /><col style={{ width: 64 }} /><col /><col style={{ width: 180 }} /><col style={{ width: 110 }} /><col style={{ width: 90 }} /><col style={{ width: 92 }} /></colgroup><thead><tr><th>工具</th><th>类型</th><th>来源</th><th>描述</th><th>接入</th><th>入参</th><th>被意图使用</th><th>操作</th></tr></thead><tbody>
       {ts.map((t: any) => <tr key={t.name} data-tool={t.name}><td><b>{t.display_name}</b><div className="mono">{t.name}</div></td><td><TypeTag type={t.type} />{t.confirm_required && <div style={{ marginTop: 4 }}><Badge c="y">写操作需确认</Badge></div>}</td>
         <td>{srcCell(t)}</td>
-        <td className="muted"><div className="clamp3" title={t.description}>{t.description}</div></td><td><End t={t} /></td><td>{paramCell(t)}</td>
+        <td className="muted desc"><div className="clamp2" title={t.description || undefined}>{t.description}</div></td><td><End t={t} /></td><td>{paramCell(t)}</td>
         <td>{usedBy(t.used_by)}</td>
         <td><Btn s onClick={() => setTest(t)}>测试调用</Btn> {t.source === 'builtin' ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>平台提供<br />不可编辑 / 删除</div>
           : canEdit && <><Btn s onClick={() => setEdit({ tool: t })}>编辑</Btn><div style={{ marginTop: 4 }}><a style={{ color: '#dc2626', fontSize: 12 }} onClick={() => del(t)}>删除</a></div></>}</td></tr>)}
@@ -103,7 +117,7 @@ function ToolList() {
         <tr key={'s' + v.name} className="srvrow" data-server={v.name}><td onClick={() => setOpen({ ...open, [v.name]: !on })}><span className="caret">{on ? '▾' : '▸'}</span><b>{v.display_name}</b><div className="mono" style={{ paddingLeft: 14 }}>{v.name}</div></td>
           <td><Badge c="p">MCP 服务</Badge><div className="muted" style={{ marginTop: 4 }}><a onClick={() => setOpen({ ...open, [v.name]: !on })}>{v.tool_count} 个工具</a></div></td>
           <td>{v.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <span className="muted">外部</span>}{v.example_data && <div style={{ marginTop: 4 }}><Badge c="y" title="当前工具列表为示例数据，真实同步可拉取完整列表">示例数据</Badge></div>}</td>
-          <td className="muted"><div className="clamp3" title={v.description}>{v.description || '—'}</div><div>启用 {v.enabled_count} / {v.tool_count}{v.missing_count > 0 && <> · <b style={{ color: '#b91c1c' }}>{v.missing_count} 个远端已消失</b></>}</div></td>
+          <td className="muted desc"><div className="clamp2" title={v.description || undefined}>{v.description || '—'}</div><div>启用 {v.enabled_count} / {v.tool_count}{v.missing_count > 0 && <> · <b style={{ color: '#b91c1c' }}>{v.missing_count} 个远端已消失</b></>}</div></td>
           <td><div className="muted" style={{ fontSize: 11 }}>{v.transport_label} · {credText(v)}</div><div className="mono" style={{ fontSize: 11 }}>{serverEnd(v)}</div><div className="muted" style={{ fontSize: 11 }}>同步：{syncText(v)}</div></td>
           <td className="muted">按工具</td><td>{users.size ? <span>{users.size} 个意图</span> : <span className="muted">未使用</span>}</td>
           <td>{v.source === 'builtin' ? <div className="muted" style={{ fontSize: 11 }}>平台提供<br />不可编辑 / 同步</div>
@@ -114,7 +128,7 @@ function ToolList() {
           <td>{v.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <>
             <label style={{ display: 'block', whiteSpace: 'nowrap' }}><input type="checkbox" className="mEn" checked={t.enabled} disabled={!canEdit} onChange={e => patch(t, { enabled: e.target.checked })} /> 启用</label>
             <label style={{ display: 'block', whiteSpace: 'nowrap' }}><input type="checkbox" className="mCf" checked={t.confirm_required} disabled={!canEdit} onChange={e => patch(t, { confirm_required: e.target.checked })} /> 写操作需确认</label></>}</td>
-          <td className="muted"><div className="clamp3" title={t.description}>{t.description}</div></td><td className="mono" style={{ fontSize: 11 }}>tools/call {t.mcp_tool}</td>
+          <td className="muted desc"><div className="clamp2" title={t.description || undefined}>{t.description}</div></td><td className="mono" style={{ fontSize: 11 }}>tools/call {t.mcp_tool}</td>
           <td>{paramCell(t)}</td>
           <td>{usedBy(t.used_by)}</td><td><Btn s onClick={() => setTest(t)}>测试调用</Btn></td></tr>)
           : [<tr key={'e' + v.name} className="subrow"><td colSpan={8} className="muted">还没有工具，点「同步工具」读取</td></tr>] : [])] })}
