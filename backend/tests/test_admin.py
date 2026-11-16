@@ -336,3 +336,36 @@ def test_audit(admin):
 def test_docs_and_meta(admin):
     assert "openapi: 3.0.3" in admin.get("/api/admin/docs/openapi").text
     assert admin.get("/api/admin/meta").json()["scopes"][0] == "意图:读"
+
+
+def test_admin_intent_detail_shape_both_spaces(admin):
+    """抽屉打开时会拉详情及槽位、分类、已绑工具；各字段须是前端可直接使用的列表。"""
+    for sid in ("cs", "mc"):
+        assert admin.get(f"/api/admin/spaces/{sid}/slots").status_code == 200
+        tax = admin.get(f"/api/admin/spaces/{sid}/taxonomy")
+        assert tax.status_code == 200 and isinstance(tax.json().get("tree"), list)
+        listed = admin.get(f"/api/admin/spaces/{sid}/intents?page_size=500").json()
+        assert listed["items"], sid
+        for row in listed["items"]:
+            r = admin.get(f"/api/admin/intents/{row['code']}")
+            assert r.status_code == 200, f"{row['code']} {r.text}"
+            d = r.json()
+            for key in ("examples", "slots", "tools", "kb_refs", "logs"):
+                assert isinstance(d.get(key), list), f"{row['code']} {key}={type(d.get(key))}"
+            h = d.get("handling") or {}
+            assert h.get("mode")
+            if h.get("mode") == "fixed_reply":
+                assert h.get("replies") and h.get("instruction") and h.get("reply_strictness")
+            # 与前端 IntentEditor 组装表单相同的访问路径，不能抛错
+            "\n".join(d["examples"])
+            [{"name": s["name"], "required": s["required"], "ask": s["ask"]} for s in d["slots"]]
+            names = [b["tool"] for b in d["tools"]]
+            if names:
+                tr = admin.get("/api/admin/tools", params={"names": ",".join(names)})
+                assert tr.status_code == 200, f"{row['code']} tools {tr.text}"
+                items = {t["name"]: t for t in (tr.json().get("items") or [])}
+                for name in names:
+                    tl = items.get(name)
+                    if not tl:
+                        continue
+                    assert isinstance(tl.get("params") or [], list)

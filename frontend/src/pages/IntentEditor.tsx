@@ -38,41 +38,57 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   const [mcpPick, setMcpPick] = useState<string | null>(null)
   const [cliGrp, setCliGrp] = useState('')
   const body = useRef<HTMLDivElement>(null)
-  const [slots, reloadSlots] = useAsync(() => api.get(`/spaces/${space.id}/slots`), [space.id])
-  const [tax] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
+  const [loadErr, setLoadErr] = useState<string[]>()
+  const [slots, reloadSlots, slotsErr] = useAsync(() => api.get(`/spaces/${space.id}/slots`), [space.id])
+  const [tax, , taxErr] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
   const [extraTools, setExtraTools] = useState<any[]>([])
   useEffect(() => { setToolSel('') }, [pickTy0, cliGrp])
-  const boundKey = E ? E.tools.map((b: Bind) => b.tool).join(',') : ''
-  const [boundResp] = useAsync(
-    () => !E ? Promise.resolve(undefined) : boundKey
-      ? api.get('/tools' + qs({ names: boundKey })) : Promise.resolve({ items: [] as any[] }),
+  const boundKey = E ? (E.tools || []).map((b: Bind) => b.tool).join(',') : ''
+  const [boundResp, , boundErr] = useAsync(
+    () => !E ? Promise.resolve({ items: [] as any[], names: '' }) : boundKey
+      ? api.get('/tools' + qs({ names: boundKey })).then((r: any) => ({ ...r, names: boundKey }))
+      : Promise.resolve({ items: [] as any[], names: '' }),
     [boundKey, !!E])
   const [facetsResp] = useAsync(() => api.get('/tools' + qs({ page: 1, page_size: 1, maintenance: false })), [])
   const [mcpServers] = useAsync(() => api.get('/mcp-servers'), [])
   const packOf = cliGrp.includes('|') ? cliGrp.split('|')[0] : cliGrp
   const groupOf = cliGrp.includes('|') ? cliGrp.slice(cliGrp.indexOf('|') + 1) : ''
   useEffect(() => {
+    setLoadErr(undefined); setD(null); setE(null)
     api.get(`/intents/${code}`).then(x => {
       setD(x)
       const h = x.handling || { mode: 'tool_flow' }
-      setE({ name: x.name, category_id: x.category_id, description: x.description, ex: x.examples.join('\n'), status: x.status,
-        slots: x.slots.map((s: any) => ({ name: s.name, required: s.required, ask: s.ask })),
-        kb_refs: x.kb_refs, tools: x.tools,
+      setE({ name: x.name, category_id: x.category_id, description: x.description || '', ex: (x.examples || []).join('\n'), status: x.status,
+        slots: (x.slots || []).map((s: any) => ({ name: s.name, required: s.required, ask: s.ask })),
+        kb_refs: x.kb_refs || [], tools: x.tools || [],
         handling: { mode: h.mode || 'tool_flow', message: h.message || '', prompt: h.prompt || '',
           repliesText: (h.replies || []).join('\n'), reply_strictness: h.reply_strictness || 'paraphrase' } })
-      if (x.problems?.length) setErrs(x.problems)
-    }).catch(e => { toast(errLines(e).join('；')); onClose() })
+      if (x.problems?.length) setErrs(Array.isArray(x.problems) ? x.problems : [String(x.problems)])
+    }).catch(e => { const lines = errLines(e); setLoadErr(lines); toast(lines.join('；')) })
   // eslint-disable-next-line
   }, [code])
-  if (!d || !E || !slots || !tax || boundResp === undefined || !facetsResp || !mcpServers) return <Drawer title="加载中…" onClose={onClose}><div className="loading">加载中…</div></Drawer>
+  const requiredErrs = [
+    ...(loadErr || []),
+    ...(slotsErr ? errLines(slotsErr) : []),
+    ...(taxErr ? errLines(taxErr) : []),
+    ...(boundErr ? errLines(boundErr) : []),
+  ]
+  if (requiredErrs.length) {
+    return <Drawer testId="intentEditor" title="加载失败" onClose={onClose}>
+      <div id="intentLoadErr" className="loading"><ErrBox lines={requiredErrs} title="无法加载意图详情：" /></div>
+    </Drawer>
+  }
+  // 工具目录的 facets / MCP 服务列表只用于「关联工具」下拉，失败或未返回时不应挡住详情。
+  const boundPending = !!E && !!boundKey && boundResp?.names !== boundKey
+  if (!d || !E || !slots || !tax || boundPending) return <Drawer testId="intentEditor" title="加载中…" onClose={onClose}><div className="loading">加载中…</div></Drawer>
   const set = (k: string, v: any) => setE((e: any) => ({ ...e, [k]: v }))
   const opts = leaves(tax)
   const curRoot = opts.find(o => o.id === d.category_id)?.root
   const cur = opts.find(o => o.id === E.category_id)
   const lvNames = tax.levels
-  const facets = facetsResp.facets || {}
+  const facets = facetsResp?.facets || {}
   const catalog: any[] = [...(boundResp.items || []), ...extraTools,
-    ...(mcpServers as any[]).flatMap((v: any) => v.tools || [])]
+    ...(Array.isArray(mcpServers) ? mcpServers : []).flatMap((v: any) => v.tools || [])]
   const toolOf = (name: string) => catalog.find((t: any) => t.name === name)
   const slotDef = (name: string) => slots.find((s: any) => s.name === name)
   const handlingPayload = () => {
@@ -120,13 +136,13 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   }
   const bindOf = (t: any): Bind => {
     const map: Bind['param_map'] = {}
-    if (t.type !== 'skill') t.params.forEach((p: any) => {
+    if (t.type !== 'skill') (t.params || []).forEach((p: any) => {
       const s = E.slots.find((x: Slot) => x.name === p.name && (!isFileParam(p) || FILE_SLOT.includes(slotDef(x.name)?.type)))
       map[p.name] = s ? { source: '槽位', value: s.name } : p.name === 'session_id' ? { source: '上下文', value: 'session_id' } : { source: '槽位', value: '' }
     })
     return { tool: t.name, param_map: map }
   }
-  const servers: any[] = mcpServers as any[]
+  const servers: any[] = Array.isArray(mcpServers) ? mcpServers : []
   const bound = new Set<string>(E.tools.map((b: Bind) => b.tool))
   const typeCounts: Record<string, number> = {
     http: facets.by_type?.http || 0, cli: facets.by_type?.cli || 0, skill: facets.by_type?.skill || 0,
@@ -221,7 +237,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
             const kindCls = ({ skill: 'skill', workflow: 'wf', mcp: 'mcp', cli: 'cli' } as any)[tl.type] || 'api'
             const isWf = tl.type === 'workflow'
             return <div key={b.tool} className={'bound-tool is-' + kindCls} data-bound={b.tool}>
-              <div className="row"><b>{tl.display_name}</b><span className="mono">{tl.name}</span>{tl.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <TypeTag type={tl.type} />}{tl.type === 'mcp' && <span className="tg">{tl.mcp_server.display_name}</span>}{tl.confirm_required && <Badge c="y">写操作需确认</Badge>}
+              <div className="row"><b>{tl.display_name}</b><span className="mono">{tl.name}</span>{tl.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <TypeTag type={tl.type} />}{tl.type === 'mcp' && <span className="tg">{tl.mcp_server?.display_name}</span>}{tl.confirm_required && <Badge c="y">写操作需确认</Badge>}
                 {tl.remote_missing ? <Badge c="r">远端已消失，请更换</Badge> : tl.type === 'mcp' && !tl.enabled ? <Badge c="r">已停用</Badge> : null}<span className="sp" />
                 {canEdit && <a onClick={() => set('tools', E.tools.filter((_: any, j: number) => j !== ti))}>移除</a>}</div>
               {tl.description && <div className="muted" style={{ margin: '4px 0' }}>{tl.description}</div>}
@@ -231,7 +247,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
                   : <div className="err">该技能尚未上传技能包，请先在工具中心上传</div>}</>
               : <>
                 {isWf && <div className="muted" style={{ margin: '4px 0 6px' }}>入参来自已同步的工作流定义。必填项须映射或已有默认值；文件类入参只能映射到「文件 / 图片」槽位。</div>}
-                {!tl.params.length ? <div className="muted">无入参</div> :
+                {!(tl.params || []).length ? <div className="muted">无入参</div> :
                 <table style={{ marginTop: 6 }}><thead><tr><th>入参</th><th>类型</th><th>必填</th>{isWf && <th>默认值</th>}<th>取值来源</th><th>值</th></tr></thead><tbody>
                   {tl.params.map((p: any) => { const m = b.param_map[p.name] || { source: '槽位', value: '' }; const file = isFileParam(p)
                     const slotList = E.slots.filter((s: Slot) => s.name && (!file || FILE_SLOT.includes(slotDef(s.name)?.type)))
@@ -278,7 +294,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
         <SingleTest code={code} draft={() => ({ code, ...payload() })} />
 
         <div className="sec"><h4 style={{ margin: '0 0 8px' }}>修改记录</h4>
-          {d.logs.length ? <table id="eLog"><tbody>{d.logs.slice(0, 8).map((l: any, i: number) => <tr key={i}><td className="muted" style={{ whiteSpace: 'nowrap' }}>{fmt(l.at, false)}</td>
+          {(d.logs || []).length ? <table id="eLog"><tbody>{(d.logs || []).slice(0, 8).map((l: any, i: number) => <tr key={i}><td className="muted" style={{ whiteSpace: 'nowrap' }}>{fmt(l.at, false)}</td>
             <td style={{ whiteSpace: 'nowrap' }}>{l.by}</td><td>{l.message}</td></tr>)}</tbody></table> : <div className="muted">暂无</div>}
         </div>
       </div>

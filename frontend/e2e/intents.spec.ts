@@ -98,3 +98,53 @@ test('导入意图：Excel 模板示例、Markdown 示例都能解析', async ({
     await page.keyboard.press('Escape')
   }
 })
+
+async function openFirstEditor(page) {
+  const ed = page.getByTestId('intentEditor')
+  await page.locator('#intentTbl tbody tr').first().getByRole('button', { name: /编辑|查看/ }).click()
+  await expect(ed).toBeVisible()
+  await expect(ed.locator('.dh .sp')).not.toHaveText('加载中…', { timeout: 15_000 })
+  return ed
+}
+
+test('打开意图详情抽屉：cs 与 mc 都不停滞在加载中', async ({ page }) => {
+  const errs = watchErrors(page)
+  await login(page)
+  const ed = await openFirstEditor(page)
+  await expect(ed.locator('.dh .sp')).toContainText('编辑意图')
+  await expect(ed.locator('#eN')).toBeVisible()
+  await ed.locator('a[aria-label="关闭"]').click()
+  await expect(ed).toHaveCount(0)
+
+  await page.selectOption('#spSel', 'mc')
+  await expect(page.locator('#intentTbl tbody tr').first()).toContainText('M.')
+  const ed2 = await openFirstEditor(page)
+  await expect(ed2.locator('#eN')).toBeVisible()
+  expect(errs).toEqual([])
+})
+
+test('工具目录可选请求失败时详情仍打开；必选请求失败时展示错误而非一直加载', async ({ page }) => {
+  await login(page)
+  await page.route('**/api/admin/mcp-servers', route => route.abort())
+  await page.route('**/api/admin/tools**', route => {
+    const u = route.request().url()
+    if (u.includes('maintenance=false') && u.includes('page_size=1') && !u.includes('names=')) return route.abort()
+    return route.continue()
+  })
+  const ed = await openFirstEditor(page)
+  await expect(ed.locator('#eN')).toBeVisible()
+  await expect(ed.locator('#intentLoadErr')).toHaveCount(0)
+  await ed.locator('a[aria-label="关闭"]').click()
+
+  await page.unroute('**/api/admin/mcp-servers')
+  await page.unroute('**/api/admin/tools**')
+  await page.route('**/api/admin/intents/*', route => route.fulfill({
+    status: 500, contentType: 'application/json',
+    body: JSON.stringify({ code: 'ERROR', message: '详情接口失败' }),
+  }))
+  await page.locator('#intentTbl tbody tr').first().getByRole('button', { name: /编辑|查看/ }).click()
+  await expect(page.getByTestId('intentEditor')).toBeVisible()
+  await expect(page.locator('#intentLoadErr')).toContainText('无法加载意图详情')
+  await expect(page.getByTestId('intentEditor').locator('.dh .sp')).toHaveText('加载失败')
+  await expect(page.getByTestId('intentEditor').locator('.dh .sp')).not.toHaveText('加载中…')
+})
