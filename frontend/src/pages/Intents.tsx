@@ -37,6 +37,7 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
   const [n, setN] = useState(0)
   const [newOpen, setNewOpen] = useState(false)
   const [imOpen, setImOpen] = useState(false)
+  const [actionErr, setActionErr] = useState<string[]>()
   const size = 100
   const [tax] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id, ver, n])
   const [data] = useAsync(() => api.get(`/spaces/${space.id}/intents` + qs({ ...f, page, page_size: size })),
@@ -44,9 +45,15 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
   const reload = () => { setN(x => x + 1); reloadSpaces() }
   const quick = async (code: string, status: string) => {
     try {
-      await api.post(`/intents/${code}/status`, { status }); toast(`${code} 已${status}`); reload()
+      await api.post(`/intents/${code}/status`, { status })
+      setActionErr(undefined)
+      toast(`${code} 已${status}`)
+      reload()
     } catch (e: any) {
-      if (e.code === 'ENABLE_CHECK_FAILED') { toast('启用前校验未通过，请补全'); onEdit(code) } else toast(errLines(e)[0])
+      const lines = errLines(e)
+      setActionErr(lines)
+      toast(lines.join('；'))
+      if (status === '启用') onEdit(code)
     }
   }
   const catCols = tax ? tax.levels.slice(0, -1) : []
@@ -58,6 +65,7 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
         <span>{a.name}</span><span className="muted">{a.count}</span></div>)}
     </div>
     <div>
+      {actionErr?.length ? <div className="card" id="intentActionErr" style={{ marginBottom: 8 }}><ErrBox lines={actionErr} title="操作失败：" /></div> : null}
       <div className="card"><div className="row">
         <input type="text" id="fQ" placeholder="搜索编码 / 名称 / 例句" value={qIn} onChange={e => setQIn(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { setF({ ...f, q: qIn, status: stIn }); setPage(1) } }} style={{ width: 240 }} />

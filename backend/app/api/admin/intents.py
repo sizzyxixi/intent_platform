@@ -185,7 +185,7 @@ async def validate_draft(code: str, request: Request, actor=Depends(VIEW), db: S
     it = intent_svc.get(db, code)
     b = await json_body(request)
     data = intent_svc.as_dict(it)
-    for k in ("name", "category_id", "description", "examples", "slots", "kb_refs", "tools"):
+    for k in ("name", "category_id", "description", "examples", "slots", "kb_refs", "tools", "handling"):
         if k in b:
             data[k] = b[k]
     idx = RefIndex(db)

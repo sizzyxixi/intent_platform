@@ -60,7 +60,8 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
         kb_refs: x.kb_refs, tools: x.tools,
         handling: { mode: h.mode || 'tool_flow', message: h.message || '', prompt: h.prompt || '',
           repliesText: (h.replies || []).join('\n'), reply_strictness: h.reply_strictness || 'paraphrase' } })
-    }).catch(e => { toast(errLines(e)[0]); onClose() })
+      if (x.problems?.length) setErrs(x.problems)
+    }).catch(e => { toast(errLines(e).join('；')); onClose() })
   // eslint-disable-next-line
   }, [code])
   if (!d || !E || !slots || !tax || boundResp === undefined || !facetsResp || !mcpServers) return <Drawer title="加载中…" onClose={onClose}><div className="loading">加载中…</div></Drawer>
@@ -102,21 +103,20 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
     setH('mode', mode)
   }
   const showErrs = (l: string[]) => { setErrs(l); if (body.current) body.current.scrollTop = 0 }
+  const fail = (e: any) => { const lines = errLines(e); showErrs(lines); toast(lines.join('；')) }
   const check = async () => {
     try {
       const r = await api.post(`/intents/${code}/validate`, payload())
       if (r.problems.length) showErrs(r.problems); else { setErrs(undefined); toast('校验通过，可以启用') }
-    } catch (e) { showErrs(errLines(e)) }
+    } catch (e) { fail(e) }
   }
   const save = async () => {
     try {
       const r = await api.put(`/intents/${code}`, payload())
+      setErrs(undefined)
       toast('已保存' + (r.warnings?.length ? '（提示：' + r.warnings.join('；') + '）' : ''))
       onSaved(); reloadSpaces(); onClose()
-    } catch (e: any) {
-      showErrs(errLines(e))
-      toast(e.code === 'ENABLE_CHECK_FAILED' ? '启用前校验未通过，未保存' : '保存失败')
-    }
+    } catch (e: any) { fail(e) }
   }
   const bindOf = (t: any): Bind => {
     const map: Bind['param_map'] = {}
@@ -149,6 +149,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
   const ro = !canEdit
   const exCount = E.ex.split('\n').filter((x: string) => x.trim()).length
   const foot = <>
+    {errs?.length ? <div id="eSaveErr" style={{ textAlign: 'left', margin: '0 0 8px' }}><ErrBox lines={errs} title={`校验未通过（${errs.length} 项）：`} /></div> : null}
     <span className="muted" style={{ float: 'left', lineHeight: '28px' }}>状态 <select id="eSt" value={E.status} disabled={ro} onChange={e => set('status', e.target.value)}>
       {['草稿', '启用', '停用'].map(s => <option key={s}>{s}</option>)}</select>　设为「启用」时会做必填校验</span>
     <Btn onClick={onClose}>取消</Btn> <Btn id="eCheck" onClick={check}>校验</Btn> {canEdit && <Btn p id="eSave" onClick={save}>保存</Btn>}
@@ -432,7 +433,7 @@ function SingleTest({ code, draft }: { code: string; draft: () => any }) {
   const [r, setR] = useState<any>(null)
   const run = async () => {
     if (!t.trim()) { toast('请输入一句话'); return }
-    try { setR(await api.post(`/spaces/${space.id}/test`, { text: t, draft: draft() })) } catch (e) { toast(errLines(e)[0]) }
+    try { setR(await api.post(`/spaces/${space.id}/test`, { text: t, draft: draft() })) } catch (e) { toast(errLines(e).join('；')) }
   }
   const ph = space.id === 'mc' ? '帮我做一张 TikTok 美区的主图' : '这款有现货吗，要500件'
   return <div className="sec"><h4 style={{ margin: '0 0 8px' }}>⑤ 单句测试</h4>

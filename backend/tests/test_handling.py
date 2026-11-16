@@ -190,3 +190,96 @@ def test_bind_rejected_via_v1(full_key, admin):
         "kb_id": "kb_aq", "doc_id": "x", "chunk_id": "*", "usage": "reference"
     }, space="cs")
     assert r.status_code == 422
+
+
+READY = {
+    "description": "用户只是寒暄闲聊，不涉及具体业务问题或操作请求。",
+    "examples": ["在吗", "你好呀", "今天天气真好"],
+}
+
+
+def _draft(admin, code, name):
+    src = admin.get("/api/admin/intents/B.REL.GREETING").json()
+    r = admin.post("/api/admin/spaces/cs/intents", json={
+        "code": code, "name": name, "category_id": src["category_id"]
+    })
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_enable_validation_by_handling_mode(admin, full_key):
+    # tool_flow 仍要求至少一条知识或一个工具
+    _draft(admin, "B.REL.ENFLOW", "启用工具流程测试")
+    r = admin.put("/api/admin/intents/B.REL.ENFLOW", json={
+        **READY, "handling": {"mode": "tool_flow"}, "status": "启用"
+    })
+    assert r.status_code == 422 and r.json()["code"] == "ENABLE_CHECK_FAILED", r.text
+    assert any("至少关联" in p for p in r.json()["details"]["problems"])
+
+    r = admin.put("/api/admin/intents/B.REL.ENFLOW", json={**READY, "handling": {"mode": "tool_flow"}})
+    assert r.status_code == 200, r.text
+    r = admin.post("/api/admin/intents/B.REL.ENFLOW/status", json={"status": "启用"})
+    assert r.status_code == 422 and r.json()["code"] == "ENABLE_CHECK_FAILED"
+    assert any("至少关联" in p for p in r.json()["details"]["problems"])
+
+    # 固定话术：话术为空不能启用；有话术后可以启用（不必绑工具或知识）
+    _draft(admin, "B.REL.ENFIX", "启用固定话术测试")
+    r = admin.post("/api/admin/intents/B.REL.ENFIX/validate", json={
+        **READY, "handling": {"mode": "fixed_reply", "replies": []}
+    })
+    assert r.status_code == 200, r.text
+    assert any("固定话术至少写一条回复" in p for p in r.json()["problems"])
+
+    r = admin.put("/api/admin/intents/B.REL.ENFIX", json={
+        **READY,
+        "handling": {"mode": "fixed_reply", "replies": ["您好，我们先聊点别的吧。"],
+                     "reply_strictness": "verbatim"},
+        "status": "启用",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "启用"
+    assert r.json()["handling"]["mode"] == "fixed_reply"
+    assert r.json()["handling"]["reply_strictness"] == "verbatim"
+
+    # 其他必填项仍要满足：例句不足时不能启用
+    _draft(admin, "B.REL.ENFIX2", "启用固定话术缺例句")
+    r = admin.put("/api/admin/intents/B.REL.ENFIX2", json={
+        "description": READY["description"],
+        "examples": ["在吗", "你好呀"],
+        "handling": {"mode": "fixed_reply", "replies": ["您好"]},
+        "status": "启用",
+    })
+    assert r.status_code == 422 and r.json()["code"] == "ENABLE_CHECK_FAILED"
+    assert any("例句至少 3 条" in p for p in r.json()["details"]["problems"])
+
+    # 转人工：无需绑定即可启用
+    _draft(admin, "B.REL.ENHAND", "启用转人工测试")
+    r = admin.put("/api/admin/intents/B.REL.ENHAND", json={
+        **READY, "handling": {"mode": "handoff_human", "message": "请稍等，为您转人工。"},
+        "status": "启用",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "启用"
+    assert r.json()["handling"]["mode"] == "handoff_human"
+
+    # 自由发挥：无需绑定即可启用；也可用开放接口 :enable
+    _draft(admin, "B.REL.ENFREE", "启用自由发挥测试")
+    r = admin.put("/api/admin/intents/B.REL.ENFREE", json={
+        **READY, "handling": {"mode": "llm_free", "prompt": "轻松简短地闲聊，不要承诺业务。"}
+    })
+    assert r.status_code == 200 and r.json()["status"] == "草稿", r.text
+    r = full_key.post("/api/v1/intents/B.REL.ENFREE:enable", space="cs")
+    assert r.status_code == 200, r.text
+    b = check(r)
+    assert b["status"] == "启用" and b["handling"]["mode"] == "llm_free"
+
+    rc = check(full_key.get("/api/v1/runtime-config", space="cs"))
+    by = {i["code"]: i for i in rc["intents"]}
+    assert by["B.REL.ENFIX"]["handling"]["mode"] == "fixed_reply"
+    assert by["B.REL.ENFIX"]["handling"]["replies"] == ["您好，我们先聊点别的吧。"]
+    assert by["B.REL.ENFIX"]["handling"]["reply_strictness"] == "verbatim"
+    assert by["B.REL.ENHAND"]["handling"]["mode"] == "handoff_human"
+    assert by["B.REL.ENHAND"]["handling"]["message"] == "请稍等，为您转人工。"
+    assert by["B.REL.ENFREE"]["handling"]["mode"] == "llm_free"
+    assert "轻松简短" in by["B.REL.ENFREE"]["handling"]["prompt"]
+    assert "B.REL.ENFLOW" not in by

@@ -110,6 +110,16 @@ def validate(it: dict, idx: RefIndex) -> list[str]:
             e.append(f"必填槽位「{n}」缺少追问话术")
     refs = it.get("kb_refs") or []
     binds = it.get("tools") or []
+    from . import handling as handling_svc
+    mode = (it.get("handling") or {}).get("mode", "tool_flow")
+    if mode != "tool_flow":
+        if refs or binds:
+            e.append(handling_svc.binding_conflict_message(mode))
+        if mode == "fixed_reply":
+            replies = [str(r).strip() for r in ((it.get("handling") or {}).get("replies") or []) if str(r).strip()]
+            if not replies:
+                e.append("固定话术至少写一条回复")
+        return e
     if not refs and not binds:
         e.append("至少关联 1 条知识或 1 个工具")
     for r in refs:
