@@ -1,7 +1,7 @@
 [
   {
     "name": "list_intents",
-    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories），view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
+    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories）；可用 max_depth（从起点算起返回几层，不传为整棵树）和 parent（节点 id 或 code，从其子节点开始）按层下钻，每个节点含 has_children、child_count。view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -19,6 +19,16 @@
             "recognition"
           ],
           "default": "intents"
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "仅 view=taxonomy 时有效。从起点算起最多返回几层分类；不传则返回完整子树。逐步下钻时每次传 1。"
+        },
+        "parent": {
+          "type": "string",
+          "description": "仅 view=taxonomy 时有效。起点节点的 id 或 code；传入后 categories 为该节点的子树（不含自身），响应另含 parent 对象。不传则从根开始。"
         },
         "category": {
           "type": "string",

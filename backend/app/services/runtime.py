@@ -14,9 +14,11 @@ from .common import iso, norm_tags, utcnow
 from .validation import RefIndex
 
 
-def build(db: Session, sp: Space) -> dict:
+def build(db: Session, sp: Space, max_depth: int | None = None,
+          parent: str | int | None = None) -> dict:
     idx = RefIndex(db)
     tax = tax_svc.Tax(db, sp)
+    start = tax.resolve_start(parent)
     enabled = list(db.scalars(select(Intent).where(Intent.space_id == sp.id, Intent.status == "启用")
                               .order_by(Intent.position, Intent.code)))
     from .intents import effective_slots
@@ -62,6 +64,12 @@ def build(db: Session, sp: Space) -> dict:
             items.append(item)
         validation_sets.append({"kb_id": kb_id, "kb_name": kb.name, "doc_id": doc_id, "doc_name": doc.name,
                                 "chunk_id": chunk_id, "used_by": used, "items": items})
+    tax_out = {**tax_svc.levels_def(sp), "categories": tax.tree(with_counts=False, with_ids=True,
+                                                                max_depth=max_depth,
+                                                                parent_id=start.id if start else None)}
+    if start is not None:
+        tax_out["parent"] = tax.parent_ref(start)
+
     used_tools = list(db.scalars(select(Tool).where(Tool.name.in_(tool_names))))
     tools_out = [tool_svc.api_dict(t) for t in used_tools]
     tools_out.sort(key=lambda d: tool_names.index(d["name"]))
@@ -74,7 +82,7 @@ def build(db: Session, sp: Space) -> dict:
         "version": sp.version,
         "generated_at": iso(utcnow()),
         "recognition": space_svc.recognition(sp),
-        "taxonomy": {**tax_svc.levels_def(sp), "categories": tax.tree(with_counts=False, with_ids=False)},
+        "taxonomy": tax_out,
         "slots": [{k: v for k, v in slot_svc.to_dict(s).items() if k != "options" or v}
                   for s in slot_svc.list_slots(db, sp.id)],
         "intents": intents_out,

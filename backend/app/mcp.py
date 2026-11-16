@@ -90,7 +90,8 @@ def call_tool(request: Request, db: Session, ctx: KeyCtx, name: str, args: dict,
         sp = resolve_space(request, db, ctx, args.get("space"))
         view = args.get("view") or "intents"
         if view == "taxonomy":
-            return tax_svc.public_taxonomy(db, sp)
+            return tax_svc.public_taxonomy(db, sp, max_depth=args.get("max_depth"),
+                                           parent=args.get("parent"))
         if view == "slots":
             ub = slot_svc.used_by_map(db, sp.id)
             return {"slots": [slot_svc.to_dict(s, ub.get(s.name, [])) for s in slot_svc.list_slots(db, sp.id)]}
@@ -311,7 +312,7 @@ async def mcp(request: Request, ctx: KeyCtx = Depends(api_key(None)), db: Sessio
     if method == "initialize":
         return JSONResponse(_rpc(mid, {"protocolVersion": params.get("protocolVersion") or PROTOCOL,
                                        "capabilities": {"tools": {"listChanged": False}},
-                                       "serverInfo": {"name": "intent-platform", "version": "0.19.0"}}))
+                                       "serverInfo": {"name": "intent-platform", "version": "0.19.4"}}))
     if method == "ping":
         return JSONResponse(_rpc(mid, {}))
     if method == "tools/list":

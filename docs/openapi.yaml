@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
-  version: 0.19.3
+  version: 0.19.4
   description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
 
     给 AI 的总规则：
@@ -31,6 +31,7 @@ info:
 
     - v0.6 起 MCP 按「服务 → 子工具」登记：子工具名为 {服务名}.{远端工具名}，Tool.server 为服务名，Tool.mcp_server 由 0.5 的 URL 字符串改为连接信息对象（URL 在 mcp_server.url）；runtime-config 新增 mcp_servers（只含被用到的服务，密钥只给环境变量名 auth.token_env）。
 
+    - v0.19.4：GET /api/v1/taxonomy、GET /api/v1/runtime-config 与 MCP list_intents（view=taxonomy）支持可选参数 max_depth（从起点算起返回几层，不传仍返回整棵树）和 parent（节点 id 或 code，从其子节点开始）。每个分类节点增加 has_children、child_count 与 id，便于按层下钻。
     - v0.19.3：意图增加处理方式 handling（tool_flow / handoff_human / fixed_reply / llm_free）。fixed_reply 可设 reply_strictness（paraphrase 按意思表达，默认；verbatim 完全固定）。非 tool_flow 不能绑定工具或知识。空间未匹配兜底与此同一套 mode，见 recognition.fallback（仍兼容 final_action）。
     - v0.19.2：知识库创建/编辑改为可选的自由文本「描述」，不再使用固化的适用范围字段（平台/站点/语言/类目）；旧标签已迁移进描述。
     - v0.19.1：给意图绑定或解绑已有工具只需「意图:写」，不再要求「工具:写」。
@@ -241,6 +242,9 @@ paths:
       description: '何时用：每次整理或写入意图之前先调用，拿到本空间的分类层级定义（levels）和分类树（categories）；写入意图时 category_path 必须是树上从第 1 层到最末层的一条完整路径。
 
 
+        分类较多时请按层拉取，避免一次返回整棵树导致响应过大。max_depth 为从本轮起点算起最多返回几层（1～5）；不传则返回完整子树。parent 为起点节点的 id 或 code，传入后 categories 是该节点的子节点（不含自身），响应另含 parent 对象。每个节点带 id、has_children、child_count，据此判断是否继续下钻。推荐先 ?max_depth=1，再对需要展开的节点请求 ?parent={id 或 code}&max_depth=1。
+
+
         何时不用：不要用它来查具体意图，查意图用 GET /api/v1/intents。
 
 
@@ -263,26 +267,46 @@ paths:
                 - code: PRE
                   name: 售前
                   depth: 1
+                  id: 1
+                  has_children: false
+                  child_count: 0
                   children: []
                 - code: MID
                   name: 售中
                   depth: 1
+                  id: 2
+                  has_children: false
+                  child_count: 0
                   children: []
                 - code: POST
                   name: 售后
                   depth: 1
+                  id: 3
+                  has_children: false
+                  child_count: 0
                   children: []
                 - code: NONE
                   name: 非询盘
                   depth: 1
+                  id: 4
+                  has_children: false
+                  child_count: 0
                   children: []
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
     parameters:
     - $ref: '#/components/parameters/SpaceHeader'
     - $ref: '#/components/parameters/SpaceQuery'
+    - $ref: '#/components/parameters/TaxonomyMaxDepth'
+    - $ref: '#/components/parameters/TaxonomyParent'
 
   /api/v1/taxonomy/nodes:
     post:
@@ -1865,7 +1889,9 @@ paths:
           type: integer
           minimum: 0
           example: 41
-        description: Bot 当前持有的版本号；与最新版本相同时返回 304
+        description: Bot 当前持有的版本号；与最新版本相同时返回 304。若同时传了 max_depth 或 parent，则始终返回 200（只切片 taxonomy.categories）。
+      - $ref: '#/components/parameters/TaxonomyMaxDepth'
+      - $ref: '#/components/parameters/TaxonomyParent'
       responses:
         '200':
           description: 最新运行时配置
@@ -2251,6 +2277,22 @@ components:
         type: string
         example: mc
       description: 业务空间 ID，等同于 X-Space-Id 请求头。
+    TaxonomyMaxDepth:
+      name: max_depth
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 5
+      description: 从本轮起点算起最多返回几层分类（1～5）。不传则返回完整子树。例如 max_depth=1 只返回起点下的直接子节点（从根开始即第一层）。
+    TaxonomyParent:
+      name: parent
+      in: query
+      required: false
+      schema:
+        type: string
+      description: 起点节点的 id 或 code。传入后 categories 为该节点的子节点（不含自身），响应另含 parent 对象。不传则从根开始。节点不存在时返回 404 CATEGORY_NOT_FOUND。
   responses:
     BadRequest:
       description: 参数或文件格式错误（如表头不一致、扩展名不支持、编码格式错误）
@@ -3788,7 +3830,12 @@ components:
       - name
       - depth
       - children
+      - has_children
+      - child_count
       properties:
+        id:
+          type: integer
+          description: 节点 id，可作 parent 参数以继续下钻
         code:
           type: string
           nullable: true
@@ -3797,6 +3844,19 @@ components:
         depth:
           type: integer
           minimum: 1
+        enabled:
+          type: boolean
+        description:
+          type: string
+        sort:
+          type: integer
+        has_children:
+          type: boolean
+          description: 该节点在完整树中是否有子分类（不受 max_depth 截断影响）
+        child_count:
+          type: integer
+          minimum: 0
+          description: 该节点在完整树中的直接子分类数量（不受 max_depth 截断影响）
         children:
           type: array
           items:
@@ -3838,6 +3898,23 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/CategoryNode'
+          parent:
+            type: object
+            description: 仅在传入 parent 参数时出现，描述本轮起点节点（categories 是它的子节点）
+            properties:
+              id:
+                type: integer
+              code:
+                type: string
+                nullable: true
+              name:
+                type: string
+              depth:
+                type: integer
+              has_children:
+                type: boolean
+              child_count:
+                type: integer
     McpServerConn:
       type: object
       required:

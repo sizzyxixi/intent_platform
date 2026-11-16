@@ -2,7 +2,7 @@
 
 > 读者：运营使用的 AI 工具（如 Claude、Cursor、自建 Agent），以及读取运行时配置的 Bot / 智能体。
 > **使用方先读同目录 `使用方接入指南.md`；运营方先读 `运营方配置手册.md`。** `AI使用说明.md` 是这两份的索引。本文是规则速查：字段规则、槽位规则、错误处理和 6 个 MCP 工具的完整定义（第 9 节，与平台实现一致）。冲突时以上述指南和 `openapi.yaml` 为准。
-> 接口定义见同目录 `openapi.yaml`（OpenAPI 3.0.3，0.19.0）。生产环境推荐 Base URL：`http://47.86.15.93/intent-platform`（API：`http://47.86.15.93/intent-platform/api/v1`，MCP：`http://47.86.15.93/intent-platform/mcp`）。控制台：`http://intent.47.86.15.93.sslip.io`，也可作为备用 API 主机。若 sslip 主机返回 500 且响应体为空，是调用方 DNS / 代理问题，请改用 IP 路径。鉴权：`Authorization: Bearer $INTENT_PLATFORM_API_KEY`。Key 的创建、存放位置和自检见 `使用方接入指南.md` 第 1 节（环境变量 `INTENT_PLATFORM_API_KEY` 或文件 `~/.intent-platform/config.json`）；文档里的 `ipk_xxx` 只是格式占位，不是可用密钥。空间：意图类接口带 `X-Space-Id: {space_id}`，知识库与工具接口全局、不需要。
+> 接口定义见同目录 `openapi.yaml`（OpenAPI 3.0.3，0.19.4）。生产环境推荐 Base URL：`http://47.86.15.93/intent-platform`（API：`http://47.86.15.93/intent-platform/api/v1`，MCP：`http://47.86.15.93/intent-platform/mcp`）。控制台：`http://intent.47.86.15.93.sslip.io`，也可作为备用 API 主机。若 sslip 主机返回 500 且响应体为空，是调用方 DNS / 代理问题，请改用 IP 路径。鉴权：`Authorization: Bearer $INTENT_PLATFORM_API_KEY`。Key 的创建、存放位置和自检见 `使用方接入指南.md` 第 1 节（环境变量 `INTENT_PLATFORM_API_KEY` 或文件 `~/.intent-platform/config.json`）；文档里的 `ipk_xxx` 只是格式占位，不是可用密钥。空间：意图类接口带 `X-Space-Id: {space_id}`，知识库与工具接口全局、不需要。
 
 ## 1. 平台是什么
 
@@ -21,7 +21,7 @@
 ## 2. 工作流
 
 1. **先选空间**：`GET /api/v1/spaces`，确认要写入的空间（如 `cs` 1688 智能客服、`mc` Moonclaw 跨境智能体）。之后**意图类请求**（taxonomy、slots、intents、runtime-config）都带 `X-Space-Id`（或 query 参数 `space`）；它必须是 Key 绑定的空间之一（一个 Key 可绑定多个空间），否则返回 403 `SPACE_FORBIDDEN`。知识库（kbs、imports）和工具（tools）请求不需要 X-Space-Id。**不确定该写入哪个空间就先问运营。**
-2. **读分类**：`GET /api/v1/taxonomy`，拿到当前空间的层级定义 `levels`（每层名称，最后一层是意图）和分类树 `categories`（每个节点有 `name`，第一层节点可能有 `code`）。
+2. **读分类**：`GET /api/v1/taxonomy`，拿到当前空间的层级定义 `levels`（每层名称，最后一层是意图）和分类树 `categories`（每个节点有 `id`、`name`，以及可能有的 `code`）。分类较多时请按层拉取：先 `?max_depth=1` 只取第一层，再对需要展开的节点用 `?parent={id 或 code}&max_depth=1` 取下一层。不传这两个参数时仍返回整棵树。每个节点含 `has_children`、`child_count`，据此判断是否继续下钻。
 3. **读本空间槽位**：`GET /api/v1/slots`（带空间）。整理意图时**优先复用本空间已有槽位**（见第 4 节）。
 4. **读已有意图**：`GET /api/v1/intents?category={分类 id}`（含其下所有子分类；或 `q=关键词`），必要时 `GET /api/v1/intents/{code}` 读详情。
 5. **查重**：对每个准备写入的意图，检查是否已有相同含义的意图（名称、意图描述、例句相近）。已存在就补充例句，不要另建一个新编码。
@@ -133,7 +133,7 @@ MCP 地址（推荐）：`http://47.86.15.93/intent-platform/mcp`；备用：`ht
 [
   {
     "name": "list_intents",
-    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories），view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
+    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories）；可用 max_depth（从起点算起返回几层，不传为整棵树）和 parent（节点 id 或 code，从其子节点开始）按层下钻，每个节点含 has_children、child_count。view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -151,6 +151,16 @@ MCP 地址（推荐）：`http://47.86.15.93/intent-platform/mcp`；备用：`ht
             "recognition"
           ],
           "default": "intents"
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "仅 view=taxonomy 时有效。从起点算起最多返回几层分类；不传则返回完整子树。逐步下钻时每次传 1。"
+        },
+        "parent": {
+          "type": "string",
+          "description": "仅 view=taxonomy 时有效。起点节点的 id 或 code；传入后 categories 为该节点的子树（不含自身），响应另含 parent 对象。不传则从根开始。"
         },
         "category": {
           "type": "string",

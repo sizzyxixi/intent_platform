@@ -118,19 +118,52 @@ class Tax:
             walk(r)
         return total
 
-    def tree(self, with_counts: bool = True, with_ids: bool = True) -> list[dict]:
-        cnt = self.counts() if with_counts else {}
+    def resolve_start(self, parent: str | int | None) -> Category | None:
+        """按节点 id 或 code 解析起点。空值表示从根开始。找不到则 404。"""
+        if parent is None:
+            return None
+        s = str(parent).strip()
+        if not s:
+            return None
+        if s.isdigit():
+            c = self.nodes.get(int(s))
+            if c:
+                return c
+            raise not_found(f"分类「{parent}」不存在", "CATEGORY_NOT_FOUND")
+        code = s.upper()
+        for c in self.nodes.values():
+            if c.code and c.code == code:
+                return c
+        raise not_found(f"分类「{parent}」不存在", "CATEGORY_NOT_FOUND")
 
-        def node(c: Category) -> dict:
+    def parent_ref(self, c: Category) -> dict:
+        kids = self.children[c.id]
+        return {"id": c.id, "code": c.code, "name": c.name, "depth": c.depth,
+                "has_children": bool(kids), "child_count": len(kids)}
+
+    def tree(self, with_counts: bool = True, with_ids: bool = True,
+             max_depth: int | None = None, parent_id: int | None = None) -> list[dict]:
+        """max_depth 是从本轮起点算起要包含的层数（1=只返回直接子节点）；不传则返回完整子树。
+        parent_id 指定起点，返回该节点的子节点（不含自身）；不传则从根开始。"""
+        cnt = self.counts() if with_counts else {}
+        start = self.children[parent_id]
+
+        def node(c: Category, remaining: int | None) -> dict:
+            kids = self.children[c.id]
             d = {"code": c.code, "name": c.name, "depth": c.depth,
-                 "enabled": bool(c.enabled), "description": c.description or "", "sort": c.position}
+                 "enabled": bool(c.enabled), "description": c.description or "", "sort": c.position,
+                 "has_children": bool(kids), "child_count": len(kids)}
             if with_ids:
                 d["id"] = c.id
             if with_counts:
                 d["count"] = cnt.get(c.id, 0)
-            d["children"] = [node(x) for x in self.children[c.id]]
+            if remaining is None or remaining > 1:
+                nxt = None if remaining is None else remaining - 1
+                d["children"] = [node(x, nxt) for x in kids]
+            else:
+                d["children"] = []
             return d
-        return [node(r) for r in self.roots()]
+        return [node(r, max_depth) for r in start]
 
 
 def levels_def(sp: Space) -> dict:
@@ -145,9 +178,16 @@ def admin_taxonomy(db: Session, sp: Space) -> dict:
                 Intent.space_id == sp.id, Intent.category_id.is_(None))) or 0}
 
 
-def public_taxonomy(db: Session, sp: Space) -> dict:
+def public_taxonomy(db: Session, sp: Space, max_depth: int | None = None,
+                    parent: str | int | None = None) -> dict:
     t = Tax(db, sp)
-    return {**levels_def(sp), "categories": t.tree(with_counts=False, with_ids=False)}
+    start = t.resolve_start(parent)
+    out = {**levels_def(sp), "categories": t.tree(with_counts=False, with_ids=True,
+                                                   max_depth=max_depth,
+                                                   parent_id=start.id if start else None)}
+    if start is not None:
+        out["parent"] = t.parent_ref(start)
+    return out
 
 
 def code_rule(t: Tax, cid: int | None) -> str:

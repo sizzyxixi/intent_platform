@@ -1,4 +1,4 @@
-"""开放接口 /api/v1（严格对应 docs/openapi.yaml 0.19.0）。"""
+"""开放接口 /api/v1（严格对应 docs/openapi.yaml 0.19.4）。"""
 import hashlib
 import json
 from datetime import datetime
@@ -78,9 +78,13 @@ def list_spaces(ctx: KeyCtx = Depends(api_key(R_INT)), db: Session = Depends(get
 
 
 @router.get("/taxonomy")
-def get_taxonomy(request: Request, ctx: KeyCtx = Depends(api_key(R_INT)), db: Session = Depends(get_db)):
+def get_taxonomy(request: Request, max_depth: int | None = Query(None, ge=1, le=5),
+                 parent: str | None = Query(None),
+                 ctx: KeyCtx = Depends(api_key(R_INT)), db: Session = Depends(get_db)):
+    """读取分类层级与分类树。max_depth 为从起点算起返回几层（不传=整棵树）；
+    parent 为起点节点的 id 或 code，传入后 categories 为其子节点。"""
     sp = resolve_space(request, db, ctx)
-    return tax_svc.public_taxonomy(db, sp)
+    return tax_svc.public_taxonomy(db, sp, max_depth=max_depth, parent=parent)
 
 
 
@@ -717,11 +721,16 @@ def unbind_intent_knowledge(code: str, request: Request, ctx: KeyCtx = Depends(a
 # ---------------- 运行时配置 ----------------
 @router.get("/runtime-config")
 def runtime_config(request: Request, since_version: int | None = Query(None, ge=0),
+                   max_depth: int | None = Query(None, ge=1, le=5),
+                   parent: str | None = Query(None),
                    ctx: KeyCtx = Depends(api_key(R_INT)), db: Session = Depends(get_db)):
     sp = resolve_space(request, db, ctx)
-    if since_version is not None and since_version == sp.version:
+    sliced = max_depth is not None or (parent is not None and str(parent).strip() != "")
+    # 带层级/起点参数时始终返回切片后的 taxonomy，避免 304 丢掉 body
+    if not sliced and since_version is not None and since_version == sp.version:
         return Response(status_code=304, headers={"ETag": f'"{sp.id}-v{sp.version}"'})
-    return JSONResponse(runtime.build(db, sp), headers={"ETag": f'"{sp.id}-v{sp.version}"'})
+    return JSONResponse(runtime.build(db, sp, max_depth=max_depth, parent=parent),
+                        headers={"ETag": f'"{sp.id}-v{sp.version}"'})
 
 
 _ = (get_settings, utcnow, RefIndex)
