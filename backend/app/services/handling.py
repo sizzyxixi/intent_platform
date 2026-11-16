@@ -35,8 +35,9 @@ MSG_MAX = 2000
 REPLIES_MAX = 10
 
 
-def default_fallback(space_id: str) -> dict:
-    return {"mode": "handoff_human"} if space_id == "cs" else {"mode": "llm_free"}
+def default_fallback(space_id: str | None = None) -> dict:
+    # 空间级兜底不再按空间维护；未命中一律由使用方智能体自行回答。
+    return {"mode": "llm_free"}
 
 
 def is_tool_flow(h: dict | None) -> bool:

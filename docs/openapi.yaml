@@ -34,6 +34,7 @@ info:
     - v0.20.1：工具增加可选业务分组 group（全类型通用）。POST/PUT /api/v1/tools、登记或更新 MCP 服务时可读写；CLI 原 config.group / cli.group 仍可用并与之同步。
     - v0.19.4：GET /api/v1/taxonomy、GET /api/v1/runtime-config 与 MCP list_intents（view=taxonomy）支持可选参数 max_depth（从起点算起返回几层，不传仍返回整棵树）和 parent（节点 id 或 code，从其子节点开始）。每个分类节点增加 has_children、child_count 与 id，便于按层下钻。
     - v0.19.3：意图增加处理方式 handling（tool_flow / handoff_human / fixed_reply / llm_free）。fixed_reply 可设 reply_strictness（paraphrase 按意思表达，默认；verbatim 完全固定）。非 tool_flow 不能绑定工具或知识。空间未匹配兜底与此同一套 mode，见 recognition.fallback（仍兼容 final_action）。
+    - v0.20.5：分类节点 description 出现在 taxonomy / runtime-config / MCP / 意图 category_path；写入可按 id 更新无编码节点。空间对象增加 description；bot 为兼容字段。recognition 已废弃，fallback.mode 固定为 llm_free，PUT 忽略。
     - v0.20.3：固定话术的读取结果增加只读字段 handling.instruction（verbatim 必须原样输出、不得增删补充；paraphrase 可改写但不得改变原意）。verbatim 时使用方不得附加问候语或其他句子。
     - v0.19.2：知识库创建/编辑改为可选的自由文本「描述」，不再使用固化的适用范围字段（平台/站点/语言/类目）；旧标签已迁移进描述。
     - v0.19.1：给意图绑定或解绑已有工具只需「意图:写」，不再要求「工具:写」。
@@ -244,7 +245,7 @@ paths:
       description: '何时用：每次整理或写入意图之前先调用，拿到本空间的分类层级定义（levels）和分类树（categories）；写入意图时 category_path 必须是树上从第 1 层到最末层的一条完整路径。
 
 
-        分类较多时请按层拉取，避免一次返回整棵树导致响应过大。max_depth 为从本轮起点算起最多返回几层（1～5）；不传则返回完整子树。parent 为起点节点的 id 或 code，传入后 categories 是该节点的子节点（不含自身），响应另含 parent 对象。每个节点带 id、has_children、child_count，据此判断是否继续下钻。推荐先 ?max_depth=1，再对需要展开的节点请求 ?parent={id 或 code}&max_depth=1。
+        分类较多时请按层拉取，避免一次返回整棵树导致响应过大。max_depth 为从本轮起点算起最多返回几层（1～5）；不传则返回完整子树。parent 为起点节点的 id 或 code，传入后 categories 是该节点的子节点（不含自身），响应另含 parent 对象。每个节点带 id、description、has_children、child_count。请阅读 description 判断该往哪一支走，再据此判断是否继续下钻。推荐先 ?max_depth=1，再对需要展开的节点请求 ?parent={id 或 code}&max_depth=1。
 
 
         何时不用：不要用它来查具体意图，查意图用 GET /api/v1/intents。
@@ -392,12 +393,13 @@ paths:
     put:
       tags: [分类]
       operationId: updateTaxonomyNode
-      summary: 更新已有分类节点
+      summary: 更新已有分类节点（路径为 code 或数字 id）
       parameters:
       - name: code
         in: path
         required: true
         schema: {type: string}
+        description: 节点 code，或纯数字 id（无编码节点请用 id）
       - $ref: '#/components/parameters/SpaceHeader'
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -3812,9 +3814,10 @@ components:
 
     TaxonomyNodeInput:
       type: object
-      required: [code, name]
+      required: [name]
       properties:
-        code: {type: string}
+        id: {type: integer, description: 已有节点 id；无编码节点必须用 id 更新}
+        code: {type: string, description: 稳定编码，可选；与 id 至少提供一个以更新已有节点}
         name: {type: string}
         parent_code: {type: string}
         depth: {type: integer}
@@ -3824,9 +3827,10 @@ components:
         dry_run: {type: boolean}
     TaxonomyNode:
       type: object
-      required: [code, name, depth, enabled]
+      required: [name, depth, enabled]
       properties:
-        code: {type: string}
+        id: {type: integer}
+        code: {type: string, nullable: true}
         name: {type: string}
         depth: {type: integer}
         parent_code: {type: string, nullable: true}
@@ -3931,6 +3935,8 @@ components:
                 type: string
               depth:
                 type: integer
+              description:
+                type: string
               has_children:
                 type: boolean
               child_count:

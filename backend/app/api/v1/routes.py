@@ -91,14 +91,15 @@ def get_taxonomy(request: Request, max_depth: int | None = Query(None, ge=1, le=
 @router.post("/taxonomy/nodes")
 async def upsert_taxonomy_node(request: Request, ctx: KeyCtx = Depends(api_key(W_INT)),
                                db: Session = Depends(get_db)):
-    """按编码创建或更新分类节点。dry_run=true 只校验不写入。需要「意图:写」，且 Key 必须绑定该空间。"""
+    """按 id 或编码创建或更新分类节点。dry_run=true 只校验不写入。需要「意图:写」，且 Key 必须绑定该空间。无编码节点请传 id。"""
     payload = await _json(request)
     if not isinstance(payload, dict):
         raise bad_request("请求体应为对象")
     sp = resolve_space(request, db, ctx)
     if payload.get("dry_run"):
         existing, v = tax_svc.validate_node(db, sp, payload)
-        return {"ok": True, "dry_run": True, "action": "updated" if existing else "created", "code": v["code"]}
+        return {"ok": True, "dry_run": True, "action": "updated" if existing else "created",
+                "id": existing.id if existing else None, "code": v["code"]}
 
     def run():
         c, action = tax_svc.upsert_node(db, sp, payload, ctx.actor)
@@ -114,13 +115,13 @@ async def update_taxonomy_node(code: str, request: Request, ctx: KeyCtx = Depend
     payload = await _json(request)
     if not isinstance(payload, dict):
         raise bad_request("请求体应为对象")
-    payload = {**payload, "code": code}
+    payload = tax_svc.apply_path_ref(code, payload)
     sp = resolve_space(request, db, ctx)
     if payload.get("dry_run"):
         existing, v = tax_svc.validate_node(db, sp, payload)
         if not existing:
             raise unprocessable(f"分类「{code}」不存在，先调用 POST /api/v1/taxonomy/nodes 创建", "CATEGORY_NOT_FOUND")
-        return {"ok": True, "dry_run": True, "action": "updated", "code": v["code"]}
+        return {"ok": True, "dry_run": True, "action": "updated", "id": existing.id, "code": v["code"]}
 
     def run():
         existing, _ = tax_svc.validate_node(db, sp, payload)

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { login, pickTool, watchErrors } from './helpers'
+import { login, pickSelect, pickTool, watchErrors } from './helpers'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -13,7 +13,7 @@ test('意图列表：第一层分类筛选、按层级名生成列、搜索、�
   await page.fill('#fQ', '现货'); await page.click('#fApply')
   await expect(page.locator('#intentTbl tbody tr').first()).toContainText('B.STOCK.AVAIL')
   // 切换空间
-  await page.selectOption('#spSel', 'mc')
+  await pickSelect(page, 'spSel', 'mc')
   await expect(page.locator('#intentTbl tbody tr').first()).toContainText('M.')
   expect(errs).toEqual([])
 })
@@ -21,7 +21,7 @@ test('意图列表：第一层分类筛选、按层级名生成列、搜索、�
 test('新建意图 → 启用校验失败 → 补齐后启用', async ({ page }) => {
   await login(page)
   await page.click('#newIntent')
-  await page.selectOption('#niP', { label: '库存与货期 / 现货' })
+  await pickSelect(page, 'niP', { label: '库存与货期 / 现货' })
   await page.fill('#niC', 'B.STOCK.E2E_PREORDER')
   await page.fill('#niN', '预售测试')
   await page.click('#newIntentDo')
@@ -29,7 +29,7 @@ test('新建意图 → 启用校验失败 → 补齐后启用', async ({ page })
   await expect(ed).toBeVisible()
   await page.selectOption('#eSt', '启用')
   await page.click('#eSave')
-  await expect(ed.locator('.err')).toContainText('校验未通过')
+  await expect(ed.locator('.err').first()).toContainText('校验未通过')
   await page.fill('#eD', '用户想在缺货时先下单预订；问能否预定算；问何时补货不算（→ 补货/到货时间）')
   await page.fill('#eEx', '没货能先拍吗\n可以预定吗\n先下单等补货可以吗')
   // 槽位：选已有 sku 并设为必填
@@ -44,7 +44,7 @@ test('新建意图 → 启用校验失败 → 补齐后启用', async ({ page })
   // 关联知识
   await page.click('#kbPick')
   await expect(page.getByTestId('kbPicker')).toBeVisible()
-  await page.selectOption('#pkKb', 'kb_aq')
+  await pickSelect(page, 'pkKb', 'kb_aq')
   await page.locator('.pkc').first().check()
   await page.click('#pkOk')
   await expect(page.locator('#eRefs tr')).toHaveCount(1)
@@ -81,12 +81,19 @@ test('导入意图：示例 JSON → 预览 → 入库 → 查看草稿', async 
   await expect(page.locator('#imLog tbody tr').first()).toContainText('林夏AI整理')
 })
 
-test('空间设置：修改阈值后版本 +1', async ({ page }) => {
+test('空间设置：展示并可编辑业务空间描述', async ({ page }) => {
   await login(page)
   await page.goto('/#/intents/cfg')
-  await page.fill('#rcTh', '0.65')
-  await page.click('#rcSave')
-  await expect(page.locator('#toast')).toContainText('配置版本 v')
+  await expect(page.locator('#spInfoCard')).toContainText('业务空间')
+  await expect(page.locator('#spInfoDesc')).toBeVisible()
+  await expect(page.locator('#rcCard')).toHaveCount(0)
+  const cur = await page.locator('#spInfoDesc').inputValue()
+  await page.fill('#spInfoDesc', (cur || '') + '（探针）')
+  await page.click('#spInfoSave')
+  await expect(page.locator('#toast')).toContainText('业务空间已保存')
+  await page.fill('#spInfoDesc', cur)
+  await page.click('#spInfoSave')
+  await expect(page.locator('#toast')).toContainText('业务空间已保存')
 })
 
 test('导入意图：Excel 模板示例、Markdown 示例都能解析', async ({ page }) => {
@@ -116,7 +123,7 @@ test('打开意图详情抽屉：cs 与 mc 都不停滞在加载中', async ({ p
   await ed.locator('a[aria-label="关闭"]').click()
   await expect(ed).toHaveCount(0)
 
-  await page.selectOption('#spSel', 'mc')
+  await pickSelect(page, 'spSel', 'mc')
   await expect(page.locator('#intentTbl tbody tr').first()).toContainText('M.')
   const ed2 = await openFirstEditor(page)
   await expect(ed2.locator('#eN')).toBeVisible()
@@ -147,4 +154,23 @@ test('工具目录可选请求失败时详情仍打开；必选请求失败时�
   await expect(page.locator('#intentLoadErr')).toContainText('无法加载意图详情')
   await expect(page.getByTestId('intentEditor').locator('.dh .sp')).toHaveText('加载失败')
   await expect(page.getByTestId('intentEditor').locator('.dh .sp')).not.toHaveText('加载中…')
+})
+
+
+test('所属分类是可搜索的级联选择', async ({ page }) => {
+  await login(page)
+  await page.click('#newIntent')
+  await expect(page.locator('#niP')).toBeVisible()
+  await page.click('#niP')
+  const panel = page.locator('#niPPanel')
+  await expect(panel).toBeVisible()
+  const firstCol = panel.locator('.cas-col').first()
+  await expect(firstCol).toContainText('库存与货期')
+  await firstCol.getByText('库存与货期', { exact: true }).hover()
+  await expect(panel.locator('.cas-col').nth(1)).toContainText('现货')
+  await page.screenshot({ path: '/workspace/category_cascader.png' })
+  await page.fill('#niPSearch', '库存与货期 / 现货')
+  await panel.locator('[data-pick="库存与货期 / 现货"]').click()
+  await expect(panel).toBeHidden()
+  await expect(page.locator('#niP')).toContainText('库存与货期 / 现货')
 })

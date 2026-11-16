@@ -37,10 +37,10 @@ def get(db: Session, code: str, space_id: str | None = None) -> Intent:
 
 
 def category_path(it: Intent) -> list[dict]:
-    """[{code, name}, ...]，从第 1 层到叶子。父节点走 identity map，列表场景先 preload_categories。"""
+    """[{code, name, description}, ...]，从第 1 层到叶子。父节点走 identity map，列表场景先 preload_categories。"""
     out, c = [], it.category
     while c is not None:
-        out.append({"code": c.code, "name": c.name})
+        out.append(tax_svc.path_item(c))
         c = c.parent
     return out[::-1]
 

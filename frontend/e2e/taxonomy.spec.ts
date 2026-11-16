@@ -1,16 +1,18 @@
 import { expect, test } from '@playwright/test'
-import { login, watchErrors } from './helpers'
+import { login, pickSelect, watchErrors } from './helpers'
 
 const shot = (n: string) => `../screenshots/${n}.png`
 
 test('空间设置：插入一层 → 预览确认 → 列表多一列 → 删除这一层还原', async ({ page }) => {
   const errs = watchErrors(page)
   await login(page)
-  await page.selectOption('#spSel', 'mc')
+  await pickSelect(page, 'spSel', 'mc')
   await page.goto('/#/intents/cfg')
   await expect(page.locator('#lvCard')).toContainText('第 2 层')
-  await page.evaluate(() => document.querySelector('#lvCard')?.scrollIntoView())
   await expect(page.locator('#toast')).not.toHaveClass(/show/, { timeout: 5000 })
+  await page.locator('#spInfoCard').screenshot({ path: '/workspace/space_settings.png' })
+  await page.locator('#taxCard').screenshot({ path: '/workspace/taxonomy_editor.png' })
+  await page.evaluate(() => document.querySelector('#lvCard')?.scrollIntoView())
   await page.screenshot({ path: shot('13-空间设置-分类层级') })
   // 在「问题桶」上方插入一层
   await page.click('#lvIns1')
@@ -60,4 +62,47 @@ test('分类树：新增一级与下级、改层级名称', async ({ page }) => 
   await page.goto('/#/intents/list')
   await expect(page.locator('#intentTbl thead')).toContainText('一级类目')
   await expect(page.locator('#l1Tree')).toContainText('E2E 大类')
+})
+
+test('分类树：逐层新增、编辑描述、移动', async ({ page }) => {
+  await login(page)
+  await pickSelect(page, 'spSel', 'mc')
+  await page.goto('/#/intents/cfg')
+  await expect(page.locator('#taxCard')).toBeVisible()
+  await page.click('#catAddRoot')
+  await expect(page.getByTestId('catForm')).toBeVisible()
+  await page.fill('#catNewName', 'E2E 路由甲')
+  await page.fill('#catNewCode', 'E2EA')
+  await page.fill('#catNewDesc', '甲类：用于分级路由测试')
+  await page.click('#catNewOk')
+  await expect(page.locator('#toast')).toContainText('已新增分类')
+  const a = page.locator('.catrow', { hasText: 'E2E 路由甲' })
+  await expect(a).toContainText('甲类：用于分级路由测试')
+  await a.locator('a[title="新增问题桶"]').click()
+  await page.fill('#catNewName', 'E2E 路由桶')
+  await page.fill('#catNewDesc', '桶说明')
+  await page.click('#catNewOk')
+  await expect(page.locator('#taxCard')).toContainText('E2E 路由桶')
+  await expect(page.locator('#taxCard')).toContainText('桶说明')
+
+  await page.click('#catAddRoot')
+  await page.fill('#catNewName', 'E2E 路由乙')
+  await page.fill('#catNewCode', 'E2EB')
+  await page.click('#catNewOk')
+  await expect(page.locator('#toast')).toContainText('已新增分类')
+
+  // 编辑描述
+  await page.locator('.catrow', { hasText: 'E2E 路由甲' }).locator('a[title="编辑"]').click()
+  await page.fill('#catNewDesc', '甲类描述已修改')
+  await page.click('#catNewOk')
+  await expect(page.locator('#toast')).toContainText('已保存分类')
+  await expect(page.locator('.catrow', { hasText: 'E2E 路由甲' })).toContainText('甲类描述已修改')
+
+  // 把桶从甲移到乙：先展开甲看到移动
+  const bucket = page.locator('.catrow', { hasText: 'E2E 路由桶' })
+  await bucket.locator('a[title="移动到其他上级"]').click()
+  await expect(page.getByTestId('catMove')).toBeVisible()
+  await pickSelect(page, 'catMoveParent', { label: 'E2E 路由乙' })
+  await page.click('#catMoveOk')
+  await expect(page.locator('#toast')).toContainText('已移动分类')
 })

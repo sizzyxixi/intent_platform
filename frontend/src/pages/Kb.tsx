@@ -3,6 +3,7 @@ import { api, errLines, fmt } from '../api'
 import demo from '../demoContent.json'
 import { useSession } from '../session'
 import { Badge, Btn, ErrBox, Modal, TAGK, TagBadges, splitT, toast, useAsync } from '../ui'
+import { SearchSelect } from '../picker'
 
 const TYPE_EXT = (demo as any).TYPE_EXT as Record<string, string[]>
 const KB_SAMPLES = (demo as any).KB_SAMPLES as Record<string, [string, string | null][]>
@@ -206,8 +207,10 @@ function ChunksTab({ k, doc, setDoc, reload }: { k: any; doc: string; setDoc: (d
   const [view, setView] = useState<any>(null)
   const pages = data ? Math.max(1, Math.ceil(data.total / 100)) : 1
   return <>
-    <div className="row" style={{ marginBottom: 10 }}><select id="kcd" value={doc} onChange={e => { setDoc(e.target.value); setPage(1) }}><option value="">全部文档</option>
-      {k.documents.map((d: any) => <option key={d.doc_id} value={d.doc_id}>{d.name}</option>)}</select><span className="muted">共 {data?.total ?? '…'} 个切片</span></div>
+    <div className="row" style={{ marginBottom: 10 }}><SearchSelect id="kcd" className="wide" value={doc}
+      empty={{ value: '', label: '全部文档' }}
+      options={k.documents.map((d: any) => ({ value: d.doc_id, label: d.name }))}
+      onChange={v => { setDoc(v); setPage(1) }} /><span className="muted">共 {data?.total ?? '…'} 个切片</span></div>
     <table id="chunkTbl"><thead><tr><th>序号</th><th>所属文档</th><th>知识切片</th><th>关联意图</th><th>更新时间</th><th>操作</th></tr></thead><tbody>
       {!data ? <tr><td colSpan={6} className="loading">加载中…</td></tr> : data.items.length ? data.items.map((c: any, i: number) => <tr key={c.chunk_id}>
         <td>{(page - 1) * 100 + i + 1}</td><td className="muted">{c.doc_name}</td>

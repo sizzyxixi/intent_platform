@@ -78,7 +78,7 @@ def build(db: Session, sp: Space, max_depth: int | None = None,
         if t.type == "mcp" and t.server_ref and t.server not in [s["name"] for s in servers]:
             servers.append(mcp_svc.conn_dict(t.server_ref))
     return {
-        "space": {"id": sp.id, "name": sp.name, "bot": sp.bot},
+        "space": {"id": sp.id, "name": sp.name, "description": sp.description or "", "bot": sp.bot or ""},
         "version": sp.version,
         "generated_at": iso(utcnow()),
         "recognition": space_svc.recognition(sp),

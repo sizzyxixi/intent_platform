@@ -44,7 +44,7 @@ def test_list_views(full_key):
     err, b = call(full_key, "list_intents", {"view": "slots", "space": "mc"})
     assert len(b["slots"]) == 24
     err, b = call(full_key, "list_intents", {"view": "recognition", "space": "cs"})
-    assert b["final_action"] == "handoff_human"
+    assert b["fallback"]["mode"] == "llm_free" and b.get("deprecated") is True
     err, b = call(full_key, "list_intents", {"view": "spaces"})
     assert {s["space_id"] for s in b["spaces"]} == {"cs", "mc"}
     err, b = call(full_key, "get_intent", {"code": "B.REL.ESCALATE"})

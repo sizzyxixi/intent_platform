@@ -227,8 +227,9 @@ def call_tool(request: Request, db: Session, ctx: KeyCtx, name: str, args: dict,
     if name == "taxonomy_disable_node":
         _need_idem(args)
         sp = resolve_space(request, db, ctx, args.get("space"))
-        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "space": sp.id, "code": args["code"]},
-                         lambda: ({**tax_svc.node_dict(tax_svc.set_node_enabled(db, sp, args["code"], False, ctx.actor),
+        ref = args.get("id") if args.get("id") not in (None, "") else args.get("code")
+        st, body = _idem(db, ctx, args["idempotency_key"], {"t": name, "space": sp.id, "ref": ref},
+                         lambda: ({**tax_svc.node_dict(tax_svc.set_node_enabled(db, sp, ref, False, ctx.actor),
                                                        tax_svc.Tax(db, sp)), "action": "disabled"}))
         if st >= 400:
             raise ApiError(st, body.get("code", "ERROR"), body.get("message", ""), body.get("details"))

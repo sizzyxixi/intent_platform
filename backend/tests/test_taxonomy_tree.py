@@ -6,6 +6,7 @@ from test_mcp import call
 
 def _assert_node_flags(n, *, children_loaded: bool):
     assert "has_children" in n and "child_count" in n and "id" in n
+    assert "description" in n
     assert n["child_count"] >= 0
     assert n["has_children"] == (n["child_count"] > 0)
     if children_loaded:

@@ -143,17 +143,10 @@ def test_recognition_put(full_key):
     r = full_key.put("/api/v1/recognition", json={"threshold": 0.55, "final_action": "decline",
                                                   "final_message": "抱歉，暂不支持"}, space="mc")
     b = check(r)
-    assert b["threshold"] == 0.55 and b["candidate_min"] == 0.28 and b["version"] == v0 + 1
-    assert b["final_message"] == "抱歉，暂不支持"
-    # 无改动不升版本
-    b = check(full_key.put("/api/v1/recognition", json={"threshold": 0.55}, space="mc"))
-    assert b["version"] == v0 + 1
-    r = full_key.put("/api/v1/recognition", json={"threshold": 1.5}, space="mc")
-    assert r.status_code == 422
-    check(r)
-    r = full_key.put("/api/v1/recognition", json={"final_action": "decline", "final_message": ""}, space="cs")
-    assert r.status_code == 422
-    # cs 未受影响
+    assert b["threshold"] == 0.6 and b["fallback"]["mode"] == "llm_free" and b["version"] == v0
+    assert b.get("deprecated") is True
+    b = check(full_key.put("/api/v1/recognition", json={"threshold": 1.5}, space="mc"))
+    assert b["version"] == v0 and b["fallback"]["mode"] == "llm_free"
     assert full_key.get("/api/v1/recognition", space="cs").json()["threshold"] == 0.6
 
 

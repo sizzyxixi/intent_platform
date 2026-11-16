@@ -38,9 +38,10 @@ def test_default_handling_and_space_fallback(admin, full_key):
     assert greet["handling"]["mode"] == "tool_flow"
 
     cs = check(full_key.get("/api/v1/recognition", space="cs"))
-    assert cs["final_action"] == "handoff_human"
-    assert cs["fallback"]["mode"] == "handoff_human"
-    assert cs["fallback"]["mode_label"] == "转人工"
+    assert cs["final_action"] == "general_assistant"
+    assert cs["fallback"]["mode"] == "llm_free"
+    assert cs["fallback"]["mode_label"] == "让 AI 自由发挥"
+    assert cs.get("deprecated") is True
 
     mc = check(full_key.get("/api/v1/recognition", space="mc"))
     assert mc["final_action"] == "general_assistant"
@@ -48,12 +49,12 @@ def test_default_handling_and_space_fallback(admin, full_key):
     assert mc["fallback"]["mode_label"] == "让 AI 自由发挥"
 
     rc = check(full_key.get("/api/v1/runtime-config", space="cs"))
-    assert rc["recognition"]["fallback"]["mode"] == "handoff_human"
+    assert rc["recognition"]["fallback"]["mode"] == "llm_free"
     assert rc["intents"], "运行时应包含已启用意图"
     assert all(i.get("handling", {}).get("mode") == "tool_flow" for i in rc["intents"])
 
 
-def test_space_fallback_write_compat(full_key):
+def test_space_fallback_write_ignored(full_key):
     v0 = full_key.get("/api/v1/recognition", space="mc").json()["version"]
     b = check(full_key.put("/api/v1/recognition", json={
         "fallback": {
@@ -62,37 +63,13 @@ def test_space_fallback_write_compat(full_key):
             "reply_strictness": "verbatim",
         }
     }, space="mc"))
-    assert b["version"] == v0 + 1
-    assert b["fallback"]["mode"] == "fixed_reply"
-    assert b["fallback"]["replies"] == ["暂不支持这个问题。", "请换个问法试试。"]
-    assert b["fallback"]["reply_strictness"] == "verbatim"
-    assert b["fallback"]["reply_strictness_label"] == "完全固定"
-    assert b["fallback"]["instruction"] == "必须原样输出其中一条话术，不得改写、增删或补充"
-    assert b["final_action"] == "decline"
-    assert b["final_message"] == "暂不支持这个问题。"
-
-    # 兼容旧字段
-    b = check(full_key.put("/api/v1/recognition", json={
-        "final_action": "decline", "final_message": "抱歉，暂不支持"
-    }, space="mc"))
-    assert b["fallback"]["mode"] == "fixed_reply"
-    assert b["fallback"]["replies"] == ["抱歉，暂不支持"]
-    assert b["fallback"]["reply_strictness"] == "paraphrase"
-    assert b["fallback"]["instruction"] == "按话术意思表达，可改写措辞但不得改变原意"
-    assert b["final_message"] == "抱歉，暂不支持"
-
-    r = full_key.put("/api/v1/recognition", json={
-        "fallback": {"mode": "fixed_reply", "replies": []}
-    }, space="mc")
-    assert r.status_code == 422
-
-    r = full_key.put("/api/v1/recognition", json={
-        "fallback": {"mode": "fixed_reply", "replies": ["你好"], "reply_strictness": "loose"}
-    }, space="mc")
-    assert r.status_code == 422
-
+    assert b["version"] == v0
+    assert b["fallback"]["mode"] == "llm_free"
+    assert b.get("deprecated") is True
+    assert "自行回答" in (b.get("note") or "")
+    # 非法内容也被忽略，不再 422
     r = full_key.put("/api/v1/recognition", json={"fallback": {"mode": "tool_flow"}}, space="mc")
-    assert r.status_code == 422
+    assert r.status_code == 200 and check(r)["fallback"]["mode"] == "llm_free"
 
 
 def test_intent_handling_modes_and_bindings(admin, full_key):

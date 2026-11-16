@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api, errLines, fmt, qs } from '../api'
 import { useSession } from '../session'
 import { Badge, Btn, ErrBox, Modal, Pager, toast, useAsync } from '../ui'
+import { SearchSelect } from '../picker'
 
 const ROLES: [string, string][] = [['admin', '管理员'], ['editor', '编辑'], ['viewer', '只读']]
 const ENT: [string, string][] = [['', '全部对象'], ['intent', '意图'], ['slot', '槽位'], ['space', '空间'], ['kb', '知识库'], ['document', '文档'], ['chunk', '切片'], ['tool', '工具'], ['api_key', 'API Key'], ['user', '用户'], ['import', '导入']]
@@ -66,7 +67,10 @@ function Audit() {
   return <div className="card">
     <div className="row" style={{ marginBottom: 10 }}>
       <select id="auE" value={f.entity_type} onChange={e => { setF({ ...f, entity_type: e.target.value }); setPage(1) }}>{ENT.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-      <select id="auS" value={f.space_id} onChange={e => { setF({ ...f, space_id: e.target.value }); setPage(1) }}><option value="">全部空间</option>{spaces.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
+      <SearchSelect id="auS" className="compact" value={f.space_id}
+        empty={{ value: '', label: '全部空间' }}
+        options={spaces.map(s => ({ value: s.id, label: s.name }))}
+        onChange={v => { setF({ ...f, space_id: v }); setPage(1) }} />
       <input type="text" id="auQ" value={qIn} onChange={e => setQIn(e.target.value)} onKeyDown={e => e.key === 'Enter' && (setF({ ...f, q: qIn.trim() }), setPage(1))} placeholder="搜索摘要 / 对象 / 操作人" style={{ width: 240 }} />
       <Btn onClick={() => { setF({ ...f, q: qIn.trim() }); setPage(1) }}>筛选</Btn></div>
     <table id="auditTbl"><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>对象</th><th>空间</th><th>摘要</th></tr></thead><tbody>

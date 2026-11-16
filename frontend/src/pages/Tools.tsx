@@ -5,6 +5,7 @@ import { useSession } from '../session'
 import { Badge, Btn, ErrBox, Modal, Pager, toast, useAsync } from '../ui'
 import { credText, serverEnd, syncText } from './McpServers'
 import ToolEdit, { KINDS, TypeTag, WF_PLAT, pTypeLabel } from './ToolEdit'
+import { SearchSelect } from '../picker'
 
 const API_ROWS = (demo as any).API_ROWS as string[][]
 const MCP_ROWS = (demo as any).MCP_ROWS as string[][]
@@ -138,8 +139,10 @@ function ToolList() {
       {fb('toolSF', '按来源：', [['', '全部', facets.total], ['external', '外部', srcN('external')], ['builtin', '平台内置', srcN('builtin')]], sf, setSf)}
       {fb('toolTF', '按类型：', [['', '全部', facets.total], ...KINDS.map(([k, l]) => [k, l, cnt(k)] as [string, string, number])], tf, setTf)}
       <div className="row" style={{ marginTop: 8 }}>
-        {(!tf || tf === 'cli') && packs.length > 0 && <select id="toolPack" value={pk} onChange={e => setFilter(() => { setPk(e.target.value); setGrp('') })}><option value="">全部 CLI 命令包</option>
-          {packs.map(([k, l, n]) => <option key={k} value={k}>{l}（{n}）</option>)}</select>}
+        {(!tf || tf === 'cli') && packs.length > 0 && <SearchSelect id="toolPack" className="compact" value={pk}
+          empty={{ value: '', label: '全部 CLI 命令包' }}
+          options={packs.map(([k, l, n]) => ({ value: k, label: `${l}（${n}）` }))}
+          onChange={v => setFilter(() => { setPk(v); setGrp('') })} />}
         {(() => {
           const raw: any[] = facets.groups || []
           const filtered = raw.filter((x: any) => !pk || (x.packs || []).includes(pk) || x.pack === pk)
@@ -153,8 +156,10 @@ function ToolList() {
           })
           const groups = [...byG.entries()].map(([g, c]) => [g, g, c.count] as [string, string, number])
           if (!groups.length) return null
-          return <select id="toolGroup" value={grp} onChange={e => setFilter(() => setGrp(e.target.value))}><option value="">全部业务分组</option>
-            {groups.map(([k, l, n]) => <option key={k} value={k}>{l}（{n}）</option>)}</select>
+          return <SearchSelect id="toolGroup" className="compact" value={grp}
+            empty={{ value: '', label: '全部业务分组' }}
+            options={groups.map(([k, l, n]) => ({ value: k, label: `${l}（${n}）` }))}
+            onChange={v => setFilter(() => setGrp(v))} />
         })()}
         <select id="toolSt" value={st} onChange={e => setFilter(() => setSt(e.target.value))}><option value="">全部状态</option><option value="启用">启用</option><option value="停用">停用</option></select>
         <input type="text" id="toolQ" value={qIn} onChange={e => setQIn(e.target.value)} placeholder="搜索工具名 / 描述 / 命令" style={{ width: 240 }} />
@@ -277,7 +282,8 @@ function Access() {
   const en = sp.enabled_count
   return <>
     <p className="desc" id="accDesc">平台内置工具的调用方式：供运营的 AI 工具、维护用 AI 以及各 Bot / 智能体读写本平台。意图、槽位、分类、运行时配置按业务空间处理，请求头带 <span className="mono">X-Space-Id</span>（或 query 参数 <span className="mono">space</span>），必须是 Key 绑定的空间之一；知识库与工具接口不需要 X-Space-Id。</p>
-    <div className="card"><div className="row"><span className="muted">下方示例与运行时配置使用的空间：</span><select id="acSp" value={sid} onChange={e => setSid(e.target.value)}>{spaces.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select><span className="muted">对应 {sp.bot}</span></div></div>
+    <div className="card"><div className="row"><span className="muted">下方示例与运行时配置使用的空间：</span>
+      <SearchSelect id="acSp" className="compact" value={sid} options={spaces.map(x => ({ value: x.id, label: x.name }))} onChange={setSid} /></div></div>
     <div className="card"><h3>API Key<span className="sp" />{isAdmin && <Btn p id="keyNew" onClick={() => setNewKey(true)}>＋ 新建 Key</Btn>}</h3>
       {!isAdmin ? <div className="muted">API Key 由管理员管理。</div> : <table id="keyTbl"><thead><tr><th>名称</th><th>Key</th><th>绑定空间（意图 / 槽位）</th><th>归属</th><th>权限</th><th>创建</th><th>最近调用</th><th>状态</th><th>操作</th></tr></thead><tbody>
         {keys?.length ? keys.map((k: any) => <tr key={k.id}><td>{k.name}</td><td className="mono">{k.key_hint}</td><td>{k.spaces.map((x: string) => <span key={x} className="tg">{spName(x)}</span>)}</td><td>{k.owner}</td>
@@ -291,7 +297,7 @@ function Access() {
       <div className="grid g2" style={{ marginTop: 10 }}><div><b>示例：AI 工具写回意图</b><pre className="code">{`POST /api/v1/intents:batchUpsert\nX-Space-Id: ${sid}\nIdempotency-Key: 7f3a-20261110-0001\n` + JSON.stringify({ mode: 'merge', intents: [eg] }, null, 2)}</pre></div>
         <div><b>返回</b><pre className="code">{JSON.stringify({ space: sid, created: 1, updated: 0, skipped: 0, items: [{ code: eg.code, result: 'created', status: '草稿' }], new_slots: [], conflicts: [], import_id: 'IMP-1004' }, null, 2)}</pre></div></div></div>
     <div className="card"><h3>导出运行时配置<span className="sp" /><Btn p id="rtDl" onClick={rtDl}>下载当前配置 JSON</Btn></h3>
-      <div className="muted" style={{ marginBottom: 6 }}>供「{sp.bot}」拉取本空间已启用意图的完整配置（含空间设置 recognition、本空间槽位定义、知识用途、校验集全文、工具类型）。</div>
+      <div className="muted" style={{ marginBottom: 6 }}>供使用方智能体拉取本空间已启用意图的完整配置（含分类树、本空间槽位定义、知识用途、校验集全文、工具类型）。</div>
       <pre className="code">{`GET /api/v1/runtime-config?since_version=${sp.version - 1}\nX-Space-Id: ${sid}\nAuthorization: Bearer ipk_xxx\n\n→ 200 { "space": "${sid}", "version": ${sp.version}, "slots": [...], "intents": [...], "validation_sets": [...], "tools": [...] }\n→ 304 since_version 与当前 version 相同，无变化`}</pre>
       <div className="muted">当前空间 version：<b className="mono" id="rtVer">{sp.version}</b> · 已启用意图 {en} 个</div>
       <div className="note w" style={{ margin: '8px 0 0' }}>本空间的意图启用、停用或编辑后，version 会递增（各空间版本独立）；Bot 发现版本变化后应重新拉取，并清空意图识别缓存。</div></div>

@@ -3,6 +3,7 @@ import { api, download, errLines } from '../api'
 import demo from '../demoContent.json'
 import { useSession } from '../session'
 import { Badge, Btn, ErrBox, Modal, toast } from '../ui'
+import { SearchSelect } from '../picker'
 
 const TC: Record<string, string> = { 新增: 'g', 更新: 'b', 覆盖: 'y', 重复: 'n', 冲突: 'r' }
 type Sample = { file: string; src: string; text: string }
@@ -58,7 +59,9 @@ export default function ImportModal({ onClose, onDone }: { onClose: () => void; 
         {pv.rows.map((r: any) => { const x = r.data; const c = ch[r.index] || {}; return <tr key={r.index}>
           <td><Badge c={TC[r.type]}>{r.type}</Badge></td><td className="mono">{x.code}</td><td>{x.name}</td>
           <td>{r.path_invalid && r.type !== '冲突' && r.type !== '重复' && r.path_options.length
-            ? <select id={'imCat' + r.index} value={c.category_id || r.path_options[0].id} onChange={e => setCh({ ...ch, [r.index]: { ...c, action: c.action || r.action, category_id: Number(e.target.value) } })}>{r.path_options.map((o: any) => <option key={o.id} value={o.id}>{o.label}</option>)}</select>
+            ? <SearchSelect id={'imCat' + r.index} value={String(c.category_id || r.path_options[0].id)}
+                options={r.path_options.map((o: any) => ({ value: String(o.id), label: o.label }))}
+                onChange={v => setCh({ ...ch, [r.index]: { ...c, action: c.action || r.action, category_id: Number(v) } })} />
             : (x.category_path || []).join(' / ')}</td>
           <td className="muted">{x.description}</td><td>{x.examples.length}</td>
           <td>{r.issues.length > 0 && <span style={{ color: '#b91c1c' }}>{r.issues.join('；')}</span>}
@@ -67,7 +70,7 @@ export default function ImportModal({ onClose, onDone }: { onClose: () => void; 
             {x.ignored_fields?.length > 0 && <div className="muted">已忽略字段：{x.ignored_fields.join('、')}</div>}</td>
           <td><select id={'imA' + r.index} value={c.action || r.action} onChange={e => setCh({ ...ch, [r.index]: { ...c, action: e.target.value } })}>{r.actions.map((o: string) => <option key={o}>{o}</option>)}</select></td></tr> })}
       </tbody></table>
-      <div className="muted" style={{ marginTop: 6 }}>合并：补充新例句/槽位，非空字段不覆盖；覆盖：用文件内容替换名称、意图描述、例句、槽位（已关联的知识与工具保留）。文件里的兜底/转人工条件一律忽略，改在「空间设置」统一配置。</div>
+      <div className="muted" style={{ marginTop: 6 }}>合并：补充新例句/槽位，非空字段不覆盖；覆盖：用文件内容替换名称、意图描述、例句、槽位（已关联的知识与工具保留）。文件里的兜底/转人工条件一律忽略。未命中任何意图时，由使用方智能体自行回答。</div>
       <ErrBox lines={err} />
       <div style={{ textAlign: 'right', marginTop: 10 }}><Btn onClick={back}>取消</Btn> <Btn p id="imConfirm" disabled={busy} onClick={confirm}>确认入库</Btn></div>
     </>}

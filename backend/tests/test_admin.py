@@ -69,7 +69,7 @@ def test_create_edit_enable(admin):
     r = admin.post("/api/admin/spaces/cs/intents", json={"code": "B.STOCK.PREORDER", "name": "预售/订货",
                                                          "category_path": ["STOCK", "现货"]})
     assert r.status_code == 201 and r.json()["status"] == "草稿"
-    assert r.json()["category_path"] == [{"code": "STOCK", "name": "库存与货期"}, {"code": None, "name": "现货"}]
+    assert r.json()["category_path"] == [{"code": "STOCK", "name": "库存与货期", "description": ""}, {"code": None, "name": "现货", "description": ""}]
     r = admin.post("/api/admin/spaces/cs/intents", json={"code": "M.STOCK.X", "name": "x", "l1": "STOCK", "l2": "现货"})
     assert r.status_code == 422
     r = admin.post("/api/admin/spaces/cs/intents", json={"code": "B.STOCK.PREORDER", "name": "y", "l1": "STOCK", "l2": "现货"})
@@ -204,10 +204,14 @@ def test_new_space(admin):
 
 
 def test_recognition_admin(admin):
+    v0 = admin.get("/api/admin/spaces/mc/recognition").json()["version"]
     r = admin.put("/api/admin/spaces/mc/recognition", json={"threshold": 0.7, "max_clarify": 3})
-    assert r.status_code == 200 and r.json()["version"] == 8 and r.json()["changed"]
+    assert r.status_code == 200
+    b = r.json()
+    assert b["changed"] is False and b["version"] == v0
+    assert b["fallback"]["mode"] == "llm_free" and b.get("deprecated") is True
     r = admin.put("/api/admin/spaces/mc/recognition", json={"threshold": 0.72})
-    assert r.status_code == 422
+    assert r.status_code == 200 and r.json()["fallback"]["mode"] == "llm_free"
 
 
 def test_kb_admin(admin):
@@ -328,9 +332,10 @@ def test_revoked_key_can_be_hard_deleted(admin, client):
 
 
 def test_audit(admin):
-    admin.put("/api/admin/spaces/cs/recognition", json={"max_clarify": 3})
+    r = admin.patch("/api/admin/spaces/cs", json={"description": "审计探针描述，测完回滚"})
+    assert r.status_code == 200
     a = admin.get("/api/admin/audit?entity_type=space").json()
-    assert a["items"][0]["action"] == "recognition.update" and a["items"][0]["actor"] == "管理员"
+    assert a["items"][0]["action"] == "space.update" and a["items"][0]["actor"] == "管理员"
 
 
 def test_docs_and_meta(admin):

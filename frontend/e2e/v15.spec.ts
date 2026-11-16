@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import path from 'path'
-import { login, pickTool, watchErrors } from './helpers'
+import { pickSelect, login, pickTool, watchErrors } from './helpers'
 
 // v0.15：分类入口、统一的注册工具（MCP 凭据 / 技能包 / 工作流）、意图里两级选择工具
 const MCP = `http://127.0.0.1:${process.env.E2E_MCP_PORT || 8766}`
@@ -147,7 +147,7 @@ test('v15：技能（文件夹上传 SKILL.md）与工作流（Dify / Coze）', 
 test('v15：意图编辑 · 两级选择工具（类型 → 工具）+ 技能 / 工作流卡片', async ({ page }) => {
   const errs = watchErrors(page)
   await login(page)
-  await page.selectOption('#spSel', 'mc')
+  await pickSelect(page, 'spSel', 'mc')
   await page.fill('#fQ', 'M.DESIGN.MAIN'); await page.click('#fApply')
   await page.locator('#intentTbl tbody tr').first().locator('button', { hasText: '编辑' }).click()
   const ed = page.getByTestId('intentEditor')

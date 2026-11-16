@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, qs } from '../api'
 import { Btn, Modal, TAGK, TagBadges, useAsync } from '../ui'
+import { SearchSelect } from '../picker'
 
 type Ref = { kb_id: string; doc_id: string; chunk_id: string; usage: string; label?: string; valid?: boolean }
 const key = (r: { kb_id: string; doc_id: string; chunk_id: string }) => `${r.kb_id}|${r.doc_id}|${r.chunk_id}`
@@ -28,10 +29,13 @@ export default function KbPicker({ code, selected, onClose, onOk }: { code: stri
   const ok = () => onOk(Object.values(sel))
   return <Modal wide testId="kbPicker" title={`关联知识 · ${code}`} onClose={onClose} foot={<><Btn onClick={onClose}>取消</Btn> <Btn p id="pkOk" onClick={ok}>确定</Btn></>}>
     <div className="row" style={{ marginBottom: 8 }}>
-      <select id="pkKb" value={kbId} onChange={e => { setKbId(e.target.value); setDoc(''); setQ(''); setQIn(''); setTag({}) }}>
-        {kbs.map((k: any) => <option key={k.kb_id} value={k.kb_id}>{k.name}（{k.type}）</option>)}</select>
-      <select id="pkDoc" value={doc} onChange={e => setDoc(e.target.value)}><option value="">全部文档（{detail?.documents.length ?? 0}）</option>
-        {(detail?.documents || []).map((d: any) => <option key={d.doc_id} value={d.doc_id}>{d.name}</option>)}</select>
+      <SearchSelect id="pkKb" className="wide" value={kbId}
+        options={kbs.map((k: any) => ({ value: k.kb_id, label: `${k.name}（${k.type}）` }))}
+        onChange={v => { setKbId(v); setDoc(''); setQ(''); setQIn(''); setTag({}) }} />
+      <SearchSelect id="pkDoc" className="wide" value={doc}
+        empty={{ value: '', label: `全部文档（${detail?.documents.length ?? 0}）` }}
+        options={(detail?.documents || []).map((d: any) => ({ value: d.doc_id, label: d.name }))}
+        onChange={setDoc} />
       <input type="text" id="pkQ" value={qIn} onChange={e => setQIn(e.target.value)} placeholder="搜索切片内容" onKeyDown={e => e.key === 'Enter' && setQ(qIn.trim())} />
       <Btn s onClick={() => setQ(qIn.trim())}>搜索</Btn><span className="sp" /><span className="muted">已选 {Object.keys(sel).length} 项</span>
     </div>

@@ -4,7 +4,8 @@ import { useSession } from '../session'
 import { Badge, Btn, Drawer, ErrBox, ST_C, toast, useAsync } from '../ui'
 import KbPicker from './KbPicker'
 import { SlotForm } from './Slots'
-import { Tax, leaves } from '../taxonomy'
+import { Tax, leaves, toCascade } from '../taxonomy'
+import { Cascader, SearchSelect } from '../picker'
 import { McpPicker } from './McpServers'
 import { TypeTag, isFileParam, pTypeLabel } from './ToolEdit'
 
@@ -176,13 +177,14 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
       <div ref={body}>
         <ErrBox lines={errs} title={errs?.length ? `校验未通过（${errs.length} 项）：` : undefined} />
         <div className="sec"><h4 style={{ margin: '0 0 8px' }}>① 基本信息</h4>
-          <div className="lvpath" id="eLv">归属：{(cur?.names || []).map((nm, i) => <span key={i}><span className="lv">{lvNames[i]}</span>{nm} <span className="muted">/</span> </span>)}<span className="lv">{lvNames[lvNames.length - 1]}</span><b>{E.name || '（未命名）'}</b></div>
+          <div className="lvpath" id="eLv">归属：{(cur?.names || []).map((nm, i) => <span key={i}><span className="lv">{lvNames[i]}</span>{nm}{cur?.descs?.[i] ? <span className="muted" title={cur.descs[i]}> {cur.descs[i]}</span> : null} <span className="muted">/</span> </span>)}<span className="lv">{lvNames[lvNames.length - 1]}</span><b>{E.name || '（未命名）'}</b></div>
           <div className="grid g2"><div className="f"><label>{lvNames[lvNames.length - 1]}名称 *</label><input type="text" id="eN" value={E.name} disabled={ro} onChange={e => set('name', e.target.value)} /></div>
             <div className="f"><label>编码 *</label><input type="text" id="eC" value={d.code} disabled /></div></div>
           {tax.category_levels > 0 && <div className="f"><label>所属分类（{lvNames.slice(0, -1).join(' / ')}）{curRoot?.code ? <span className="muted">　编码依赖第一层编码 {curRoot.code}，只能在「{curRoot.name}」内移动</span> : null}</label>
-            <select id="eCat" value={E.category_id ?? ''} disabled={ro} onChange={e => set('category_id', Number(e.target.value))}>
-              {E.category_id == null && <option value="">— 请选择 —</option>}
-              {opts.filter(o => !curRoot?.code || o.root.id === curRoot.id).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></div>}
+            <Cascader id="eCat" value={E.category_id != null ? String(E.category_id) : ''} disabled={ro}
+              placeholder="请选择所属分类"
+              tree={toCascade(curRoot?.code ? tax.tree.filter(r => r.id === curRoot.id) : tax.tree)}
+              onChange={v => set('category_id', v ? Number(v) : null)} /></div>}
           <div className="f"><label>意图描述 *</label><textarea id="eD" style={{ minHeight: 56 }} value={E.description} disabled={ro} onChange={e => set('description', e.target.value)} />
             <div className="muted" style={{ marginTop: 3 }}>这段描述会被大模型分类和语义匹配使用。请写清：用户想做什么；什么情况算这个意图；什么情况不算（容易和哪个意图混淆）。<br />示例：用户想为商品生成符合平台规范的主图；"做主图""首图"算；只要换白底不算（→ 白底图）。</div></div>
           <div className="f"><label>例句 *（每行一条，至少 3 条，当前 {exCount} 条）</label><textarea id="eEx" style={{ minHeight: 90 }} value={E.ex} disabled={ro} onChange={e => set('ex', e.target.value)} /></div>
@@ -280,9 +282,10 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
               <select id="eToolType" value={pickTy} onChange={e => { setPickTy(e.target.value); sessionStorage.setItem('pickToolType', e.target.value); setToolSel(''); setCliGrp('') }}>
                 <option value="">— 选择类型 —</option>
                 {PICK_TYPES.filter(([k2]) => typeCounts[k2]).map(([k2, l]) => <option key={k2} value={k2}>{l}（{typeCounts[k2]}）</option>)}</select>
-              {cliGroups.length > 0 && <select id="eCliGrp" value={grp} onChange={e => { setCliGrp(e.target.value); setToolSel('') }}>
-                <option value="">全部命令包（{facets.by_type?.cli || 0}）</option>
-                {cliGroups.map(([g, l, n]) => <option key={g} value={g}>{g.includes('|') ? '　' : ''}{l}（{n}）</option>)}</select>}
+              {cliGroups.length > 0 && <SearchSelect id="eCliGrp" className="compact" value={grp}
+                empty={{ value: '', label: `全部命令包（${facets.by_type?.cli || 0}）` }}
+                options={cliGroups.map(([g, l, n]) => ({ value: g, label: `${l}（${n}）` }))}
+                onChange={v => { setCliGrp(v); setToolSel('') }} />}
               <ToolCombobox key={pickTy + '|' + cliGrp} typ={pickTy} pack={packOf} group={groupOf}
                 bound={bound} value={toolSel} mcpItems={mcpAvail} disabled={!pickTy}
                 onChange={(name, tool) => { setToolSel(name); if (tool) setExtraTools(xs => xs.some(x => x.name === tool.name) ? xs : [...xs, tool]) }} />

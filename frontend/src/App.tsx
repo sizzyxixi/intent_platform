@@ -6,6 +6,7 @@ import IntentsPage from './pages/Intents'
 import KbPage from './pages/Kb'
 import ToolsPage from './pages/Tools'
 import SystemPage from './pages/System'
+import { SearchSelect } from './picker'
 
 function useHash() {
   const [h, setH] = useState(window.location.hash || '#/intents')
@@ -38,7 +39,7 @@ function Login({ onOk }: { onOk: (u: User) => void }) {
 }
 
 function NewSpace({ onClose, onDone }: { onClose: () => void; onDone: (id: string) => void }) {
-  const [f, setF] = useState({ id: '', name: '', description: '', bot: '', code_prefix: '' })
+  const [f, setF] = useState({ id: '', name: '', description: '', code_prefix: '' })
   const [err, setErr] = useState<string[]>()
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value })
   const ok = async () => {
@@ -50,9 +51,8 @@ function NewSpace({ onClose, onDone }: { onClose: () => void; onDone: (id: strin
       <div className="f"><label>意图编码前缀 *（1～4 位大写字母）</label><input type="text" id="spPx" value={f.code_prefix} onChange={e => setF({ ...f, code_prefix: e.target.value.toUpperCase() })} placeholder="如 P" /></div>
     </div>
     <div className="f"><label>名称 *</label><input type="text" id="spN" value={f.name} onChange={set('name')} placeholder="如：包装设计助手" /></div>
-    <div className="f"><label>描述</label><input type="text" id="spD" value={f.description} onChange={set('description')} /></div>
-    <div className="f"><label>对应 Bot / 智能体 *</label><input type="text" id="spB" value={f.bot} onChange={set('bot')} placeholder="如：Moonclaw 包装智能体" /></div>
-    <div className="muted">新空间的意图、意图分类、槽位、导入记录、运行时配置和版本都独立；知识库和工具全平台通用，可直接关联。新空间默认带一个「通用 / 默认」分类。</div>
+    <div className="f"><label>描述</label><textarea id="spD" rows={3} maxLength={2000} value={f.description} onChange={set('description')} placeholder="说明这个空间是做什么的" /></div>
+    <div className="muted">新空间的意图、意图分类、槽位、导入记录、运行时配置和版本都独立；知识库和工具全平台通用，可直接关联。新空间默认带一个「通用 / 默认」分类。未命中任何意图时，由使用方智能体自行回答。</div>
     <ErrBox lines={err} />
   </Modal>
 }
@@ -100,11 +100,17 @@ export default function App() {
       <div className="main">
         <div className="top">
           <div className="crumb" id="crumb">意图管理平台 / <b>{crumb}</b></div>
-          {page === 'intents' && <div id="spaceSw"><span className="muted">业务空间</span>
-            <select id="spSel" value={space.id} onChange={e => { setSpace(e.target.value); toast('已切换到「' + spaces.find(s => s.id === e.target.value)!.name + '」') }}>
-              {spaces.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-            {sess.isAdmin && <Btn onClick={() => setNewSp(true)} id="spNew">＋ 新建空间</Btn>}</div>}
+          {page === 'intents' && <div id="spaceSw" style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <div>
+              <div><span className="muted">业务空间</span>
+                <SearchSelect id="spSel" value={space.id}
+                  options={spaces.map(s => ({ value: s.id, label: s.name }))}
+                  onChange={v => { setSpace(v); toast('已切换到「' + spaces.find(s => s.id === v)!.name + '」') }} />
+                {sess.isAdmin && <Btn onClick={() => setNewSp(true)} id="spNew">＋ 新建空间</Btn>}
+              </div>
+              {space.description ? <div className="sp-desc" title={space.description}>{space.description}</div> : null}
+            </div>
+          </div>}
           {page === 'kb' && <span className="muted">知识库全平台通用，不区分业务空间</span>}
         </div>
         <div className="content" id="content">

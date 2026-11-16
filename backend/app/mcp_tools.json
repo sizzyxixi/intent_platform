@@ -1,7 +1,7 @@
 [
   {
     "name": "list_intents",
-    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories）；可用 max_depth（从起点算起返回几层，不传为整棵树）和 parent（节点 id 或 code，从其子节点开始）按层下钻，每个节点含 has_children、child_count。view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。 意图列表每条含 handling；fixed_reply 时含 replies、reply_strictness 与只读 instruction。",
+    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories）；可用 max_depth（从起点算起返回几层，不传为整棵树）和 parent（节点 id 或 code，从其子节点开始）按层下钻，每个节点含 id、description、has_children、child_count。请阅读各层 description，按层判断该往哪一支走。view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。 意图列表每条含 handling；fixed_reply 时含 replies、reply_strictness 与只读 instruction。",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -573,11 +573,10 @@
   },
   {
     "name": "taxonomy_upsert_node",
-    "description": "按编码创建或更新当前空间的分类节点。code 为稳定编码；parent_code 为空表示第一层；depth/level 须符合该空间的分类层数。dry_run=true 只校验。非 dry_run 须提供 idempotency_key。需要「意图:写」。",
+    "description": "按 id 或编码创建或更新当前空间的分类节点。无编码节点请传 id。code 为稳定编码（可选）；parent_code 为空表示第一层；可写 description（最多 500 字）。dry_run=true 只校验。非 dry_run 须提供 idempotency_key。需要「意图:写」。",
     "inputSchema": {
       "type": "object",
       "required": [
-        "code",
         "name"
       ],
       "properties": {
@@ -607,7 +606,8 @@
           "type": "integer"
         },
         "description": {
-          "type": "string"
+          "type": "string",
+          "description": "节点说明，最多 500 字。供智能体按层路由时阅读。"
         },
         "dry_run": {
           "type": "boolean"
@@ -615,17 +615,20 @@
         "idempotency_key": {
           "type": "string",
           "maxLength": 64
+        },
+        "id": {
+          "type": "integer",
+          "description": "已有节点的 id；无编码节点必须用 id 更新"
         }
       }
     }
   },
   {
     "name": "taxonomy_disable_node",
-    "description": "停用分类节点（不能删除）。若该节点或其子分类下有已启用意图则拒绝。须提供 idempotency_key。需要「意图:写」。",
+    "description": "停用分类节点（不能删除）。code 或 id 二选一；无编码节点请传 id。若该节点或其子分类下有已启用意图则拒绝。须提供 idempotency_key。需要「意图:写」。",
     "inputSchema": {
       "type": "object",
       "required": [
-        "code",
         "idempotency_key"
       ],
       "properties": {
@@ -638,6 +641,10 @@
         "idempotency_key": {
           "type": "string",
           "maxLength": 64
+        },
+        "id": {
+          "type": "integer",
+          "description": "节点 id，与 code 二选一"
         }
       }
     }

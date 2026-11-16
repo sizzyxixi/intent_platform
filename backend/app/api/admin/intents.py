@@ -43,6 +43,15 @@ async def create_space(request: Request, actor=Depends(ADMIN), db: Session = Dep
     return _space_full(db, sp)
 
 
+@router.patch("/spaces/{sid}")
+async def patch_space(sid: str, request: Request, actor=Depends(EDIT), db: Session = Depends(get_db)):
+    """更新空间名称与描述。bot 字段忽略。"""
+    sp = get_space_or_404(db, sid)
+    space_svc.update_space(db, sp, await json_body(request), actor)
+    db.commit()
+    return _space_full(db, sp)
+
+
 @router.get("/spaces/{sid}/taxonomy")
 def get_taxonomy(sid: str, actor=Depends(VIEW), db: Session = Depends(get_db)):
     return tax_svc.admin_taxonomy(db, get_space_or_404(db, sid))

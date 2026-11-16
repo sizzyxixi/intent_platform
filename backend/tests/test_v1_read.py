@@ -136,7 +136,8 @@ def test_tools(bot):
 
 def test_recognition_get(full_key):
     cs = check(full_key.get("/api/v1/recognition", space="cs"))
-    assert cs["final_action"] == "handoff_human" and cs["version"] == 42 and cs["candidate_min"] == 0.3
+    assert cs["final_action"] == "general_assistant" and cs["fallback"]["mode"] == "llm_free"
+    assert cs["version"] == 42 and cs["candidate_min"] == 0.3 and cs.get("deprecated") is True
     mc = check(full_key.get("/api/v1/recognition", space="mc"))
     assert mc["final_action"] == "general_assistant" and mc["version"] == 7
 
@@ -148,7 +149,7 @@ def test_runtime_config(bot):
     assert all(i["code"].startswith("B.") for i in b["intents"])
     used = {t["tool"] for i in b["intents"] for t in i["tools"]}
     assert {t["name"] for t in b["tools"]} == used
-    assert b["recognition"]["final_action"] == "handoff_human"
+    assert b["recognition"]["fallback"]["mode"] == "llm_free" and "description" in b["space"]
     r = bot.get("/api/v1/runtime-config?since_version=42")
     assert r.status_code == 304
     r = bot.get("/api/v1/runtime-config?since_version=41")

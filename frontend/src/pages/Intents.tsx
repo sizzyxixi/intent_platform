@@ -5,7 +5,9 @@ import { Badge, Btn, ErrBox, Modal, Pager, ST_C, toast, useAsync } from '../ui'
 import IntentEditor from './IntentEditor'
 import ImportModal from './ImportModal'
 import { SlotForm } from './Slots'
-import { CatNode, Tax, leaves } from '../taxonomy'
+import { Tax, leaves, toCascade } from '../taxonomy'
+import { Cascader } from '../picker'
+import TaxonomyEditor from './TaxonomyEditor'
 
 const TABS: [string, string][] = [['list', '意图列表'], ['slots', '槽位'], ['cfg', '空间设置'], ['log', '导入记录']]
 
@@ -22,7 +24,7 @@ export default function IntentsPage({ tab }: { tab: string }) {
     </div>
     {tab === 'list' && <IntentList onEdit={setEditing} ver={ver} />}
     {tab === 'slots' && <SlotsTab onEdit={setEditing} ver={ver} />}
-    {tab === 'cfg' && <RecognitionTab />}
+    {tab === 'cfg' && <SpaceSettings />}
     {tab === 'log' && <ImportLog />}
     {editing && <IntentEditor code={editing} onClose={() => setEditing(null)} onSaved={bump} />}
   </>
@@ -61,7 +63,7 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
   return <div className="split">
     <div className="tree" id="l1Tree">
       <div className={'tn l1' + (!f.category ? ' on' : '')} onClick={() => { setF({ ...f, category: '' }); setPage(1) }}><span>全部</span><span className="muted">{data?.all_count ?? ''}</span></div>
-      {tax?.tree.map(a => <div key={a.id} className={'tn l1' + (f.category === String(a.id) ? ' on' : '')} onClick={() => { setF({ ...f, category: String(a.id) }); setPage(1) }}>
+      {tax?.tree.map(a => <div key={a.id} className={'tn l1' + (f.category === String(a.id) ? ' on' : '')} title={a.description || undefined} onClick={() => { setF({ ...f, category: String(a.id) }); setPage(1) }}>
         <span>{a.name}</span><span className="muted">{a.count}</span></div>)}
     </div>
     <div>
@@ -77,7 +79,7 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
       </div></div>
       <div className="card tblwrap" style={{ padding: 0 }}><table id="intentTbl" className="fixed" style={{ minWidth: 760 }}><colgroup><col style={{ width: 150 }} />{catCols.map(n => <col key={n} style={{ width: 76 }} />)}<col /><col style={{ width: 44 }} /><col style={{ width: 44 }} /><col style={{ width: 200 }} /><col style={{ width: 60 }} /><col style={{ width: 104 }} /></colgroup><thead><tr><th>编码</th>{catCols.map(n => <th key={n}>{n}</th>)}<th>{leafName}</th><th>例句</th><th>知识</th><th>工具</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>{!data ? <tr><td colSpan={8 + catCols.length} className="loading">加载中…</td></tr> : data.items.length ? data.items.map((c: any) => <tr key={c.code}>
-          <td className="mono">{c.code}</td>{catCols.map((n, i) => <td key={n} className="muted">{c.category_path[i]?.name || '—'}</td>)}
+          <td className="mono">{c.code}</td>{catCols.map((n, i) => <td key={n} className="muted" title={c.category_path[i]?.description || undefined}>{c.category_path[i]?.name || '—'}</td>)}
           <td><a onClick={() => onEdit(c.code)}>{c.name}</a>{c.handling && c.handling.mode && c.handling.mode !== 'tool_flow' ? <div className="muted">{c.handling.mode_label || c.handling.mode}</div> : null}<div className="muted clamp2" title={c.description}>{c.description || ''}</div></td>
           <td>{c.example_count}</td><td>{c.kb_count || <span className="muted">0</span>}</td>
           <td>{c.tools.length ? <div className="mono clamp3" style={{ fontSize: 11 }} title={c.tools.join('\n')}>{c.tools.map((t: string) => <div key={t}>{t}</div>)}</div> : <span className="muted">0</span>}</td>
@@ -109,7 +111,8 @@ function NewIntent({ tax, root, onClose, onDone }: { tax: Tax; root: string; onC
   }
   return <Modal title="新建意图" onClose={onClose} foot={<><Btn onClick={onClose}>取消</Btn><Btn p id="newIntentDo" onClick={ok}>创建草稿并编辑</Btn></>}>
     <div className="muted" style={{ marginBottom: 8 }}>空间：{space.name}{tax.category_levels === 0 && <a id="niTax" onClick={goTax} style={{ marginLeft: 8 }}>管理分类</a>}</div>
-    {tax.category_levels > 0 && <div className="f"><label>所属分类（{tax.levels.slice(0, -1).join(' / ')}）<a id="niTax" onClick={goTax} style={{ fontWeight: 'normal', marginLeft: 8 }}>管理分类</a></label><select id="niP" value={p} onChange={e => setP(e.target.value)}>{opts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></div>}
+    {tax.category_levels > 0 && <div className="f"><label>所属分类（{tax.levels.slice(0, -1).join(' / ')}）<a id="niTax" onClick={goTax} style={{ fontWeight: 'normal', marginLeft: 8 }}>管理分类</a></label>
+      <Cascader id="niP" value={p} tree={toCascade(tax.tree)} placeholder="请选择所属分类" onChange={setP} /></div>}
     <div className="f"><label>编码（唯一，如 {eg}）</label><input type="text" id="niC" value={code} onChange={e => setCode(e.target.value)} placeholder={eg} /></div>
     <div className="f"><label>名称</label><input type="text" id="niN" value={name} onChange={e => setName(e.target.value)} /></div>
     <ErrBox lines={err} />
@@ -148,101 +151,23 @@ function SlotsTab({ onEdit, ver }: { onEdit: (c: string) => void; ver: number })
 }
 
 /* ---------------- 空间设置 ---------------- */
-const FB: [string, string, string][] = [
-  ['handoff_human', '转人工', '交给人工客服'],
-  ['fixed_reply', '固定话术', '按配置的话术回复'],
-  ['llm_free', '让 AI 自由发挥', '由 Bot 自行回答'],
-]
-const STRICT: [string, string][] = [['paraphrase', '按意思表达'], ['verbatim', '完全固定']]
-function normFallback(r: any) {
-  const fb = r.fallback || {}
-  const mode = fb.mode || (r.final_action === 'decline' ? 'fixed_reply' : r.final_action === 'handoff_human' ? 'handoff_human' : 'llm_free')
-  return {
-    mode,
-    message: fb.message || '',
-    prompt: fb.prompt || '',
-    repliesText: (fb.replies && fb.replies.length ? fb.replies : (r.final_message ? [r.final_message] : ['抱歉，这个问题我暂时处理不了。'])).join('\n'),
-    reply_strictness: fb.reply_strictness || 'paraphrase',
-  }
-}
-function RecognitionTab() {
-  const { space, canEdit, reloadSpaces } = useSession()
-  const [r, reload] = useAsync(() => api.get(`/spaces/${space.id}/recognition`), [space.id])
-  const [f, setF] = useState<any>(null)
-  const [err, setErr] = useState<string[]>()
-  useEffect(() => { if (r) setF({ ...r, fallback: normFallback(r) }) }, [r])
-  if (!r || !f) return <div className="loading">加载中…</div>
-  const num = (k: string, lab: string, min: number, max: number, step: number, tip: string, id: string) => <tr><th style={{ width: 170 }}>{lab}</th><td>
-    <input type="number" id={id} value={f[k]} min={min} max={max} step={step} style={{ width: 100 }} disabled={!canEdit}
-      onChange={e => setF({ ...f, [k]: e.target.value })} /> <span className="muted">{tip}</span></td></tr>
-  const th = parseFloat(f.threshold)
-  const setFb = (k: string, v: any) => setF({ ...f, fallback: { ...f.fallback, [k]: v } })
-  const save = async () => {
-    const fb: any = { mode: f.fallback.mode }
-    if (fb.mode === 'handoff_human' && f.fallback.message.trim()) fb.message = f.fallback.message.trim()
-    if (fb.mode === 'fixed_reply') {
-      fb.replies = f.fallback.repliesText.split('\n').map((x: string) => x.trim()).filter(Boolean)
-      fb.reply_strictness = f.fallback.reply_strictness || 'paraphrase'
-    }
-    if (fb.mode === 'llm_free' && f.fallback.prompt.trim()) fb.prompt = f.fallback.prompt.trim()
-    const body: any = { threshold: parseFloat(f.threshold), max_clarify: Number(f.max_clarify), max_slot_ask: Number(f.max_slot_ask),
-      tool_retry: Number(f.tool_retry), clarify_prompt: f.clarify_prompt, fallback: fb }
-    try {
-      const res = await api.put(`/spaces/${space.id}/recognition`, body); setErr(undefined)
-      toast(res.changed ? `空间设置已保存，配置版本 v${res.version}` : '没有改动'); reload(); reloadSpaces()
-    } catch (e) { setErr(errLines(e)) }
-  }
-  const def = () => { setF({ ...f, threshold: 0.6, max_clarify: 2, max_slot_ask: 2, tool_retry: 1,
-    clarify_prompt: '我想确认一下，您是想要以下哪一项？',
-    fallback: { mode: space.id === 'cs' ? 'handoff_human' : 'llm_free', message: '', prompt: '', repliesText: '抱歉，这个问题我暂时处理不了。', reply_strictness: 'paraphrase' } }); toast('已填入默认值，点「保存」生效') }
-  const faLabel = (r.fallback && r.fallback.mode_label) || FB.find(x => x[0] === (r.fallback?.mode))?.[1] || r.final_action_label
-  return <>
-    <div className="card" id="rcCard"><h3>识别与兜底<span className="sp" /><span className="muted" style={{ fontWeight: 'normal' }}>配置版本 v{r.version}{r.updated_at ? ` · 最近修改 ${fmt(r.updated_at, false)} ${r.updated_by || ''}` : ''}</span></h3>
-      <div className="muted" style={{ lineHeight: 1.7, marginBottom: 10 }}>这些设置是发给使用方智能体的执行说明，通过运行时配置里的 <span className="mono">recognition</span>（也可单独请求 <span className="mono">GET /api/v1/recognition</span>）下发。平台不会在对话中替智能体做识别、澄清或兜底，使用方必须按规则实现后才会在对话里起作用。没有 0～1 分数的大模型：只有一条明显匹配才算命中；两条以上都像就澄清；都不像就执行空间兜底，不要编造分数。</div>
-      <table><tbody>
-        {num('threshold', '① 识别阈值', 0, 1, 0.05, '0~1，默认 0.6。数值含义由 Bot 的识别模型决定，建议用单句测试和实际对话校准', 'rcTh')}
-        <tr><th>② 未识别处理</th><td>Top1 置信度 &lt; 阈值时：列出不低于候选下限（阈值 ÷ 2 = <b id="rcCm">{isNaN(th) ? '—' : Math.round(th / 2 * 100) / 100}</b>）的最多 {r.max_candidates} 个候选让用户选；没有候选 → 执行空间兜底
-          <div style={{ marginTop: 6 }}>澄清话术 <input type="text" id="rcCp" value={f.clarify_prompt} disabled={!canEdit} onChange={e => setF({ ...f, clarify_prompt: e.target.value })} style={{ width: 360 }} /></div></td></tr>
-        {num('max_clarify', '③ 澄清最多次数', 0, 5, 1, '默认 2，超过 → 空间兜底', 'rcMc')}
-        {num('max_slot_ask', '④ 槽位追问最多次数', 0, 5, 1, '每个必填槽位，默认 2，超过 → 空间兜底', 'rcMs')}
-        <tr><th>⑤ 空间兜底</th><td>
-          {FB.map(([v, l, tip]) => <label key={v} style={{ display: 'block', marginBottom: 4 }}>
-            <input type="radio" name="rcFb" id={'rcFb_' + v} value={v} disabled={!canEdit} checked={f.fallback.mode === v} onChange={() => setFb('mode', v)} /> {l}
-            <span className="muted"> — {v === 'llm_free' ? `由「${space.bot}」自行回答` : tip}</span></label>)}
-          {f.fallback.mode === 'handoff_human' && <div className="f" style={{ marginTop: 6 }}><label>转人工说明（可选）</label>
-            <input type="text" id="rcFbMsg" value={f.fallback.message} disabled={!canEdit} onChange={e => setFb('message', e.target.value)} style={{ width: 360 }} /></div>}
-          {f.fallback.mode === 'fixed_reply' && <div style={{ marginTop: 6 }}>
-            <div className="f"><label>话术（每行一条，至少 1 条）</label>
-              <textarea id="rcFbReplies" rows={3} disabled={!canEdit} value={f.fallback.repliesText} onChange={e => setFb('repliesText', e.target.value)} style={{ width: 420 }} /></div>
-            <div>{STRICT.map(([v, l]) => <label key={v} style={{ marginRight: 16 }}>
-              <input type="radio" name="rcFbSt" id={'rcFbSt_' + v} value={v} disabled={!canEdit} checked={(f.fallback.reply_strictness || 'paraphrase') === v} onChange={() => setFb('reply_strictness', v)} /> {l}</label>)}
-              <span className="muted">　按意思表达：可改写但须保持原意；完全固定：须原样输出</span></div>
-          </div>}
-          {f.fallback.mode === 'llm_free' && <div className="f" style={{ marginTop: 6 }}><label>发挥说明（可选）</label>
-            <textarea id="rcFbPrompt" rows={2} disabled={!canEdit} value={f.fallback.prompt} onChange={e => setFb('prompt', e.target.value)} style={{ width: 420 }} /></div>}
-        </td></tr>
-        {num('tool_retry', '⑥ 工具调用失败重试', 0, 3, 1, '默认 1 次，仍失败 → 空间兜底', 'rcTr')}
-      </tbody></table>
-      {canEdit && <div style={{ textAlign: 'right', marginTop: 10 }}><Btn onClick={def}>恢复默认</Btn> <Btn p id="rcSave" onClick={save}>保存</Btn></div>}
-      <ErrBox lines={err} />
-    </div>
-    <div className="card"><h3>使用方应执行的流程</h3><div className="muted" style={{ lineHeight: 1.9 }}>使用方应按：识别 → 阈值判定（≥ 阈值命中该意图，按该意图的处理方式执行；否则澄清，最多 {r.max_clarify} 次）→ 若处理方式为「工具与知识流程」：槽位追问（每个必填槽位最多 {r.max_slot_ask} 次）→ 知识校验 → 调用工具（失败重试 {r.tool_retry} 次）。未命中、澄清/追问超限或工具失败时，执行空间兜底：<b>{faLabel}</b></div>
-      <div className="muted">保存有改动时配置版本 +1。使用方下次拉取到新版本后，只有按 <span className="mono">recognition</span> 与各意图的 <span className="mono">handling</span> 执行，这些设置才会在对话中起作用。完整规则见「使用方接入指南」。</div></div>
-    <TaxonomyCard />
-  </>
-}
-
-function TaxonomyCard() {
+function SpaceSettings() {
   const { space, canEdit, reloadSpaces } = useSession()
   const [tax, reload] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id])
   const [names, setNames] = useState<string[]>([])
   const [pv, setPv] = useState<any>(null)
-  const [adding, setAdding] = useState<{ parent: number | null; name: string; code: string } | null>(null)
+  const [info, setInfo] = useState({ name: space.name, description: space.description || '' })
+  const [infoDirty, setInfoDirty] = useState(false)
   useEffect(() => { if (tax) setNames(tax.levels) }, [tax])
+  useEffect(() => { setInfo({ name: space.name, description: space.description || '' }); setInfoDirty(false) }, [space.id, space.name, space.description])
   if (!tax) return null
   const n = tax.category_levels
   const done = (msg: string) => { toast(msg); reload(); reloadSpaces() }
   const run = async (fn: () => Promise<any>, msg: string) => { try { await fn(); done(msg) } catch (e) { toast(errLines(e)[0]) } }
+  const saveInfo = () => run(async () => {
+    await api.patch(`/spaces/${space.id}`, { name: info.name.trim(), description: info.description })
+    setInfoDirty(false)
+  }, '业务空间已保存')
   const preview = async (change: any) => {
     try {
       const body = { change }
@@ -259,25 +184,21 @@ function TaxonomyCard() {
     } catch (e) { toast(errLines(e)[0]) }
   }
   const saveNames = () => run(() => api.put(`/spaces/${space.id}/levels`, { levels: names.map(x => x.trim()) }), '层级名称已保存')
-  const addNode = () => adding && run(() => api.post(`/spaces/${space.id}/categories`, { parent_id: adding.parent, name: adding.name, code: adding.code || null }).then(() => setAdding(null)), '已新增分类')
-  const rename = (c: CatNode) => { const v = window.prompt(`修改「${c.name}」的名称`, c.name); if (v && v.trim() !== c.name) run(() => api.patch(`/spaces/${space.id}/categories/${c.id}`, { name: v.trim() }), '已修改') }
-  const del = (c: CatNode) => window.confirm(`删除分类「${c.name}」？`) && run(() => api.del(`/spaces/${space.id}/categories/${c.id}`), '已删除')
-  const addForm = (parent: number | null, depth: number) => adding && adding.parent === parent && <span className="row" style={{ display: 'inline-flex', marginLeft: 6 }}>
-    <input type="text" id="catNewName" autoFocus placeholder={`${tax.levels[depth - 1]}名称`} value={adding.name} onChange={e => setAdding({ ...adding, name: e.target.value })} style={{ width: 130 }} />
-    {depth === 1 && <input type="text" id="catNewCode" placeholder="编码（大写，可选）" value={adding.code} onChange={e => setAdding({ ...adding, code: e.target.value.toUpperCase() })} style={{ width: 130 }} />}
-    <Btn s p id="catNewOk" onClick={addNode}>添加</Btn><a onClick={() => setAdding(null)}>取消</a></span>
-  const ops = (c: CatNode) => canEdit && <span className="catops">
-    {c.depth < n && <a title={`新增${tax.levels[c.depth]}`} onClick={() => setAdding({ parent: c.id, name: '', code: '' })}>＋</a>}
-    <a title="改名" onClick={() => rename(c)}>改名</a>
-    {!c.count && !c.children.length && <a title="删除" onClick={() => del(c)}>✕</a>}</span>
-  const node = (c: CatNode): any => c.depth === n
-    ? <span key={c.id} className="chip">{c.name} <span className="muted">{c.count}</span>{ops(c)}</span>
-    : <div key={c.id} className="catnode">
-      <div className="catrow"><b>{c.name}</b> {c.code && <span className="mono muted">{c.code}</span>} <span className="muted">{c.count}</span>{ops(c)}{addForm(c.id, c.depth + 1)}</div>
-      <div style={{ marginLeft: 18 }}>{c.children.map(node)}</div>
-    </div>
   const r = pv?.r
   return <>
+    <div className="card" id="spInfoCard"><h3>业务空间</h3>
+      <table><tbody>
+        <tr><th style={{ width: 110 }}>空间 ID</th><td className="mono">{space.id}</td></tr>
+        <tr><th>编码前缀</th><td className="mono">{space.code_prefix}</td></tr>
+        <tr><th>名称 *</th><td><input type="text" id="spInfoName" value={info.name} disabled={!canEdit} style={{ width: 320 }}
+          onChange={e => { setInfo({ ...info, name: e.target.value }); setInfoDirty(true) }} /></td></tr>
+        <tr><th>描述</th><td><textarea id="spInfoDesc" rows={3} maxLength={2000} disabled={!canEdit} value={info.description}
+          placeholder="说明这个空间是做什么的，会出现在运行时配置里" style={{ width: 520, maxWidth: '100%' }}
+          onChange={e => { setInfo({ ...info, description: e.target.value }); setInfoDirty(true) }} /></td></tr>
+      </tbody></table>
+      {canEdit && <div style={{ textAlign: 'right', marginTop: 8 }}><Btn p id="spInfoSave" disabled={!infoDirty || !info.name.trim()} onClick={saveInfo}>保存</Btn></div>}
+      <div className="muted" style={{ marginTop: 6 }}>未命中任何意图时，由使用方智能体自行回答。若需要转人工或固定话术，请新建相应处理方式的意图（如「其他」「闲聊」）。</div>
+    </div>
     <div className="card" id="lvCard"><h3>分类层级<span className="sp" /><span className="muted" style={{ fontWeight: 'normal' }}>最多 5 层分类 + 最末层意图；调整后配置版本 +1</span></h3>
       <table id="lvTbl"><tbody>
         {tax.levels.map((nm, i) => <tr key={i}>
@@ -291,12 +212,7 @@ function TaxonomyCard() {
       </tbody></table>
       {canEdit && <div style={{ textAlign: 'right', marginTop: 8 }}><Btn p id="lvSave" disabled={names.join('|') === tax.levels.join('|')} onClick={saveNames}>保存名称</Btn></div>}
     </div>
-    <div className="card" id="taxCard"><h3>分类（{tax.levels.slice(0, -1).join(' / ') || '无分类层'}）<span className="sp" /><span className="muted" style={{ fontWeight: 'normal' }}>数字为下属意图数；有下级或有意图的分类不能删除</span></h3>
-      {n === 0 ? <div className="muted">本空间没有分类层，意图直接挂在空间下。可在上方「分类层级」里插入一层。</div> : <>
-        {tax.tree.map(node)}
-        {canEdit && <div className="row" style={{ marginTop: 8 }}>{adding?.parent === null ? addForm(null, 1)
-          : <Btn s id="catAddRoot" onClick={() => setAdding({ parent: null, name: '', code: '' })}>＋ 新增{tax.levels[0]}</Btn>}</div>}</>}
-    </div>
+    <TaxonomyEditor tax={tax} reload={reload} />
     {pv && <Modal title={pv.change.op === 'insert' ? '插入层级 · 影响预览' : '删除层级 · 影响预览'} testId="lvPreview" onClose={() => setPv(null)}
       foot={<><Btn onClick={() => setPv(null)}>取消</Btn><Btn p d={pv.change.op === 'remove'} id="lvConfirm" disabled={pv.change.op === 'insert' && !pv.name.trim()} onClick={apply}>确认调整</Btn></>}>
       {pv.change.op === 'insert' && <div className="f"><label>新层级名称</label><input type="text" id="lvNewName" maxLength={10} value={pv.name} onChange={e => setPv({ ...pv, name: e.target.value })} /></div>}

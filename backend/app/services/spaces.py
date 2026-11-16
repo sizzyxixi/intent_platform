@@ -17,19 +17,30 @@ def candidate_min(threshold: float) -> float:
     return round(threshold / 2 + 1e-9, 2)
 
 
+RECOGNITION_NOTE = (
+    "识别阈值、澄清次数与空间兜底已不再按空间维护（此对象仅保留兼容）。"
+    "未命中任何意图时，由使用方智能体自行回答（fallback.mode=llm_free）。"
+    "若需要转人工或固定话术，请在分类下配置相应处理方式的意图（如「其他」「闲聊」）。"
+)
+
+
 def recognition(sp: Space, with_version: bool = False) -> dict:
+    """对外固定返回 llm_free 兜底；库中历史设置不再使用，也不再可写。"""
+    fb = handling_svc.public_handling({"mode": "llm_free"}, fallback=True)
     d = {
-        "threshold": round(sp.threshold, 2),
-        "candidate_min": candidate_min(sp.threshold),
-        "max_candidates": sp.max_candidates,
-        "max_clarify": sp.max_clarify,
-        "max_slot_ask": sp.max_slot_ask,
-        "tool_retry": sp.tool_retry,
-        "final_action": sp.final_action,
-        "final_action_label": FINAL_ACTIONS.get(sp.final_action, sp.final_action),
-        "clarify_prompt": sp.clarify_prompt,
-        "final_message": sp.final_message if sp.final_action == "decline" else None,
-        "fallback": handling_svc.space_fallback(sp),
+        "threshold": 0.6,
+        "candidate_min": candidate_min(0.6),
+        "max_candidates": 3,
+        "max_clarify": 2,
+        "max_slot_ask": 2,
+        "tool_retry": 1,
+        "final_action": "general_assistant",
+        "final_action_label": FINAL_ACTIONS.get("general_assistant", "general_assistant"),
+        "clarify_prompt": DEFAULT_CLARIFY,
+        "final_message": None,
+        "fallback": fb,
+        "deprecated": True,
+        "note": RECOGNITION_NOTE,
     }
     if with_version:
         d["version"] = sp.version
@@ -54,73 +65,38 @@ def _check_int(errs, name, v, lo, hi, label):
 
 
 def update_recognition(db: Session, sp: Space, payload: dict, actor: Actor) -> bool:
-    """只改传入的字段；有改动时 version +1。返回是否有改动。"""
-    errs = []
-    allowed = {"threshold", "max_clarify", "max_slot_ask", "tool_retry", "final_action",
-               "clarify_prompt", "final_message", "fallback", "handling"}
-    unknown = [k for k in payload if k not in allowed and k not in ("candidate_min", "max_candidates",
-                                                                    "final_action_label", "version",
-                                                                    "mode_label", "reply_strictness_label")]
-    if unknown:
-        errs.append({"field": ",".join(unknown), "message": "不支持的字段"})
-    if "candidate_min" in payload:
-        errs.append({"field": "candidate_min", "message": "candidate_min 由平台按 threshold ÷ 2 计算，不可写"})
-    th = payload.get("threshold")
-    if th is not None:
-        if isinstance(th, bool) or not isinstance(th, (int, float)) or not (0 <= th <= 1):
-            errs.append({"field": "threshold", "message": "识别阈值应在 0～1 之间"})
-        elif abs(round(th / 0.05) * 0.05 - th) > 1e-6:
-            errs.append({"field": "threshold", "message": "识别阈值步长为 0.05"})
-    _check_int(errs, "max_clarify", payload.get("max_clarify"), 0, 5, "澄清最多次数")
-    _check_int(errs, "max_slot_ask", payload.get("max_slot_ask"), 0, 5, "槽位追问最多次数")
-    _check_int(errs, "tool_retry", payload.get("tool_retry"), 0, 3, "工具失败重试次数")
-    if "clarify_prompt" in payload and not str(payload.get("clarify_prompt") or "").strip():
-        errs.append({"field": "clarify_prompt", "message": "澄清话术必填"})
-    fb_raw = payload.get("fallback", payload.get("handling"))
-    try:
-        if fb_raw is not None:
-            fb = handling_svc.parse_handling(fb_raw, fallback=True)
-        elif "final_action" in payload or "final_message" in payload:
-            fa = payload.get("final_action", sp.final_action)
-            fm = payload.get("final_message", sp.final_message)
-            if fa not in handling_svc.LEGACY_TO_MODE and fa not in FINAL_ACTIONS:
-                raise unprocessable("最终动作应为 handoff_human / general_assistant / decline，或使用 fallback.mode")
-            if handling_svc.LEGACY_TO_MODE.get(fa) == "fixed_reply" and not str(fm or "").strip():
-                raise unprocessable("固定话术至少写一条回复",
-                                    details=[{"field": "final_message", "message": "固定话术至少写一条回复"}])
-            fb = handling_svc.from_legacy(fa, fm)
-        else:
-            fb = handling_svc.parse_handling(handling_svc.space_fallback(sp), fallback=True)
-    except Exception as e:
-        if errs:
-            raise unprocessable("空间设置校验不通过", details=errs)
-        raise
-    if errs:
-        raise unprocessable("空间设置校验不通过", details=errs)
+    """已废弃：忽略写入，不改库、不升版本。"""
+    return False
 
-    before = recognition(sp)
-    if th is not None:
-        sp.threshold = round(float(th), 2)
-    for k in ("max_clarify", "max_slot_ask", "tool_retry"):
-        if payload.get(k) is not None:
-            setattr(sp, k, int(payload[k]))
-    fa, fm = handling_svc.legacy_from(fb)
-    sp.final_action = fa
-    sp.final_message = fm
-    sp.fallback = fb
-    if "clarify_prompt" in payload:
-        sp.clarify_prompt = str(payload["clarify_prompt"]).strip()
-    after = recognition(sp)
-    if before == after and not (fa == "decline" and "final_message" in payload and sp.final_message != fm):
-        db.rollback()
-        return False
-    sp.version += 1
-    sp.recognition_updated_at = utcnow()
-    sp.recognition_updated_by = actor.name
-    changed = {k: [before[k], after[k]] for k in after if before.get(k) != after.get(k)}
-    audit.record(db, actor, "recognition.update", "space", sp.id, "修改空间设置", sp.id,
+
+def update_space(db: Session, sp: Space, data: dict, actor: Actor) -> Space:
+    """更新空间名称与描述。bot 字段忽略。描述变化会使运行时配置 version +1。"""
+    changed = {}
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            raise unprocessable("名称必填", details=[{"field": "name", "message": "名称必填"}])
+        if name != sp.name:
+            other = db.scalar(select(Space).where(Space.name == name, Space.id != sp.id))
+            if other:
+                raise conflict(f"空间名称「{name}」已存在", "SPACE_EXISTS")
+            changed["name"] = [sp.name, name]
+            sp.name = name
+    if "description" in data:
+        desc = str(data.get("description") or "").strip()
+        if len(desc) > 2000:
+            raise unprocessable("描述最多 2000 个字", details=[{"field": "description", "message": "描述最多 2000 个字"}])
+        if desc != (sp.description or ""):
+            changed["description"] = [sp.description or "", desc]
+            sp.description = desc
+    if not changed:
+        return sp
+    if "description" in changed:
+        sp.version += 1
+    sp.updated_at = utcnow()
+    audit.record(db, actor, "space.update", "space", sp.id, f"修改空间「{sp.name}」", sp.id,
                  {"changed": changed, "version": sp.version})
-    return True
+    return sp
 
 
 def bump_versions(db: Session, space_ids: set[str] | list[str]) -> None:
@@ -141,15 +117,13 @@ SPACE_ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
 def create_space(db: Session, data: dict, actor: Actor) -> Space:
     sid = (data.get("id") or "").strip()
     name = (data.get("name") or "").strip()
-    bot = (data.get("bot") or "").strip()
+    bot = (data.get("bot") or "").strip()  # 可选，已不再使用；传入则忽略展示
     prefix = (data.get("code_prefix") or "").strip()
     errs = []
     if not SPACE_ID_RE.match(sid):
         errs.append({"field": "id", "message": "空间 ID 为 2～32 位小写字母/数字/下划线，字母开头"})
     if not name:
         errs.append({"field": "name", "message": "名称必填"})
-    if not bot:
-        errs.append({"field": "bot", "message": "对应 Bot / 智能体必填"})
     if not re.match(r"^[A-Z]{1,4}$", prefix):
         errs.append({"field": "code_prefix", "message": "编码前缀为 1～4 位大写字母"})
     if errs:
