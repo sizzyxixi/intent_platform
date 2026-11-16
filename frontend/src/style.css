@@ -96,7 +96,6 @@ pre.code{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;fo
 .rm-used td{background:#fef2f2}
 .pickrow{display:flex;gap:8px;align-items:flex-start;padding:6px 4px;border-bottom:1px solid #f1f5f9;cursor:pointer}.pickrow input{margin-top:3px}
 #intentTbl td.muted{white-space:nowrap}
-#toolTbl td:nth-child(4),#toolTbl td.desc{max-width:280px;min-width:0}
 
 .b-o{background:#fff7ed;color:#c2410c;border-color:#fed7aa}
 .bound-tool{border:1px solid #e5e7eb;border-left:3px solid #94a3b8;padding:8px 10px;margin:0 0 8px;background:#fff}
@@ -110,8 +109,13 @@ pre.code{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;fo
 .adv .f{margin-top:8px}
 .cred-presets a{margin-right:10px}
 
-.tblwrap{overflow-x:auto}table.fixed{table-layout:fixed;min-width:1000px}table.fixed td{overflow-wrap:anywhere;word-break:break-word}
-.clamp2,.clamp3{overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;word-break:break-word}
+.tblwrap{overflow-x:auto;width:100%;max-width:100%;min-width:0}
+table.fixed{table-layout:fixed;width:100%;min-width:1000px}
+table.fixed td{overflow:hidden;overflow-wrap:anywhere;word-break:break-word;min-width:0}
+#toolTbl td.desc,#toolTbl td.grp,#toolTbl td.end{min-width:0;max-width:100%}
+#toolTbl td.end{font-size:11px}
+.clamp1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:100%}
+.clamp2,.clamp3{overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;word-break:break-word;overflow-wrap:anywhere;min-width:0;max-width:100%;width:100%}
 .clamp2{-webkit-line-clamp:2;line-clamp:2;line-height:1.45;max-height:2.9em}
 .clamp3{-webkit-line-clamp:3;line-clamp:3;line-height:1.45;max-height:4.35em}
 #toolPack,#toolGroup{max-width:220px}

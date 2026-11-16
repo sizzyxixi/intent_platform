@@ -161,6 +161,9 @@ def seed(db: Session, data: dict, with_keys: bool = True, demo_tools: bool = Tru
                    "verified_version": t.get("cliVer") or "",
                    "output_format": "json" if (t.get("outFmt") or "JSON").upper() == "JSON" else "text",
                    "confirm_required": bool(t.get("confirm")), "output_description": t.get("out") or ""}
+            for k in ("pack", "pack_name", "group"):
+                if t.get(k):
+                    cfg[k] = t[k]
         elif typ == "workflow":
             plat = t.get("wfPlatform") or "generic"
             cfg = {"platform": plat, "response_mode": "streaming" if t.get("wfMode") == "stream" else "blocking",

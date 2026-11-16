@@ -19,16 +19,59 @@ export default function ToolsPage({ tab }: { tab: string }) {
   </>
 }
 
+function groupText(t: any, serverName?: string) {
+  if (t.type === 'cli' && t.cli) {
+    const pack = t.cli.pack_name || t.cli.pack
+    const g = t.cli.group
+    if (pack && g) return `${pack} › ${g}`
+    return g || pack || '—'
+  }
+  if (t.type === 'mcp') return t.mcp_server?.display_name || t.mcp_server?.name || t.server || serverName || '—'
+  return '—'
+}
+
+function endLine(t: any) {
+  if (t.source === 'builtin') return (t.endpoints && t.endpoints[0]) || ''
+  if (t.type === 'cli') return t.cli?.command_template || ''
+  if (t.type === 'skill') return t.skill?.files?.length ? `技能包 v${t.skill.version} · ${t.skill.files.length} 个文件` : '待上传技能包'
+  if (t.type === 'workflow') {
+    const w = t.workflow || {}
+    const extra = w.platform === 'coze' ? [w.region, w.workflow_id].filter(Boolean).join(' · ') : w.platform === 'dify' ? w.base_url : w.url
+    return [WF_PLAT[w.platform], extra, w.response_mode === 'streaming' ? '流式' : '同步'].filter(Boolean).join(' · ')
+  }
+  if (t.type === 'mcp') return 'tools/call ' + (t.mcp_tool || '')
+  return [t.method, t.url].filter(Boolean).join(' ')
+}
+
+function endTip(t: any) {
+  if (t.source === 'builtin') {
+    const lines = [...(t.endpoints || [])]
+    if (t.mcp_tools?.length) lines.push('MCP：' + t.mcp_tools.join('、'))
+    lines.push(t.space_scoped ? '按空间：需 X-Space-Id' : '全局：不需要 X-Space-Id')
+    return lines.join('\n')
+  }
+  if (t.type === 'cli') {
+    const c = t.cli || {}
+    const auth = '鉴权：' + (c.auth || '无') + (c.auth_env ? `（或 $${c.auth_env}）` : '')
+    return [c.command_template, auth, '输出 ' + (c.output_format === 'json' ? 'JSON' : '纯文本')].filter(Boolean).join('\n')
+  }
+  return endLine(t)
+}
+
 function End({ t }: { t: any }) {
-  const s = { fontSize: 11 }
-  if (t.source === 'builtin') return <><div className="mono" style={s}>{t.endpoints.map((e: string) => <div key={e}>{e}</div>)}</div>
-    {t.mcp_tools.length > 0 && <div className="muted" style={s}>MCP：{t.mcp_tools.join('、')}</div>}
-    <div className="muted" style={s}>{t.space_scoped ? '按空间：需 X-Space-Id' : '全局：不需要 X-Space-Id'}</div></>
-  if (t.type === 'cli') return <><div className="mono clamp2" style={s} title={t.cli.command_template}>{t.cli.command_template}</div>{t.cli.pack && <div className="muted" style={s}>{t.cli.pack_name || t.cli.pack}{t.cli.group && ` › ${t.cli.group}`}</div>}<div className="muted" style={s}>鉴权：{t.cli.auth}{t.cli.auth_env && <>（或 <span className="mono">${t.cli.auth_env}</span>）</>} · 输出 {t.cli.output_format === 'json' ? 'JSON' : '纯文本'}</div></>
-  if (t.type === 'skill') return t.skill?.files?.length ? <div className="muted" style={s}>技能包 v{t.skill.version} · {t.skill.files.length} 个文件</div> : <div style={s}><Badge c="y">待上传技能包</Badge></div>
-  if (t.type === 'workflow') { const w = t.workflow || {}; return <div className="muted" style={s}>{WF_PLAT[w.platform]}{w.platform === 'coze' ? ` · ${w.region} · ${w.workflow_id}` : w.platform === 'dify' ? ` · ${w.base_url}` : ` · ${w.url}`} · {w.response_mode === 'streaming' ? '流式' : '同步'}</div> }
-  if (t.type === 'mcp') return <div className="mono" style={s}>tools/call {t.mcp_tool}</div>
-  return <><Badge>{t.method}</Badge><div className="mono clamp2" style={s} title={t.url}>{t.url}</div></>
+  const line = endLine(t)
+  return <div className="mono clamp1" title={endTip(t) || undefined}>{line || '—'}</div>
+}
+
+function SrvEnd({ v }: { v: any }) {
+  const line = [v.transport_label, serverEnd(v)].filter(Boolean).join(' · ')
+  const tip = [v.transport_label, credText(v), serverEnd(v), '同步：' + syncText(v)].filter(Boolean).join('\n')
+  return <div className="clamp1" title={tip}>{line || '—'}</div>
+}
+
+function GroupCell({ t, serverName }: { t?: any; serverName?: string }) {
+  const s = t ? groupText(t, serverName) : '—'
+  return <div className="clamp2" title={s !== '—' ? s : undefined}>{s}</div>
 }
 
 function ToolList() {
@@ -79,9 +122,9 @@ function ToolList() {
   const patch = async (t: any, body: any) => {
     try { await api.patch('/tools/' + t.name, body); reload(); toast('已更新 ' + t.name) } catch (e) { toast(errLines(e)[0]) }
   }
-  const usedBy = (list: any[]) => list?.length ? list.map((u: any) => <div key={u.space + u.code}><span className="mono" style={{ color: '#2563eb' }}>{u.code}</span><div><span className="tg">{u.space_name}</span></div></div>) : <span className="muted">未使用</span>
+  const usedBy = (list: any[]) => list?.length ? <div className="clamp2" title={list.map((u: any) => `${u.code}（${u.space_name}）`).join('\n')}>{list.map((u: any) => <div key={u.space + u.code} className="clamp1"><span className="mono" style={{ color: '#2563eb' }}>{u.code}</span> <span className="tg">{u.space_name}</span></div>)}</div> : <span className="muted">未使用</span>
   const srcCell = (t: any) => t.source === 'builtin' ? <><Badge c="g">平台内置</Badge><div style={{ marginTop: 4 }}>{t.maintenance ? <Badge c="y">维护类</Badge> : <Badge>可在意图中使用</Badge>}</div></> : <span className="muted">外部</span>
-  const paramCell = (t: any) => t.type === 'skill' ? <span className="muted">无（槽位作上下文）</span> : <div className="mono clamp3" title={t.params.map((p: any) => p.name + (p.required ? '*' : '')).join(', ')}>{t.params.length ? t.params.map((p: any) => p.name + (p.required ? '*' : '')).join(', ') : <span className="muted">无</span>}</div>
+  const paramCell = (t: any) => t.type === 'skill' ? <span className="muted">无（槽位作上下文）</span> : <div className="mono clamp2" title={t.params.map((p: any) => p.name + (p.required ? '*' : '')).join(', ')}>{t.params.length ? t.params.map((p: any) => p.name + (p.required ? '*' : '')).join(', ') : <span className="muted">无</span>}</div>
   return <>
     <div className="card"><div className="row"><span className="sp" />
       {canEdit && <Btn p id="toolNew" onClick={() => setEdit({})}>＋ 注册工具</Btn>}</div>
@@ -106,33 +149,36 @@ function ToolList() {
         <select id="toolSt" value={st} onChange={e => setFilter(() => setSt(e.target.value))}><option value="">全部状态</option><option value="启用">启用</option><option value="停用">停用</option></select>
         <input type="text" id="toolQ" value={qIn} onChange={e => setQIn(e.target.value)} placeholder="搜索工具名 / 描述 / 命令" style={{ width: 240 }} />
         <span className="muted">{(tf === 'mcp' ? ss.length : (data.total || 0) + ss.length)} 个</span></div></div>
-    <div className="card tblwrap" style={{ padding: 0 }}><table id="toolTbl" className="fixed"><colgroup><col style={{ width: 190 }} /><col style={{ width: 80 }} /><col style={{ width: 64 }} /><col /><col style={{ width: 180 }} /><col style={{ width: 110 }} /><col style={{ width: 90 }} /><col style={{ width: 92 }} /></colgroup><thead><tr><th>工具</th><th>类型</th><th>来源</th><th>描述</th><th>接入</th><th>入参</th><th>被意图使用</th><th>操作</th></tr></thead><tbody>
-      {ts.map((t: any) => <tr key={t.name} data-tool={t.name}><td><b>{t.display_name}</b><div className="mono">{t.name}</div></td><td><TypeTag type={t.type} />{t.confirm_required && <div style={{ marginTop: 4 }}><Badge c="y">写操作需确认</Badge></div>}</td>
+    <div className="card tblwrap" style={{ padding: 0 }}><table id="toolTbl" className="fixed"><colgroup><col style={{ width: 168 }} /><col style={{ width: 72 }} /><col style={{ width: 72 }} /><col style={{ width: 140 }} /><col /><col style={{ width: 200 }} /><col style={{ width: 100 }} /><col style={{ width: 100 }} /><col style={{ width: 92 }} /></colgroup><thead><tr><th>工具</th><th>类型</th><th>来源</th><th>业务分组</th><th>描述</th><th>接入</th><th>入参</th><th>被意图使用</th><th>操作</th></tr></thead><tbody>
+      {ts.map((t: any) => <tr key={t.name} data-tool={t.name}><td><b className="clamp1" title={t.display_name}>{t.display_name}</b><div className="mono clamp1" title={t.name}>{t.name}</div></td><td><TypeTag type={t.type} />{t.confirm_required && <div style={{ marginTop: 4 }}><Badge c="y">写操作需确认</Badge></div>}</td>
         <td>{srcCell(t)}</td>
-        <td className="muted desc"><div className="clamp2" title={t.description || undefined}>{t.description}</div></td><td><End t={t} /></td><td>{paramCell(t)}</td>
+        <td className="grp"><GroupCell t={t} /></td>
+        <td className="muted desc"><div className="clamp2" title={t.description || undefined}>{t.description}</div></td><td className="end"><End t={t} /></td><td>{paramCell(t)}</td>
         <td>{usedBy(t.used_by)}</td>
-        <td><Btn s onClick={() => setTest(t)}>测试调用</Btn> {t.source === 'builtin' ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>平台提供<br />不可编辑 / 删除</div>
-          : canEdit && <><Btn s onClick={() => setEdit({ tool: t })}>编辑</Btn><div style={{ marginTop: 4 }}><a style={{ color: '#dc2626', fontSize: 12 }} onClick={() => del(t)}>删除</a></div></>}</td></tr>)}
+        <td><Btn s onClick={() => setTest(t)}>测试调用</Btn> {t.source === 'builtin' ? <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>平台提供</div>
+          : canEdit && <div style={{ marginTop: 4, fontSize: 12 }}><a onClick={() => setEdit({ tool: t })}>编辑</a>　<a style={{ color: '#dc2626' }} onClick={() => del(t)}>删除</a></div>}</td></tr>)}
       {ss.map((v: any) => { const sub = v.tools || []; const on = !!open[v.name]; const users = new Set(sub.flatMap((t: any) => (t.used_by || []).map((u: any) => u.code))); return [
-        <tr key={'s' + v.name} className="srvrow" data-server={v.name}><td onClick={() => setOpen({ ...open, [v.name]: !on })}><span className="caret">{on ? '▾' : '▸'}</span><b>{v.display_name}</b><div className="mono" style={{ paddingLeft: 14 }}>{v.name}</div></td>
+        <tr key={'s' + v.name} className="srvrow" data-server={v.name}><td onClick={() => setOpen({ ...open, [v.name]: !on })}><span className="caret">{on ? '▾' : '▸'}</span><b className="clamp1" title={v.display_name}>{v.display_name}</b><div className="mono clamp1" style={{ paddingLeft: 14 }} title={v.name}>{v.name}</div></td>
           <td><Badge c="p">MCP 服务</Badge><div className="muted" style={{ marginTop: 4 }}><a onClick={() => setOpen({ ...open, [v.name]: !on })}>{v.tool_count} 个工具</a></div></td>
           <td>{v.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <span className="muted">外部</span>}{v.example_data && <div style={{ marginTop: 4 }}><Badge c="y" title="当前工具列表为示例数据，真实同步可拉取完整列表">示例数据</Badge></div>}</td>
-          <td className="muted desc"><div className="clamp2" title={v.description || undefined}>{v.description || '—'}</div><div>启用 {v.enabled_count} / {v.tool_count}{v.missing_count > 0 && <> · <b style={{ color: '#b91c1c' }}>{v.missing_count} 个远端已消失</b></>}</div></td>
-          <td><div className="muted" style={{ fontSize: 11 }}>{v.transport_label} · {credText(v)}</div><div className="mono" style={{ fontSize: 11 }}>{serverEnd(v)}</div><div className="muted" style={{ fontSize: 11 }}>同步：{syncText(v)}</div></td>
+          <td className="grp"><GroupCell /></td>
+          <td className="muted desc"><div className="clamp2" title={v.description || undefined}>{v.description || '—'}</div><div className="clamp1">启用 {v.enabled_count} / {v.tool_count}{v.missing_count > 0 && <> · <b style={{ color: '#b91c1c' }}>{v.missing_count} 个远端已消失</b></>}</div></td>
+          <td className="end"><SrvEnd v={v} /></td>
           <td className="muted">按工具</td><td>{users.size ? <span>{users.size} 个意图</span> : <span className="muted">未使用</span>}</td>
           <td>{v.source === 'builtin' ? <div className="muted" style={{ fontSize: 11 }}>平台提供<br />不可编辑 / 同步</div>
             : canEdit && <><Btn s onClick={() => setEdit({ server: v })}>同步工具</Btn><div style={{ marginTop: 4, fontSize: 12 }}><a onClick={() => setEdit({ server: v })}>编辑</a>　<a style={{ color: '#dc2626' }} onClick={() => delSrv(v)}>删除</a></div></>}</td></tr>,
         ...(on ? sub.length ? sub.map((t: any) => <tr key={t.name} className={'subrow' + (t.remote_missing ? ' missing' : '')} data-tool={t.name}>
-          <td><b>{t.display_name}</b><div className="mono">{t.name}</div>{t.remote_missing && <Badge c="r">远端已消失</Badge>}</td>
+          <td><b className="clamp1" title={t.display_name}>{t.display_name}</b><div className="mono clamp1" title={t.name}>{t.name}</div>{t.remote_missing && <Badge c="r">远端已消失</Badge>}</td>
           <td><TypeTag type="mcp" /></td>
           <td>{v.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <>
             <label style={{ display: 'block', whiteSpace: 'nowrap' }}><input type="checkbox" className="mEn" checked={t.enabled} disabled={!canEdit} onChange={e => patch(t, { enabled: e.target.checked })} /> 启用</label>
             <label style={{ display: 'block', whiteSpace: 'nowrap' }}><input type="checkbox" className="mCf" checked={t.confirm_required} disabled={!canEdit} onChange={e => patch(t, { confirm_required: e.target.checked })} /> 写操作需确认</label></>}</td>
-          <td className="muted desc"><div className="clamp2" title={t.description || undefined}>{t.description}</div></td><td className="mono" style={{ fontSize: 11 }}>tools/call {t.mcp_tool}</td>
+          <td className="grp"><GroupCell t={t} serverName={v.display_name} /></td>
+          <td className="muted desc"><div className="clamp2" title={t.description || undefined}>{t.description}</div></td><td className="end mono"><div className="clamp1" title={'tools/call ' + t.mcp_tool}>tools/call {t.mcp_tool}</div></td>
           <td>{paramCell(t)}</td>
           <td>{usedBy(t.used_by)}</td><td><Btn s onClick={() => setTest(t)}>测试调用</Btn></td></tr>)
-          : [<tr key={'e' + v.name} className="subrow"><td colSpan={8} className="muted">还没有工具，点「同步工具」读取</td></tr>] : [])] })}
-      {!ts.length && !ss.length && <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有符合条件的工具</td></tr>}
+          : [<tr key={'e' + v.name} className="subrow"><td colSpan={9} className="muted">还没有工具，点「同步工具」读取</td></tr>] : [])] })}
+      {!ts.length && !ss.length && <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有符合条件的工具</td></tr>}
     </tbody></table>
       {tf !== 'mcp' && <Pager page={page} total={data.total || 0} size={size} onPage={setPage} onSize={s => { setSize(s); setPage(1) }} sizes={[20, 50, 100]} />}
     </div>
