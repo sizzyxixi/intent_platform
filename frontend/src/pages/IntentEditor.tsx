@@ -6,6 +6,7 @@ import KbPicker from './KbPicker'
 import { SlotForm } from './Slots'
 import { Tax, leaves, toCascade } from '../taxonomy'
 import { Cascader, SearchSelect } from '../picker'
+import { shortPackName } from '../packLabel'
 import { McpPicker } from './McpServers'
 import { TypeTag, isFileParam, pTypeLabel } from './ToolEdit'
 
@@ -274,8 +275,11 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
             const packs: { pack: string; pack_name: string; count: number }[] = facets.packs || []
             const groups: { pack: string; group: string; count: number }[] = facets.groups || []
             const cliGroups: [string, string, number][] = pickTy !== 'cli' ? [] : [
-              ...packs.map((x: any) => [x.pack, x.pack_name || x.pack, x.count] as [string, string, number]),
-              ...groups.map((x: any) => [x.pack + '|' + x.group, `${packs.find((p: any) => p.pack === x.pack)?.pack_name || x.pack} › ${x.group}`, x.count] as [string, string, number]),
+              ...packs.map((x: any) => [x.pack, shortPackName(x.pack_name, x.pack), x.count] as [string, string, number]),
+              ...groups.map((x: any) => {
+                const pack = shortPackName(packs.find((p: any) => p.pack === x.pack)?.pack_name, x.pack)
+                return [x.pack + '|' + x.group, pack ? `${x.group} · ${pack}` : x.group, x.count] as [string, string, number]
+              }),
             ]
             const grp = cliGroups.some(g => g[0] === cliGrp) ? cliGrp : ''
             return <><div className="row" id="ePicker" style={{ flexWrap: 'wrap', gap: 8 }}>

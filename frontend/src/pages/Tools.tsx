@@ -6,6 +6,7 @@ import { Badge, Btn, ErrBox, Modal, Pager, toast, useAsync } from '../ui'
 import { credText, serverEnd, syncText } from './McpServers'
 import ToolEdit, { KINDS, TypeTag, WF_PLAT, pTypeLabel } from './ToolEdit'
 import { SearchSelect } from '../picker'
+import { shortPackName } from '../packLabel'
 
 const API_ROWS = (demo as any).API_ROWS as string[][]
 const MCP_ROWS = (demo as any).MCP_ROWS as string[][]
@@ -24,16 +25,19 @@ function groupOf(t: any) {
   return t?.group || t?.cli?.group || ''
 }
 
-function groupText(t: any, serverName?: string) {
+function groupText(t: any, serverName?: string): { text: string; tip?: string } {
   const g = groupOf(t)
   if (t.type === 'cli' && t.cli) {
-    const pack = t.cli.pack_name || t.cli.pack
-    if (pack && g) return `${pack} › ${g}`
-    return g || pack || '—'
+    const pack = shortPackName(t.cli.pack_name, t.cli.pack)
+    if (g) return { text: g, tip: pack ? `${g} · ${pack}` : g }
+    return { text: '—', tip: pack || undefined }
   }
-  if (g) return g
-  if (t.type === 'mcp') return t.mcp_server?.display_name || t.mcp_server?.name || t.server || serverName || '—'
-  return '—'
+  if (g) return { text: g }
+  if (t.type === 'mcp') {
+    const s = t.mcp_server?.display_name || t.mcp_server?.name || t.server || serverName || '—'
+    return { text: s }
+  }
+  return { text: '—' }
 }
 
 function endLine(t: any) {
@@ -76,8 +80,8 @@ function SrvEnd({ v }: { v: any }) {
 }
 
 function GroupCell({ t, serverName, label }: { t?: any; serverName?: string; label?: string }) {
-  const s = t ? groupText(t, serverName) : (label || '—')
-  return <div className="clamp2" title={s !== '—' ? s : undefined}>{s}</div>
+  const { text, tip } = t ? groupText(t, serverName) : { text: label || '—', tip: undefined }
+  return <div className="clamp2" title={tip || (text !== '—' ? text : undefined)}>{text}</div>
 }
 
 function ToolList() {
@@ -141,7 +145,10 @@ function ToolList() {
       <div className="row" style={{ marginTop: 8 }}>
         {(!tf || tf === 'cli') && packs.length > 0 && <SearchSelect id="toolPack" className="compact" value={pk}
           empty={{ value: '', label: '全部 CLI 命令包' }}
-          options={packs.map(([k, l, n]) => ({ value: k, label: `${l}（${n}）` }))}
+          options={packs.map(([k, l, n]) => {
+            const short = shortPackName(l, k)
+            return { value: k, label: `${short}（${n}）`, hint: l && l !== short ? l : undefined }
+          })}
           onChange={v => setFilter(() => { setPk(v); setGrp('') })} />}
         {(() => {
           const raw: any[] = facets.groups || []

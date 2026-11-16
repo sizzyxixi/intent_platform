@@ -226,6 +226,7 @@ export function SearchSelect({
   return <div className={'cas' + (className ? ' ' + className : '')}>
     <button type="button" id={id} ref={trigRef} className={'cas-trig' + (open ? ' open' : '')}
       disabled={disabled} aria-expanded={open} aria-haspopup="listbox" data-value={value}
+      title={cur?.hint || undefined}
       onClick={() => { if (!disabled) { setQ(''); setOpen(o => !o) } }}>
       <span className={'cas-lab' + (!cur ? ' muted' : '')}>{cur?.label || placeholder}</span>
       <span className="cas-arr">▾</span>
