@@ -14,6 +14,23 @@ export function Btn({ children, onClick, p, s, d, disabled, id, title, type }: {
   return <button type={type || 'button'} id={id} className={cls} onClick={onClick} disabled={disabled} title={title}>{children}</button>
 }
 
+/** 业务分组：从已有分组里选，也可输入新分组。 */
+export function GroupInput({ value, onChange, options, id = 'tGrp' }: { value: string; onChange: (v: string) => void; options: string[]; id?: string }) {
+  const [open, setOpen] = useState(false)
+  const q = value.trim().toLowerCase()
+  const shown = options.filter(g => !q || g.toLowerCase().includes(q))
+  const isNew = !!value.trim() && !options.some(g => g === value.trim())
+  return <div className="gcombo">
+    <input type="text" id={id} value={value} autoComplete="off" placeholder="可选，从已有分组选择或输入新分组"
+      onChange={e => onChange(e.target.value)} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} />
+    {open && <div className="combo-list">
+      {shown.map(g => <div key={g} className={'combo-item' + (g === value.trim() ? ' on' : '')} onMouseDown={e => { e.preventDefault(); onChange(g); setOpen(false) }}>{g}</div>)}
+      {isNew && <div className="combo-item muted">使用新分组「{value.trim()}」</div>}
+      {!shown.length && !isNew && <div className="combo-empty">{options.length ? '没有匹配的分组' : '还没有分组，可直接输入'}</div>}
+    </div>}
+  </div>
+}
+
 export function Modal({ title, children, foot, onClose, wide, testId }: {
   title: ReactNode; children: ReactNode; foot?: ReactNode; onClose: () => void; wide?: boolean; testId?: string
 }) {

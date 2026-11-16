@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, errLines } from '../api'
+import { api, errLines, qs } from '../api'
 import { useSession } from '../session'
-import { Badge, Btn, Drawer, ErrBox, Modal, toast } from '../ui'
+import { Badge, Btn, Drawer, ErrBox, GroupInput, Modal, toast } from '../ui'
 import { McpForm, SyncPanel, emptyMcp, mcpBody, mcpFormOf } from './McpServers'
 
 /** 注册工具的类型（MCP 实际登记的是服务，再同步子工具） */
@@ -21,7 +21,7 @@ type P = { name: string; type: string; required: boolean; description: string; d
 
 function blankTool(owner: string) {
   return {
-    name: '', display_name: '', description: '', owner, url: '', method: 'GET', auth: '无', output_example: '{}', output_description: '',
+    name: '', display_name: '', description: '', group: '', owner, url: '', method: 'GET', auth: '无', output_example: '{}', output_description: '',
     bin: '', command_template: '', cli_auth: '无', cli_auth_env: '', cli_meta: {} as Record<string, string>, login_command: '', install: '', verified_version: '', output_format: 'json', confirm_required: false, secret: '',
     wf: { platform: 'dify', response_mode: 'blocking', base_url: 'https://api.dify.ai/v1', auth_env: 'DIFY_APP_KEY', user_mode: 'constant', user_value: 'intent-bot',
       region: 'coze.cn', workflow_id: '', workflow_version: '', is_async: false, bot_id: '', app_id: '', ext: '', url: '', wmethod: 'POST', wauth: '无',
@@ -39,7 +39,7 @@ function toolForm(t: any) {
     timeout_sec: c.timeout_sec != null ? String(c.timeout_sec) : '', output_mapping: c.output_mapping || [], params_locked: c.params_locked !== false,
   } : b.wf
   return {
-    ...b, name: t.name, display_name: t.display_name, description: t.description, url: t.url || '', method: t.method || 'GET', auth: t.auth || '无',
+    ...b, name: t.name, display_name: t.display_name, description: t.description, group: t.group || t.cli?.group || '', url: t.url || '', method: t.method || 'GET', auth: t.auth || '无',
     output_example: t.output_example || (t.type === 'http' ? '{}' : ''), output_description: t.output_description || t.cli?.output_description || c.output_description || '',
     bin: t.cli?.bin || '', command_template: t.cli?.command_template || '', cli_auth: t.cli?.auth || '无', login_command: t.cli?.login_command || '',
     cli_auth_env: t.cli?.auth_env || '', cli_meta: Object.fromEntries(CLI_META.filter(k => t.cli?.[k]).map(k => [k, t.cli[k]])),
@@ -62,7 +62,14 @@ export default function ToolEdit({ tool, server, onClose, onDone }: { tool?: any
   const [syncOpen, setSyncOpen] = useState(false)
   const [err, setErr] = useState<string[]>()
   const [busy, setBusy] = useState(false)
+  const [groups, setGroups] = useState<string[]>([])
   const editing = !!tool || !!srv
+  useEffect(() => {
+    api.get('/tools' + qs({ page: 1, page_size: 1 })).then((d: any) => {
+      const gs = [...new Set((d.facets?.groups || []).map((x: any) => x.group).filter(Boolean))] as string[]
+      setGroups(gs)
+    }).catch(() => {})
+  }, [])
   useEffect(() => { if (tool?.type === 'skill') api.get('/tools/' + tool.name).then(setDetail).catch(() => {}) }, [tool])
   useEffect(() => { if (!editing) sessionStorage.setItem('toolKind', kind) }, [kind, editing])
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value })
@@ -92,13 +99,17 @@ export default function ToolEdit({ tool, server, onClose, onDone }: { tool?: any
     if (kind === 'mcp') return saveMcp()
     let config: any
     if (kind === 'http') config = { url: f.url, method: f.method, auth: f.auth, output_example: f.output_example }
-    else if (kind === 'cli') config = { ...f.cli_meta, bin: f.bin, command_template: f.command_template, auth: f.cli_auth, auth_env: f.cli_auth_env, login_command: f.login_command, install: f.install, verified_version: f.verified_version, output_format: f.output_format, confirm_required: f.confirm_required, output_description: f.output_description }
+    else if (kind === 'cli') {
+      config = { ...f.cli_meta, bin: f.bin, command_template: f.command_template, auth: f.cli_auth, auth_env: f.cli_auth_env, login_command: f.login_command, install: f.install, verified_version: f.verified_version, output_format: f.output_format, confirm_required: f.confirm_required, output_description: f.output_description }
+      const g = (f.group || '').trim()
+      if (g) config.group = g; else delete config.group
+    }
     else if (kind === 'skill') {
       if (!tool && !pkg) { setErr(['请先上传包含 SKILL.md 的技能文件夹或 .zip']); return }
       config = pkg ? { package_id: pkg.package_id } : {}
     } else config = wfConfig()
     const ps = kind === 'skill' ? [] : params.map(p => ({ ...p, name: p.name.trim() })).filter(p => p.name)
-    const body: any = { type: kind, name: f.name.trim(), display_name: f.display_name, description: kind === 'skill' ? (pkg?.description || f.description) : f.description, owner: f.owner, params: ps, config }
+    const body: any = { type: kind, name: f.name.trim(), display_name: f.display_name, description: kind === 'skill' ? (pkg?.description || f.description) : f.description, owner: f.owner, params: ps, config, group: (f.group || '').trim() }
     if (f.secret) body.secret = f.secret
     try {
       const r = tool ? await api.put('/tools/' + tool.name, body) : await api.post('/tools', body)
@@ -144,7 +155,7 @@ export default function ToolEdit({ tool, server, onClose, onDone }: { tool?: any
       <div className="muted" style={{ alignSelf: 'end', paddingBottom: 12 }}>{KIND_HINT[kind] || ''}</div></div>
 
     {kind === 'mcp' ? <>
-      <McpForm f={mf} setF={setMf} editing={!!srv} exampleData={srv?.example_data} />
+      <McpForm f={mf} setF={setMf} editing={!!srv} exampleData={srv?.example_data} groups={groups} />
       {srv ? <div className="sec" id="mSync"><b>同步工具</b>{srv.example_data && <div className="muted" style={{ margin: '0 0 6px' }}>以下为示例数据，真实同步可拉取完整工具列表。</div>}
         <SyncPanel sv={srv} onDone={() => { reloadSrv(srv.name); onDone(srv.name) }} /></div>
         : <div className="muted">先保存服务信息，再在下方同步 tools/list。</div>}
@@ -152,6 +163,8 @@ export default function ToolEdit({ tool, server, onClose, onDone }: { tool?: any
       <div className="grid g2"><div className="f"><label>工具名（英文，唯一）*</label><input type="text" id="tN" value={f.name} disabled={!!tool} onChange={set('name')} placeholder="my_tool" /></div>
         <div className="f"><label>显示名 *</label><input type="text" id="tD" value={f.display_name} onChange={set('display_name')} placeholder="显示名" /></div></div>
       <div className="f"><label>描述 *{descRo ? '（来自 SKILL.md，只读）' : '（运营据此判断该挂到哪个意图）'}</label><input type="text" id="tDs" value={f.description} readOnly={descRo} onChange={set('description')} placeholder={descRo ? '上传技能包后自动填入' : ''} /></div>
+      <div className="f"><label>业务分组</label><GroupInput value={f.group || ''} onChange={g => setF({ ...f, group: g })} options={groups} />
+        <div className="muted">可选。用于在工具目录里分类筛选；可选用已有分组，也可以输入新名称。</div></div>
 
       {kind === 'http' && <div className="grid g2"><div className="f"><label>接口地址 *</label><input type="text" id="tU" value={f.url} onChange={set('url')} placeholder="https://..." /></div>
         <div className="f"><label>方法</label><select id="tM" value={f.method} onChange={set('method')}>{['GET', 'POST', 'PUT', 'DELETE'].map(m => <option key={m}>{m}</option>)}</select></div></div>}

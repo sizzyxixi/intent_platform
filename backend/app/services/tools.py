@@ -30,6 +30,25 @@ ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 PARAM_TYPES = ("string", "number", "boolean", "file", "file_list", "string[]")
 PARAM_TYPE_LABEL = {"file": "文件", "file_list": "文件列表"}
 PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+GROUP_MAX = 200
+
+
+def parse_group(value, *, existing: str | None = None, specified: bool = True, errs: list | None = None) -> str | None:
+    """规范化业务分组。specified=False 时保留 existing；空字符串表示清除。"""
+    if not specified:
+        return existing
+    s = str(value or "").strip()
+    if len(s) > GROUP_MAX:
+        if errs is not None:
+            errs.append({"field": "group", "message": f"业务分组最多 {GROUP_MAX} 字"})
+            return existing
+        raise unprocessable(f"业务分组最多 {GROUP_MAX} 字")
+    return s or None
+
+
+def tool_group(t: Tool) -> str | None:
+    """工具的业务分组：优先列字段，兼容尚未迁移的 CLI config.group。"""
+    return (t.business_group or "").strip() or ((t.config or {}).get("group") or "").strip() or None
 
 
 def param_schema(p: dict) -> dict:
@@ -72,7 +91,8 @@ def skill_download_path(name: str) -> str:
 def api_dict(t: Tool) -> dict:
     c = t.config or {}
     d = {"name": t.name, "display_name": t.display_name, "type": t.type, "description": t.description,
-         "params": [_param_out(p) for p in t.params], "source": t.source, "enabled": t.enabled}
+         "params": [_param_out(p) for p in t.params], "source": t.source, "enabled": t.enabled,
+         "group": tool_group(t)}
     if t.type != "skill":
         d["input_schema"] = input_schema(t)
     if t.type == "http":
@@ -170,7 +190,7 @@ def apply_filters(stmt, *, source: str | None = None, typ: str | None = None, q:
     if pack:
         stmt = stmt.where(Tool.config["pack"].astext == pack)
     if group:
-        stmt = stmt.where(Tool.config["group"].astext == group)
+        stmt = stmt.where(or_(Tool.business_group == group, Tool.config["group"].astext == group))
     if server:
         stmt = stmt.where(Tool.server == server)
     if maintenance is not None:
@@ -187,6 +207,7 @@ def apply_filters(stmt, *, source: str | None = None, typ: str | None = None, q:
             Tool.description.ilike(pat, escape="\\"),
             Tool.config["command_template"].astext.ilike(pat, escape="\\"),
             Tool.config["group"].astext.ilike(pat, escape="\\"),
+            Tool.business_group.ilike(pat, escape="\\"),
         ))
     return stmt
 
@@ -217,17 +238,24 @@ def list_facets(db: Session) -> dict:
         by_source[src] = by_source.get(src, 0) + n
         mcp_n += n
     packs, groups = [], []
-    pack_col, name_col, grp_col = Tool.config["pack"].astext, Tool.config["pack_name"].astext, Tool.config["group"].astext
+    pack_col, name_col = Tool.config["pack"].astext, Tool.config["pack_name"].astext
+    grp_col = func.nullif(func.coalesce(Tool.business_group, Tool.config["group"].astext), "")
     for pack, pack_name, n in db.execute(
             select(pack_col, name_col, func.count())
             .where(Tool.type == "cli", pack_col.isnot(None), pack_col != "")
             .group_by(pack_col, name_col).order_by(pack_col)):
         packs.append({"pack": pack, "pack_name": pack_name or pack, "count": n})
-    for pack, group, n in db.execute(
-            select(pack_col, grp_col, func.count())
-            .where(Tool.type == "cli", pack_col.isnot(None), pack_col != "", grp_col.isnot(None), grp_col != "")
-            .group_by(pack_col, grp_col).order_by(pack_col, grp_col)):
-        groups.append({"pack": pack, "group": group, "count": n})
+    # 全类型业务分组；packs 记录该分组在哪些 CLI 命令包中出现，便于按命令包缩小筛选
+    by_g: dict[str, dict] = {}
+    for g, pack, n in db.execute(
+            select(grp_col, pack_col, func.count())
+            .where(grp_col.isnot(None))
+            .group_by(grp_col, pack_col).order_by(grp_col, pack_col)):
+        rec = by_g.setdefault(g, {"group": g, "count": 0, "packs": []})
+        rec["count"] += n
+        if pack:
+            rec["packs"].append(pack)
+    groups = list(by_g.values())
     builtin_bindable = db.scalar(select(func.count()).select_from(Tool).where(
         Tool.source == "builtin", Tool.maintenance.is_(False), Tool.type != "mcp")) or 0
     return {"total": tool_n + mcp_n, "tool_count": tool_n, "mcp_servers": mcp_n,
@@ -300,6 +328,10 @@ def validate_payload(data: dict, creating: bool, existing: Tool | None = None) -
     cfg: dict = {}
     params, perr = _params(data.get("params"))
     errs += perr
+    group_specified = "group" in data or "group" in cfg_in
+    group_raw = data["group"] if "group" in data else cfg_in.get("group")
+    group = parse_group(group_raw, existing=(existing.business_group if existing else None),
+                        specified=group_specified, errs=errs)
     if t == "http":
         url = str(cfg_in.get("url") or "").strip()
         if not re.match(r"^https?://\S+$", url):
@@ -349,7 +381,11 @@ def validate_payload(data: dict, creating: bool, existing: Tool | None = None) -
                "verified_version": str(cfg_in.get("verified_version") or "").strip(),
                "output_format": of, "confirm_required": bool(cfg_in.get("confirm_required")),
                "output_description": str(cfg_in.get("output_description") or "").strip(), "auth_env": ae}
-        cfg.update({k: str(cfg_in[k]).strip()[:200] for k in CLI_META if str(cfg_in.get(k) or "").strip()})
+        cfg.update({k: str(cfg_in[k]).strip()[:200] for k in CLI_META if k != "group" and str(cfg_in.get(k) or "").strip()})
+        if group:
+            cfg["group"] = group
+        else:
+            cfg.pop("group", None)
     elif t == "skill":
         params = []
         cfg = {"package_id": cfg_in.get("package_id")}
@@ -359,7 +395,7 @@ def validate_payload(data: dict, creating: bool, existing: Tool | None = None) -
         raise unprocessable("工具校验不通过", details={"errors": errs})
     return {"name": name, "type": t, "display_name": data["display_name"].strip(),
             "description": str(data.get("description") or "").strip(), "owner": data["owner"].strip(), "params": params,
-            "config": cfg}
+            "config": cfg, "business_group": group}
 
 
 def _apply_skill(db: Session, t: Tool, package_id, creating: bool) -> None:
@@ -395,13 +431,17 @@ def update(db: Session, name: str, data: dict, actor: Actor) -> Tool:
     if t.source == "builtin":
         raise forbidden("平台内置工具由平台提供，不可编辑", "BUILTIN_READONLY")
     if t.type == "mcp":
-        raise unprocessable("MCP 子工具的说明与入参来自同步，这里只能启停、设置写操作确认（PATCH）", "MCP_TOOL_SYNCED")
+        # 子工具的说明与入参来自同步，不能整单编辑；允许单独改业务分组
+        if "group" in data and set(data.keys()) <= {"name", "group", "dry_run"}:
+            from . import mcp_servers as mcp_svc
+            return mcp_svc.patch_tool(db, t, data, actor)
+        raise unprocessable("MCP 子工具的说明与入参来自同步，这里只能修改业务分组；启停与写操作确认请用 PATCH", "MCP_TOOL_SYNCED")
     if data.get("name") and data["name"] != name:
         raise unprocessable("工具名注册后不可修改")
     v = validate_payload({**data, "name": name}, False, t)
     before = admin_dict(t)
     old_req = {p["name"] for p in t.params if p.get("required")}
-    for k in ("display_name", "owner"):
+    for k in ("display_name", "owner", "business_group"):
         setattr(t, k, v[k])
     if t.type == "skill":
         _apply_skill(db, t, v["config"].get("package_id"), False)

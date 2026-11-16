@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: 意图管理平台接口（平台内置工具；意图按空间，知识与工具全局）
-  version: 0.19.4
+  version: 0.20.1
   description: '本接口供 AI 工具以及各 Bot / 智能体（如 1688 智能客服、Moonclaw 跨境智能体）读写意图管理平台中的意图库、槽位与内嵌知识库。
 
     给 AI 的总规则：
@@ -31,6 +31,7 @@ info:
 
     - v0.6 起 MCP 按「服务 → 子工具」登记：子工具名为 {服务名}.{远端工具名}，Tool.server 为服务名，Tool.mcp_server 由 0.5 的 URL 字符串改为连接信息对象（URL 在 mcp_server.url）；runtime-config 新增 mcp_servers（只含被用到的服务，密钥只给环境变量名 auth.token_env）。
 
+    - v0.20.1：工具增加可选业务分组 group（全类型通用）。POST/PUT /api/v1/tools、登记或更新 MCP 服务时可读写；CLI 原 config.group / cli.group 仍可用并与之同步。
     - v0.19.4：GET /api/v1/taxonomy、GET /api/v1/runtime-config 与 MCP list_intents（view=taxonomy）支持可选参数 max_depth（从起点算起返回几层，不传仍返回整棵树）和 parent（节点 id 或 code，从其子节点开始）。每个分类节点增加 has_children、child_count 与 id，便于按层下钻。
     - v0.19.3：意图增加处理方式 handling（tool_flow / handoff_human / fixed_reply / llm_free）。fixed_reply 可设 reply_strictness（paraphrase 按意思表达，默认；verbatim 完全固定）。非 tool_flow 不能绑定工具或知识。空间未匹配兜底与此同一套 mode，见 recognition.fallback（仍兼容 final_action）。
     - v0.19.2：知识库创建/编辑改为可选的自由文本「描述」，不再使用固化的适用范围字段（平台/站点/语言/类目）；旧标签已迁移进描述。
@@ -1555,7 +1556,7 @@ paths:
       - 工具
       operationId: createMcpServer
       summary: 登记 MCP 服务
-      description: 需要「工具:写」。登记后调用 /sync/preview 与 /sync/apply 同步子工具。密钥不会出现在响应里。
+      description: 需要「工具:写」。登记后调用 /sync/preview 与 /sync/apply 同步子工具。可选字段 group 为业务分组，同步出的子工具会继承。密钥不会出现在响应里。
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -1589,7 +1590,7 @@ paths:
       - 工具
       operationId: updateMcpServer
       summary: 更新 MCP 服务连接信息
-      description: 需要「工具:写」。
+      description: 需要「工具:写」。可更新连接信息与业务分组 group（保存后应用到该服务下的子工具）。
       parameters:
       - name: name
         in: path
@@ -2446,6 +2447,10 @@ components:
           type: string
         owner:
           type: string
+        group:
+          type: string
+          maxLength: 200
+          description: 可选。业务分组，用于目录分类与筛选。可使用已有分组名，也可填写新名称。空字符串表示清除。CLI 工具会同步到 cli.group。
         params:
           type: array
           items:
@@ -3041,6 +3046,11 @@ components:
           example: 获取商品
         description:
           type: string
+        group:
+          type: string
+          nullable: true
+          maxLength: 200
+          description: 业务分组。未设置时为 null。CLI 工具的 cli.group 与此相同。
         method:
           type: string
           enum:
@@ -3930,6 +3940,11 @@ components:
           description: 服务名（小写字母/数字/下划线），子工具名为 {服务名}.{远端工具名}
         display_name:
           type: string
+        group:
+          type: string
+          nullable: true
+          maxLength: 200
+          description: 可选。业务分组。登记或更新服务时写入，会应用到该服务下的子工具。
         transport:
           type: string
           enum:

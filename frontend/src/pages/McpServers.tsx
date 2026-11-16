@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api, errLines, fmt } from '../api'
 import { useSession } from '../session'
-import { Badge, Btn, ErrBox, Modal, toast } from '../ui'
+import { Badge, Btn, ErrBox, GroupInput, Modal, toast } from '../ui'
 
 export const TRANSPORTS: [string, string][] = [['streamable_http', 'Streamable HTTP'], ['sse', 'SSE（旧版）'], ['stdio', 'stdio（本地进程）']]
 export const CRED_LOC: Record<string, string> = { header: '请求头', query: 'URL 参数', env: '环境变量' }
@@ -27,12 +27,12 @@ export function credText(sv: any) {
 }
 
 export function emptyMcp(owner: string) {
-  return { name: '', display_name: '', description: '', transport: 'streamable_http', url: '', command: '', args: '', env: '', owner, credentials: [] as Cred[] }
+  return { name: '', display_name: '', description: '', group: '', transport: 'streamable_http', url: '', command: '', args: '', env: '', owner, credentials: [] as Cred[] }
 }
 
 export function mcpFormOf(sv: any) {
   return {
-    name: sv.name, display_name: sv.display_name, description: sv.description || '', transport: sv.transport, url: sv.url || '',
+    name: sv.name, display_name: sv.display_name, description: sv.description || '', group: sv.group || '', transport: sv.transport, url: sv.url || '',
     command: sv.command || '', args: (sv.args || []).join(' '), env: Object.entries(sv.env || {}).map(([k, v]) => `${k}=${v}`).join('\n'),
     owner: sv.owner, credentials: (sv.credentials || []).map((c: any) => ({ ...c, secret: '' })),
   }
@@ -47,11 +47,11 @@ export function mcpBody(f: any) {
     if (c.secret) o.secret = c.secret
     return o
   })
-  return { name: f.name.trim(), display_name: f.display_name, description: f.description, transport: f.transport, url: f.url, command: f.command, args: f.args, env, owner: f.owner, credentials }
+  return { name: f.name.trim(), display_name: f.display_name, description: f.description, group: (f.group || '').trim(), transport: f.transport, url: f.url, command: f.command, args: f.args, env, owner: f.owner, credentials }
 }
 
 /** MCP 服务表单（嵌在「注册工具」抽屉里，类型 = MCP） */
-export function McpForm({ f, setF, editing, exampleData }: { f: any; setF: (f: any) => void; editing: boolean; exampleData?: boolean }) {
+export function McpForm({ f, setF, editing, exampleData, groups = [] }: { f: any; setF: (f: any) => void; editing: boolean; exampleData?: boolean; groups?: string[] }) {
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value })
   const stdio = f.transport === 'stdio'
   const creds: Cred[] = f.credentials
@@ -63,6 +63,8 @@ export function McpForm({ f, setF, editing, exampleData }: { f: any; setF: (f: a
     <div className="grid g2"><div className="f"><label>服务名（英文小写，唯一）*</label><input type="text" id="mN" value={f.name} disabled={editing} onChange={set('name')} placeholder="github" /></div>
       <div className="f"><label>显示名 *</label><input type="text" id="mD" value={f.display_name} onChange={set('display_name')} placeholder="GitHub MCP" /></div></div>
     <div className="f"><label>说明</label><input type="text" id="mDs" value={f.description} onChange={set('description')} /></div>
+    <div className="f"><label>业务分组</label><GroupInput id="mGrp" value={f.group || ''} onChange={g => setF({ ...f, group: g })} options={groups} />
+      <div className="muted">可选。保存后会应用到该服务下的子工具，并出现在工具目录的业务分组筛选里。</div></div>
     <div className="grid g2"><div className="f"><label>传输方式 *</label><select id="mT" value={f.transport} onChange={e => setF({ ...f, transport: e.target.value, credentials: creds.map(c => ({ ...c, location: e.target.value === 'stdio' ? 'env' : (c.location === 'env' ? 'header' : c.location) })) })}>{TRANSPORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
       <div className="f"><label>负责人 *</label><input type="text" id="mW" value={f.owner} onChange={set('owner')} /></div></div>
     {!stdio ? <div className="f"><label>服务地址 *</label><input type="text" id="mU" value={f.url} onChange={set('url')} placeholder={f.transport === 'sse' ? 'https://mcp.example.com/sse' : 'https://mcp.example.com/mcp'} />

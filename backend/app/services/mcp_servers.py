@@ -132,7 +132,8 @@ def admin_dict(db: Session, sv: McpServer, with_tools: bool = True) -> dict:
     d["credentials"] = [{**c, "has_secret": c["name"] in sec} for c in d["credentials"]]
     d.update({"description": sv.description, "transport_label": TRANSPORTS.get(sv.transport, sv.transport),
               "has_secret": bool(sec), "example_data": bool(sv.example_data),
-              "source": sv.source, "owner": sv.owner, "server_info": sv.server_info or {},
+              "source": sv.source, "owner": sv.owner, "group": sv.business_group or None,
+              "server_info": sv.server_info or {},
               "last_sync_at": iso(sv.last_sync_at), "last_sync_by": sv.last_sync_by,
               "last_sync_source": sv.last_sync_source})
     if with_tools:
@@ -197,11 +198,14 @@ def _validate(data: dict, creating: bool, sv: McpServer | None = None) -> dict:
             warnings.append("服务地址里的密钥参数 " + "、".join(taken) + " 已从 URL 移除，改为「URL 参数」凭据（Bot 侧读环境变量"
                             + "、".join(next(x["env"] for x in cred_list if x["name"] == k) for k in taken) + "）")
             url = clean
+    from .tools import parse_group
+    group = parse_group(data.get("group"), existing=(sv.business_group if sv else None),
+                        specified=("group" in data), errs=errs)
     if errs:
         raise unprocessable("MCP 服务校验不通过", details={"errors": errs})
     return {"name": name, "display_name": data["display_name"].strip(), "description": str(data.get("description") or "").strip(),
             "transport": tr, "url": url, "command": command, "args": args, "env": env, "credentials": cred_list,
-            "owner": data["owner"].strip(), "_secrets": secrets_in, "_warnings": warnings}
+            "owner": data["owner"].strip(), "business_group": group, "_secrets": secrets_in, "_warnings": warnings}
 
 
 def _env_name(server: str, cred: str) -> str:
@@ -298,8 +302,13 @@ def update(db: Session, name: str, data: dict, actor: Actor) -> McpServer:
     _store_secrets(sv, secrets, clear=bool(data.get("clear_secret")))
     sv.warnings = warnings  # type: ignore[attr-defined]
     sv.updated_at = utcnow()
+    if "group" in data:
+        for child in server_tools(db, name):
+            if child.business_group != sv.business_group:
+                child.business_group = sv.business_group
+                child.updated_at = utcnow()
     after = conn_dict(sv)
-    if before != after:
+    if before != after or "group" in data:
         users = {u.code: u for t in server_tools(db, name) for u in intent_svc.users_of_tool(db, t.name)}
         space_svc.bump_versions(db, {u.space_id for u in users.values() if u.status == "启用"})
     audit.record(db, actor, "mcp.update", "mcp_server", name, f"编辑 MCP 服务 {sv.display_name}", None,
@@ -487,7 +496,8 @@ def apply(db: Session, sv: McpServer, body: dict, actor: Actor) -> dict:
             db.add(Tool(name=tool_name(sv.name, t["name"]), type="mcp", server=sv.name,
                         display_name=(t["title"] or t["name"])[:100], description=t["description"] or t["title"] or t["name"],
                         params=params, source="external", maintenance=False, space_scoped=False, endpoints=[],
-                        mcp_tools=[], enabled=True, remote_missing=False, owner=sv.owner, position=pos, updated_at=now,
+                        mcp_tools=[], enabled=True, remote_missing=False, owner=sv.owner,
+                        business_group=sv.business_group, position=pos, updated_at=now,
                         config={"mcp_tool": t["name"], "title": t["title"], "input_schema": t["input_schema"],
                                 "annotations": ann, "output_example": "",
                                 "confirm_required": ann.get("readOnlyHint") is False or ann.get("destructiveHint") is True}))
@@ -554,6 +564,12 @@ def patch_tool(db: Session, t: Tool, data: dict, actor: Actor) -> Tool:
         if dn != t.display_name:
             changed["display_name"] = [t.display_name, dn[:100]]
             t.display_name = dn[:100]
+    if "group" in data:
+        from .tools import parse_group
+        g = parse_group(data.get("group"))
+        if g != (t.business_group or None):
+            changed["group"] = [t.business_group, g]
+            t.business_group = g
     if not changed:
         return t
     t.updated_at = utcnow()

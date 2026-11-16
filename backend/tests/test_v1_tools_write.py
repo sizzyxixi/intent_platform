@@ -171,3 +171,18 @@ def test_mcp_register_and_disable(full_key):
 def test_meta_includes_tool_write(admin):
     scopes = admin.get("/api/admin/meta").json()["scopes"]
     assert "工具:写" in scopes and scopes[-1] == "工具:写"
+
+
+def test_upsert_and_update_group(full_key):
+    body = {**HTTP, "name": "ai_probe_group", "group": "探测分组"}
+    r = full_key.post("/api/v1/tools", json=body)
+    assert r.status_code == 201
+    b = check(r)
+    assert b["group"] == "探测分组" and b["name"] == "ai_probe_group"
+    got = check(full_key.get("/api/v1/tools/ai_probe_group"))
+    assert got["group"] == "探测分组"
+    r = full_key.put("/api/v1/tools/ai_probe_group", json={**body, "group": "改后分组"})
+    assert check(r)["group"] == "改后分组"
+    r = full_key.put("/api/v1/tools/ai_probe_group", json={**body, "group": ""})
+    assert check(r)["group"] is None
+    full_key.post("/api/v1/tools/ai_probe_group:disable", json={})

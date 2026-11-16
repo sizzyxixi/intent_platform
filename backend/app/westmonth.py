@@ -247,13 +247,16 @@ def import_westmonth(db: Session, catalog: dict, skills: dict[str, bytes], by: s
             if name in taken:
                 raise SystemExit(f"工具名 {name} 已存在且不属于 {OWNER}")
             pos += 1
+            v = {**v, "business_group": str((v.get("config") or {}).get("group") or "").strip() or None}
             db.add(Tool(source="external", maintenance=False, space_scoped=False, endpoints=[], mcp_tools=[],
                         position=pos, **v))
             created += 1
             pending += 1
-        elif any(getattr(t, k) != v[k] for k in ("display_name", "description", "params", "config")):
+        elif any(getattr(t, k) != v[k] for k in ("display_name", "description", "params", "config")) or (
+                (t.business_group or "") != str((v.get("config") or {}).get("group") or "")):
             for k in ("display_name", "description", "params", "config"):
                 setattr(t, k, v[k])
+            t.business_group = str((v.get("config") or {}).get("group") or "").strip() or None
             t.updated_at = utcnow()
             updated += 1
             pending += 1

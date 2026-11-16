@@ -193,6 +193,7 @@ class McpServer(Base):
     example_data: Mapped[bool] = mapped_column(Boolean, default=False)
     source: Mapped[str] = mapped_column(String(10), default="external")  # external / builtin
     owner: Mapped[str] = mapped_column(String(100), default="")
+    business_group: Mapped[str | None] = mapped_column(String(200), nullable=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
     server_info: Mapped[dict] = mapped_column(JSONB, default=dict)  # initialize 返回的 serverInfo / protocolVersion
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -228,6 +229,8 @@ class Tool(Base):
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner: Mapped[str] = mapped_column(String(100), default="")
+    # 业务分组（全类型通用；CLI 批量接入时与 config.group 同步）
+    business_group: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_now())

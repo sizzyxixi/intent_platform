@@ -19,13 +19,18 @@ export default function ToolsPage({ tab }: { tab: string }) {
   </>
 }
 
+function groupOf(t: any) {
+  return t?.group || t?.cli?.group || ''
+}
+
 function groupText(t: any, serverName?: string) {
+  const g = groupOf(t)
   if (t.type === 'cli' && t.cli) {
     const pack = t.cli.pack_name || t.cli.pack
-    const g = t.cli.group
     if (pack && g) return `${pack} › ${g}`
     return g || pack || '—'
   }
+  if (g) return g
   if (t.type === 'mcp') return t.mcp_server?.display_name || t.mcp_server?.name || t.server || serverName || '—'
   return '—'
 }
@@ -69,8 +74,8 @@ function SrvEnd({ v }: { v: any }) {
   return <div className="clamp1" title={tip}>{line || '—'}</div>
 }
 
-function GroupCell({ t, serverName }: { t?: any; serverName?: string }) {
-  const s = t ? groupText(t, serverName) : '—'
+function GroupCell({ t, serverName, label }: { t?: any; serverName?: string; label?: string }) {
+  const s = t ? groupText(t, serverName) : (label || '—')
   return <div className="clamp2" title={s !== '—' ? s : undefined}>{s}</div>
 }
 
@@ -104,7 +109,9 @@ function ToolList() {
   const ts: any[] = data.items || []
   const kw = q.trim().toLowerCase()
   const hit = (...xs: string[]) => !kw || xs.some(x => (x || '').toLowerCase().includes(kw))
-  const ss = (servers as any[]).filter((v: any) => (!tf || tf === 'mcp') && (!sf || v.source === sf) && !pk && !grp && hit(v.name, v.display_name, v.description))
+  const ss = (servers as any[]).filter((v: any) => (!tf || tf === 'mcp') && (!sf || v.source === sf) && !pk
+    && (!grp || v.group === grp || (v.tools || []).some((x: any) => groupOf(x) === grp))
+    && hit(v.name, v.display_name, v.description))
   const packs: [string, string, number][] = (facets.packs || []).map((x: any) => [x.pack, x.pack_name || x.pack, x.count])
   const cnt = (k: string) => facets.by_type?.[k] ?? 0
   const srcN = (k: string) => facets.by_source?.[k] ?? 0
@@ -133,15 +140,18 @@ function ToolList() {
       <div className="row" style={{ marginTop: 8 }}>
         {(!tf || tf === 'cli') && packs.length > 0 && <select id="toolPack" value={pk} onChange={e => setFilter(() => { setPk(e.target.value); setGrp('') })}><option value="">全部 CLI 命令包</option>
           {packs.map(([k, l, n]) => <option key={k} value={k}>{l}（{n}）</option>)}</select>}
-        {(!tf || tf === 'cli') && (() => {
-          const packName = Object.fromEntries(packs.map(([k, l]) => [k, l]))
-          const allG: { pack: string; group: string; count: number }[] = (facets.groups || []).filter((x: any) => !pk || x.pack === pk)
-          const byG = new Map<string, { count: number; packs: string[] }>()
-          allG.forEach((x: any) => {
-            const c = byG.get(x.group) || { count: 0, packs: [] as string[] }
-            c.count += x.count; c.packs.push(x.pack); byG.set(x.group, c)
+        {(() => {
+          const raw: any[] = facets.groups || []
+          const filtered = raw.filter((x: any) => !pk || (x.packs || []).includes(pk) || x.pack === pk)
+          const byG = new Map<string, { count: number }>()
+          filtered.forEach((x: any) => {
+            const g = x.group
+            if (!g) return
+            const c = byG.get(g) || { count: 0 }
+            c.count += x.count || 0
+            byG.set(g, c)
           })
-          const groups = [...byG.entries()].map(([g, c]) => [g, pk || c.packs.length === 1 ? (pk ? g : `${packName[c.packs[0]] || c.packs[0]} › ${g}`) : g, c.count] as [string, string, number])
+          const groups = [...byG.entries()].map(([g, c]) => [g, g, c.count] as [string, string, number])
           if (!groups.length) return null
           return <select id="toolGroup" value={grp} onChange={e => setFilter(() => setGrp(e.target.value))}><option value="">全部业务分组</option>
             {groups.map(([k, l, n]) => <option key={k} value={k}>{l}（{n}）</option>)}</select>
@@ -161,7 +171,7 @@ function ToolList() {
         <tr key={'s' + v.name} className="srvrow" data-server={v.name}><td onClick={() => setOpen({ ...open, [v.name]: !on })}><span className="caret">{on ? '▾' : '▸'}</span><b className="clamp1" title={v.display_name}>{v.display_name}</b><div className="mono clamp1" style={{ paddingLeft: 14 }} title={v.name}>{v.name}</div></td>
           <td><Badge c="p">MCP 服务</Badge><div className="muted" style={{ marginTop: 4 }}><a onClick={() => setOpen({ ...open, [v.name]: !on })}>{v.tool_count} 个工具</a></div></td>
           <td>{v.source === 'builtin' ? <Badge c="g">平台内置</Badge> : <span className="muted">外部</span>}{v.example_data && <div style={{ marginTop: 4 }}><Badge c="y" title="当前工具列表为示例数据，真实同步可拉取完整列表">示例数据</Badge></div>}</td>
-          <td className="grp"><GroupCell /></td>
+          <td className="grp"><GroupCell label={v.group || "—"} /></td>
           <td className="muted desc"><div className="clamp2" title={v.description || undefined}>{v.description || '—'}</div><div className="clamp1">启用 {v.enabled_count} / {v.tool_count}{v.missing_count > 0 && <> · <b style={{ color: '#b91c1c' }}>{v.missing_count} 个远端已消失</b></>}</div></td>
           <td className="end"><SrvEnd v={v} /></td>
           <td className="muted">按工具</td><td>{users.size ? <span>{users.size} 个意图</span> : <span className="muted">未使用</span>}</td>

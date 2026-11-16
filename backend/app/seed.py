@@ -191,11 +191,12 @@ def seed(db: Session, data: dict, with_keys: bool = True, demo_tools: bool = Tru
             pk = skill_svc.build_from_texts(files)
             skill_pkgs.append((t["name"], pk))
             cfg = {}
+        grp = (cfg.get("group") or t.get("group") or "").strip() or None
         db.add(Tool(name=t["name"], type=typ, server=server, display_name=t["disp"], description=t["desc"], params=params,
                     source="builtin" if t.get("builtin") else "external", maintenance=bool(t.get("maint")),
                     space_scoped=t.get("scope") == "space", endpoints=t.get("rest") or [], mcp_tools=t.get("mcp") or [],
                     enabled=t.get("enabled") is not False, remote_missing=bool(t.get("missing")),
-                    config=cfg, owner=t.get("owner") or "", position=pos, updated_at=_t(t.get("updated"))))
+                    config=cfg, owner=t.get("owner") or "", business_group=grp, position=pos, updated_at=_t(t.get("updated"))))
     db.flush()
     for name, pk in skill_pkgs:
         pkg = SkillPackage(tool_name=name, version=1, created_by="种子数据", **pk)

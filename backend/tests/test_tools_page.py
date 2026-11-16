@@ -77,3 +77,27 @@ def test_admin_tools_cli_pack_filter(tokens, admin):
             if t:
                 db.delete(t)
                 db.commit()
+
+
+def test_admin_tools_group_all_types(tokens, admin):
+    body = {
+        "type": "http", "name": "page_http_group", "display_name": "分组接口",
+        "description": "验证非 CLI 也可以设业务分组", "owner": "测试",
+        "params": [{"name": "q", "type": "string", "required": True, "description": "查询"}],
+        "config": {"url": "https://example.com/g", "method": "GET", "auth": "无"},
+        "group": "商品",
+    }
+    r = admin.post("/api/admin/tools", json=body)
+    assert r.status_code == 201, r.text
+    assert r.json()["group"] == "商品"
+    try:
+        d = admin.get("/api/admin/tools?page=1&page_size=20&group=商品").json()
+        assert any(t["name"] == "page_http_group" for t in d["items"])
+        names = [g["group"] for g in d["facets"]["groups"]]
+        assert "商品" in names
+        r = admin.put("/api/admin/tools/page_http_group", json={**body, "group": "选品"})
+        assert r.json()["group"] == "选品"
+        d2 = admin.get("/api/admin/tools?page=1&page_size=20&group=选品").json()
+        assert any(t["name"] == "page_http_group" for t in d2["items"])
+    finally:
+        admin.delete("/api/admin/tools/page_http_group")
