@@ -175,7 +175,7 @@ export default function ToolEdit({ tool, server, onClose, onDone }: { tool?: any
           <div className="f"><label>已验证版本</label><input type="text" id="tCv" value={f.verified_version} onChange={set('verified_version')} placeholder="1.0.0" /></div></div>
         <div className="f"><label>命令 / 子命令模板 *</label><input type="text" id="tCmd" className="mono" value={f.command_template} onChange={set('command_template')} placeholder="mycli product get --sku {sku} --json" />
           <div className="muted">用 {'{参数名}'} 引用下方入参；选填参数为空时，连同它前面的 --选项 一起省略</div>
-          {f.cli_meta.source_ref && <div className="muted" id="tCsrc" title={f.cli_meta.pack_name || undefined}>来源：{shortPackName(f.cli_meta.pack_name, f.cli_meta.pack)}{f.cli_meta.group && ` › ${f.cli_meta.group}`} · <span className="mono">{f.cli_meta.source_ref}</span>（按官方命令目录接入）</div>}</div>
+          {f.cli_meta.source_ref && <div className="muted" id="tCsrc">来源：{shortPackName(f.cli_meta.pack_name, f.cli_meta.pack)}{f.cli_meta.group && ` › ${f.cli_meta.group}`} · <span className="mono">{f.cli_meta.source_ref}</span>（按官方命令目录接入）</div>}</div>
         <div className="grid g2"><div className="f"><label>鉴权方式</label><select id="tCa" value={f.cli_auth} onChange={set('cli_auth')}>{['无', 'CLI 内置登录（OAuth）', '环境变量 Token'].map(x => <option key={x}>{x}</option>)}</select></div>
           <div className="f"><label>登录 / 鉴权命令</label><input type="text" id="tLg" className="mono" value={f.login_command} onChange={set('login_command')} placeholder="mycli auth login" /></div></div>
         <div className="f"><label>凭据环境变量（可选）</label><input type="text" id="tCe" className="mono" value={f.cli_auth_env} onChange={set('cli_auth_env')} placeholder="MYCLI_TOKEN" />

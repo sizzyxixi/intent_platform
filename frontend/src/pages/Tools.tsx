@@ -147,7 +147,7 @@ function ToolList() {
           empty={{ value: '', label: '全部 CLI 命令包' }}
           options={packs.map(([k, l, n]) => {
             const short = shortPackName(l, k)
-            return { value: k, label: `${short}（${n}）`, title: l && l !== short ? l : undefined }
+            return { value: k, label: `${short}（${n}）` }
           })}
           onChange={v => setFilter(() => { setPk(v); setGrp('') })} />}
         {(() => {

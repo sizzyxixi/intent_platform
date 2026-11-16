@@ -192,6 +192,7 @@ test('工具目录：业务分组筛选与列展示一致，命令包用短名�
   await expect(packPanel).toBeVisible()
   await expect(packPanel).toContainText('商城解决方案')
   await expect(packPanel).not.toContainText('包含')
+  expect(await page.locator('[title*="包含"]').count()).toBe(0)
   await page.keyboard.press('Escape')
   await expect(packPanel).toBeHidden()
 
@@ -207,6 +208,9 @@ test('工具目录：业务分组筛选与列展示一致，命令包用短名�
 
   const row = page.locator('#toolTbl tbody tr[data-tool="xclaw_product_detail"]')
   await expect(row.locator('td.grp')).toHaveText('商品')
+  const tip = await row.locator('td.grp .clamp2').getAttribute('title')
+  expect(tip || '').not.toContain('包含')
+  expect(await page.locator('[title*="包含"]').count()).toBe(0)
   const texts = await page.locator('#toolTbl tbody tr[data-tool] td.grp').allInnerTexts()
   expect(texts.length).toBeGreaterThan(0)
   for (const raw of texts) {
