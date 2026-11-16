@@ -34,6 +34,7 @@ info:
     - v0.20.1：工具增加可选业务分组 group（全类型通用）。POST/PUT /api/v1/tools、登记或更新 MCP 服务时可读写；CLI 原 config.group / cli.group 仍可用并与之同步。
     - v0.19.4：GET /api/v1/taxonomy、GET /api/v1/runtime-config 与 MCP list_intents（view=taxonomy）支持可选参数 max_depth（从起点算起返回几层，不传仍返回整棵树）和 parent（节点 id 或 code，从其子节点开始）。每个分类节点增加 has_children、child_count 与 id，便于按层下钻。
     - v0.19.3：意图增加处理方式 handling（tool_flow / handoff_human / fixed_reply / llm_free）。fixed_reply 可设 reply_strictness（paraphrase 按意思表达，默认；verbatim 完全固定）。非 tool_flow 不能绑定工具或知识。空间未匹配兜底与此同一套 mode，见 recognition.fallback（仍兼容 final_action）。
+    - v0.20.3：固定话术的读取结果增加只读字段 handling.instruction（verbatim 必须原样输出、不得增删补充；paraphrase 可改写但不得改变原意）。verbatim 时使用方不得附加问候语或其他句子。
     - v0.19.2：知识库创建/编辑改为可选的自由文本「描述」，不再使用固化的适用范围字段（平台/站点/语言/类目）；旧标签已迁移进描述。
     - v0.19.1：给意图绑定或解绑已有工具只需「意图:写」，不再要求「工具:写」。
     - v0.19：开放接口允许维护型 AI 创建 / 更新 / 停用分类节点（「意图:写」），batchUpsert 支持 auto_create_parents，并可用 POST /api/v1/batchUpsert 一次性提交节点和意图（失败全部回滚）。另开放启用 / 停用意图、新建知识库、给意图关联知识。推荐 API 基址为 http://47.86.15.93/intent-platform（部分代理无法解析 sslip.io）。
@@ -2594,10 +2595,19 @@ components:
           type: string
           enum: [paraphrase, verbatim]
           default: paraphrase
-          description: paraphrase=按意思表达（可改写须保原意，默认）；verbatim=完全固定（须原样输出其中一条）
+          description: |
+            paraphrase=按意思表达（可改写须保原意，默认）；
+            verbatim=完全固定（必须原样输出其中一条话术，不得改写、增删或补充，也不要附加问候语或其他句子）。
         reply_strictness_label:
           type: string
           readOnly: true
+        instruction:
+          type: string
+          readOnly: true
+          description: |
+            仅 fixed_reply 时返回，给使用方智能体的短指令，不落库。
+            paraphrase：「按话术意思表达，可改写措辞但不得改变原意」；
+            verbatim：「必须原样输出其中一条话术，不得改写、增删或补充」。
         prompt:
           type: string
           maxLength: 2000

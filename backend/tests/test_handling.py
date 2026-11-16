@@ -1,6 +1,34 @@
 """意图处理方式 handling 与空间兜底 fallback。"""
 from contract import check
 
+from app.services import handling as handling_svc
+
+
+def test_public_handling_instruction_text():
+    para = handling_svc.public_handling({
+        "mode": "fixed_reply", "replies": ["您好。"], "reply_strictness": "paraphrase"
+    })
+    assert para["reply_strictness"] == "paraphrase"
+    assert para["instruction"] == "按话术意思表达，可改写措辞但不得改变原意"
+    ver = handling_svc.public_handling({
+        "mode": "fixed_reply", "replies": ["您好。"], "reply_strictness": "verbatim"
+    })
+    assert ver["reply_strictness"] == "verbatim"
+    assert ver["instruction"] == "必须原样输出其中一条话术，不得改写、增删或补充"
+    # instruction 是对外计算字段，写入时即使带上也会被忽略
+    raw = handling_svc.parse_handling({
+        "mode": "fixed_reply", "replies": ["您好。"], "reply_strictness": "verbatim",
+        "instruction": "自定义指令不应落库",
+    })
+    assert "instruction" not in raw
+    assert raw["reply_strictness"] == "verbatim"
+    assert "instruction" not in handling_svc.public_handling({"mode": "tool_flow"})
+    assert "instruction" not in handling_svc.public_handling({"mode": "handoff_human"})
+    fb = handling_svc.public_handling({
+        "mode": "fixed_reply", "replies": ["暂不支持。"], "reply_strictness": "verbatim"
+    }, fallback=True)
+    assert fb["instruction"] == "必须原样输出其中一条话术，不得改写、增删或补充"
+
 
 def test_default_handling_and_space_fallback(admin, full_key):
     it = admin.get("/api/admin/intents/B.REL.GREETING").json()
@@ -39,6 +67,7 @@ def test_space_fallback_write_compat(full_key):
     assert b["fallback"]["replies"] == ["暂不支持这个问题。", "请换个问法试试。"]
     assert b["fallback"]["reply_strictness"] == "verbatim"
     assert b["fallback"]["reply_strictness_label"] == "完全固定"
+    assert b["fallback"]["instruction"] == "必须原样输出其中一条话术，不得改写、增删或补充"
     assert b["final_action"] == "decline"
     assert b["final_message"] == "暂不支持这个问题。"
 
@@ -49,6 +78,7 @@ def test_space_fallback_write_compat(full_key):
     assert b["fallback"]["mode"] == "fixed_reply"
     assert b["fallback"]["replies"] == ["抱歉，暂不支持"]
     assert b["fallback"]["reply_strictness"] == "paraphrase"
+    assert b["fallback"]["instruction"] == "按话术意思表达，可改写措辞但不得改变原意"
     assert b["final_message"] == "抱歉，暂不支持"
 
     r = full_key.put("/api/v1/recognition", json={
@@ -85,6 +115,7 @@ def test_intent_handling_modes_and_bindings(admin, full_key):
     h = r.json()["handling"]
     assert h["mode"] == "fixed_reply" and h["reply_strictness"] == "paraphrase"
     assert h["replies"] == ["您好，我们先聊点别的吧。"]
+    assert h["instruction"] == "按话术意思表达，可改写措辞但不得改变原意"
 
     # 不能再绑工具或知识
     r = admin.post("/api/admin/intents/B.REL.NOBIND/tools", json={"tool": "pf_write_intents", "param_map": {}})
@@ -168,6 +199,7 @@ def test_batch_upsert_handling(full_key):
     assert got["handling"]["mode"] == "fixed_reply"
     assert got["handling"]["reply_strictness"] == "verbatim"
     assert got["handling"]["replies"] == ["您好，有什么可以帮您？"]
+    assert got["handling"]["instruction"] == "必须原样输出其中一条话术，不得改写、增删或补充"
 
 
 def test_bind_rejected_via_v1(full_key, admin):
@@ -240,6 +272,7 @@ def test_enable_validation_by_handling_mode(admin, full_key):
     assert r.json()["status"] == "启用"
     assert r.json()["handling"]["mode"] == "fixed_reply"
     assert r.json()["handling"]["reply_strictness"] == "verbatim"
+    assert r.json()["handling"]["instruction"] == "必须原样输出其中一条话术，不得改写、增删或补充"
 
     # 其他必填项仍要满足：例句不足时不能启用
     _draft(admin, "B.REL.ENFIX2", "启用固定话术缺例句")
@@ -278,8 +311,75 @@ def test_enable_validation_by_handling_mode(admin, full_key):
     assert by["B.REL.ENFIX"]["handling"]["mode"] == "fixed_reply"
     assert by["B.REL.ENFIX"]["handling"]["replies"] == ["您好，我们先聊点别的吧。"]
     assert by["B.REL.ENFIX"]["handling"]["reply_strictness"] == "verbatim"
+    assert by["B.REL.ENFIX"]["handling"]["instruction"] == "必须原样输出其中一条话术，不得改写、增删或补充"
     assert by["B.REL.ENHAND"]["handling"]["mode"] == "handoff_human"
     assert by["B.REL.ENHAND"]["handling"]["message"] == "请稍等，为您转人工。"
     assert by["B.REL.ENFREE"]["handling"]["mode"] == "llm_free"
     assert "轻松简短" in by["B.REL.ENFREE"]["handling"]["prompt"]
     assert "B.REL.ENFLOW" not in by
+
+
+def test_instruction_emitted_on_all_consumer_read_paths(admin, full_key):
+    """REST 与 MCP 的意图读取路径都要带上 handling.instruction。"""
+    import json
+    src = admin.get("/api/admin/intents/B.REL.GREETING").json()
+    r = admin.post("/api/admin/spaces/cs/intents", json={
+        "code": "B.REL.INSTR", "name": "指令字段测试", "category_id": src["category_id"]
+    })
+    assert r.status_code == 201, r.text
+    r = admin.put("/api/admin/intents/B.REL.INSTR", json={
+        **READY,
+        "handling": {"mode": "fixed_reply", "replies": ["请联系人工客服。"],
+                     "reply_strictness": "verbatim",
+                     "instruction": "自定义指令不应被保存"},
+        "status": "启用",
+    })
+    assert r.status_code == 200, r.text
+    h = r.json()["handling"]
+    assert h["instruction"] == "必须原样输出其中一条话术，不得改写、增删或补充"
+    assert "自定义指令" not in json.dumps(h, ensure_ascii=False)
+
+    expected = {
+        "mode": "fixed_reply",
+        "mode_label": "固定话术",
+        "replies": ["请联系人工客服。"],
+        "reply_strictness": "verbatim",
+        "reply_strictness_label": "完全固定",
+        "instruction": "必须原样输出其中一条话术，不得改写、增删或补充",
+    }
+
+    detail = check(full_key.get("/api/v1/intents/B.REL.INSTR", space="cs"))
+    assert detail["handling"] == expected
+
+    listed = check(full_key.get("/api/v1/intents", params={"q": "B.REL.INSTR"}, space="cs"))
+    item = next(i for i in listed["items"] if i["code"] == "B.REL.INSTR")
+    assert item["handling"] == expected
+
+    rc = check(full_key.get("/api/v1/runtime-config", space="cs"))
+    rc_it = next(i for i in rc["intents"] if i["code"] == "B.REL.INSTR")
+    assert rc_it["handling"] == expected
+
+    from test_mcp import call as mcp_call
+
+    err, got = mcp_call(full_key, "get_intent", {"space": "cs", "code": "B.REL.INSTR"})
+    assert not err and got["handling"] == expected
+    err, listed = mcp_call(full_key, "list_intents", {"space": "cs", "q": "B.REL.INSTR", "page_size": 50})
+    assert not err
+    item = next(i for i in listed["items"] if i["code"] == "B.REL.INSTR")
+    assert item["handling"] == expected
+    err, listed = mcp_call(full_key, "list_intents", {"space": "cs", "status": "启用", "q": "指令字段", "page_size": 50})
+    assert not err
+    item = next(i for i in listed["items"] if i["code"] == "B.REL.INSTR")
+    assert item["handling"] == expected
+
+    # PATCH 写入 instruction 仍被忽略，读回的是计算字段
+    # 先停用才能 PATCH
+    assert admin.post("/api/admin/intents/B.REL.INSTR/status", json={"status": "停用"}).status_code == 200
+    patched = check(full_key.patch("/api/v1/intents/B.REL.INSTR", json={
+        "handling": {"mode": "fixed_reply", "replies": ["请联系人工客服。"],
+                     "reply_strictness": "paraphrase", "instruction": "又一次自定义"}
+    }, space="cs"))
+    assert patched["handling"]["reply_strictness"] == "paraphrase"
+    assert patched["handling"]["instruction"] == "按话术意思表达，可改写措辞但不得改变原意"
+    assert "又一次自定义" not in json.dumps(patched["handling"], ensure_ascii=False)
+

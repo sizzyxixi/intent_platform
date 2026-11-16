@@ -12,6 +12,11 @@ REPLY_STRICTNESS = {
     "paraphrase": "按意思表达",
     "verbatim": "完全固定",
 }
+# 给使用方智能体的短指令；只在对外输出里出现，不落库。
+REPLY_INSTRUCTIONS = {
+    "paraphrase": "按话术意思表达，可改写措辞但不得改变原意",
+    "verbatim": "必须原样输出其中一条话术，不得改写、增删或补充",
+}
 # 空间设置旧字段 final_action → 新 mode
 LEGACY_TO_MODE = {
     "handoff_human": "handoff_human",
@@ -121,7 +126,7 @@ def from_legacy(final_action: str | None, final_message: str | None) -> dict:
 
 
 def public_handling(h: dict | None, *, fallback: bool = False) -> dict:
-    """对外输出：只带当前 mode 用得到的字段。"""
+    """对外输出：只带当前 mode 用得到的字段；固定话术另附 instruction。"""
     raw = h or (default_fallback("") if fallback else DEFAULT_HANDLING)
     mode = raw.get("mode") or ("llm_free" if fallback else "tool_flow")
     labels = FALLBACK_MODES if fallback else INTENT_MODES
@@ -131,8 +136,11 @@ def public_handling(h: dict | None, *, fallback: bool = False) -> dict:
     if mode == "fixed_reply":
         out["replies"] = list(raw.get("replies") or [])
         st = raw.get("reply_strictness") or "paraphrase"
+        if st not in REPLY_STRICTNESS:
+            st = "paraphrase"
         out["reply_strictness"] = st
-        out["reply_strictness_label"] = REPLY_STRICTNESS.get(st, st)
+        out["reply_strictness_label"] = REPLY_STRICTNESS[st]
+        out["instruction"] = REPLY_INSTRUCTIONS[st]
     if mode == "llm_free" and raw.get("prompt"):
         out["prompt"] = raw["prompt"]
     return out

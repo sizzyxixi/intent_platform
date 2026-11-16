@@ -133,7 +133,7 @@ MCP 地址（推荐）：`http://47.86.15.93/intent-platform/mcp`；备用：`ht
 [
   {
     "name": "list_intents",
-    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories）；可用 max_depth（从起点算起返回几层，不传为整棵树）和 parent（节点 id 或 code，从其子节点开始）按层下钻，每个节点含 has_children、child_count。view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。",
+    "description": "列出当前空间的意图，或读取元数据：view=spaces 读空间列表，view=taxonomy 读本空间的分类层级定义（levels）与分类树（categories）；可用 max_depth（从起点算起返回几层，不传为整棵树）和 parent（节点 id 或 code，从其子节点开始）按层下钻，每个节点含 has_children、child_count。view=slots 读本空间槽位列表，view=recognition 读本空间的空间设置。写入前先读 spaces、taxonomy 和 slots。只读。 意图列表每条含 handling；fixed_reply 时含 replies、reply_strictness 与只读 instruction。",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -193,7 +193,7 @@ MCP 地址（推荐）：`http://47.86.15.93/intent-platform/mcp`；备用：`ht
   },
   {
     "name": "get_intent",
-    "description": "按编码读取单个意图的完整信息（例句、槽位、处理方式 handling、关联知识及用途、工具映射）。只读。",
+    "description": "按编码读取单个意图的完整信息（例句、槽位、处理方式 handling、关联知识及用途、工具映射）。handling 在 fixed_reply 时含 replies、reply_strictness 与只读 instruction（verbatim：必须原样输出其中一条话术，不得改写、增删或补充；paraphrase：按话术意思表达，可改写措辞但不得改变原意）。只读。",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -212,7 +212,7 @@ MCP 地址（推荐）：`http://47.86.15.93/intent-platform/mcp`；备用：`ht
   },
   {
     "name": "upsert_intents",
-    "description": "批量写回当前空间的意图，结果一律为草稿。mode 只用 merge；不能删除、不能覆盖已启用意图。分类不存在时请先 taxonomy_upsert_node，或设 auto_create_parents=true（路径每段须为编码，或 {code,name}）。启用请用 intent_enable。槽位名用本空间已有槽位的英文名。单次最多 100 条，非 dry_run 须提供 idempotency_key。 可设置 handling（处理方式）。非 tool_flow 时不能带工具或知识绑定。",
+    "description": "批量写回当前空间的意图，结果一律为草稿。mode 只用 merge；不能删除、不能覆盖已启用意图。分类不存在时请先 taxonomy_upsert_node，或设 auto_create_parents=true（路径每段须为编码，或 {code,name}）。启用请用 intent_enable。槽位名用本空间已有槽位的英文名。单次最多 100 条，非 dry_run 须提供 idempotency_key。 可设置 handling（处理方式）。非 tool_flow 时不能带工具或知识绑定。 handling.reply_strictness 为 paraphrase（按意思表达）或 verbatim（完全固定，须原样输出，不得附加问候语或其他句子）。读取时会带只读 instruction，写入时该字段会被忽略。",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -324,7 +324,7 @@ MCP 地址（推荐）：`http://47.86.15.93/intent-platform/mcp`；备用：`ht
               },
               "handling": {
                 "type": "object",
-                "description": "意图处理方式。mode 为 tool_flow（默认，绑定工具/知识）、handoff_human（转人工，可选 message）、fixed_reply（固定话术，必填 replies，reply_strictness 为 paraphrase 按意思表达或 verbatim 完全固定，默认 paraphrase）、llm_free（让 AI 自由发挥，可选 prompt）。非 tool_flow 时不能绑定工具或知识。",
+                "description": "意图处理方式。mode 为 tool_flow（默认，绑定工具/知识）、handoff_human（转人工，可选 message）、fixed_reply（固定话术，必填 replies，reply_strictness 为 paraphrase 按意思表达或 verbatim 完全固定，默认 paraphrase）、llm_free（让 AI 自由发挥，可选 prompt）。非 tool_flow 时不能绑定工具或知识。写入不必带 instruction（只读，读取时由平台按 reply_strictness 生成）。",
                 "properties": {
                   "mode": {
                     "type": "string",
@@ -357,7 +357,7 @@ MCP 地址（推荐）：`http://47.86.15.93/intent-platform/mcp`；备用：`ht
                       "verbatim"
                     ],
                     "default": "paraphrase",
-                    "description": "paraphrase=按意思表达（可改写须保原意）；verbatim=完全固定（须原样输出）"
+                    "description": "paraphrase=按意思表达（可改写措辞但不得改变原意）；verbatim=完全固定（必须原样输出其中一条话术，不得改写、增删或补充，也不要附加问候语或其他句子）"
                   },
                   "prompt": {
                     "type": "string",
