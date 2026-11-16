@@ -10,7 +10,7 @@ export type CascadeNode = {
   children?: CascadeNode[]
 }
 
-export type SelectOption = { value: string; label: string; hint?: string }
+export type SelectOption = { value: string; label: string; hint?: string; title?: string }
 
 function useDismiss(open: boolean, refs: Array<RefObject<HTMLElement | null>>, close: () => void) {
   useEffect(() => {
@@ -226,7 +226,7 @@ export function SearchSelect({
   return <div className={'cas' + (className ? ' ' + className : '')}>
     <button type="button" id={id} ref={trigRef} className={'cas-trig' + (open ? ' open' : '')}
       disabled={disabled} aria-expanded={open} aria-haspopup="listbox" data-value={value}
-      title={cur?.hint || undefined}
+      title={cur?.title || cur?.hint || undefined}
       onClick={() => { if (!disabled) { setQ(''); setOpen(o => !o) } }}>
       <span className={'cas-lab' + (!cur ? ' muted' : '')}>{cur?.label || placeholder}</span>
       <span className="cas-arr">▾</span>
@@ -236,7 +236,7 @@ export function SearchSelect({
         autoFocus onChange={e => setQ(e.target.value)} /></div>
       <div className="cas-hits">
         {shown.length ? shown.map(o => <div key={o.value} className={'cas-item' + (o.value === value ? ' on' : '')}
-          data-value={o.value} data-pick={o.label} role="option"
+          data-value={o.value} data-pick={o.label} role="option" title={o.title || o.hint || undefined}
           onMouseDown={e => { e.preventDefault(); pick(o.value) }}>
           <div className="cas-name">{o.label}</div>
           {o.hint ? <div className="cas-desc">{o.hint}</div> : null}
