@@ -198,6 +198,7 @@ function RecognitionTab() {
   const faLabel = (r.fallback && r.fallback.mode_label) || FB.find(x => x[0] === (r.fallback?.mode))?.[1] || r.final_action_label
   return <>
     <div className="card" id="rcCard"><h3>识别与兜底<span className="sp" /><span className="muted" style={{ fontWeight: 'normal' }}>配置版本 v{r.version}{r.updated_at ? ` · 最近修改 ${fmt(r.updated_at, false)} ${r.updated_by || ''}` : ''}</span></h3>
+      <div className="muted" style={{ lineHeight: 1.7, marginBottom: 10 }}>这些设置是发给使用方智能体的执行说明，通过运行时配置里的 <span className="mono">recognition</span>（也可单独请求 <span className="mono">GET /api/v1/recognition</span>）下发。平台不会在对话中替智能体做识别、澄清或兜底，使用方必须按规则实现后才会在对话里起作用。没有 0～1 分数的大模型：只有一条明显匹配才算命中；两条以上都像就澄清；都不像就执行空间兜底，不要编造分数。</div>
       <table><tbody>
         {num('threshold', '① 识别阈值', 0, 1, 0.05, '0~1，默认 0.6。数值含义由 Bot 的识别模型决定，建议用单句测试和实际对话校准', 'rcTh')}
         <tr><th>② 未识别处理</th><td>Top1 置信度 &lt; 阈值时：列出不低于候选下限（阈值 ÷ 2 = <b id="rcCm">{isNaN(th) ? '—' : Math.round(th / 2 * 100) / 100}</b>）的最多 {r.max_candidates} 个候选让用户选；没有候选 → 执行空间兜底
@@ -225,8 +226,8 @@ function RecognitionTab() {
       {canEdit && <div style={{ textAlign: 'right', marginTop: 10 }}><Btn onClick={def}>恢复默认</Btn> <Btn p id="rcSave" onClick={save}>保存</Btn></div>}
       <ErrBox lines={err} />
     </div>
-    <div className="card"><h3>Bot 运行流程</h3><div className="muted" style={{ lineHeight: 1.9 }}>识别 → 阈值判定（≥ 阈值命中该意图，按该意图的处理方式执行；否则澄清，最多 {r.max_clarify} 次）→ 若处理方式为「工具与知识流程」：槽位追问（每个必填槽位最多 {r.max_slot_ask} 次）→ 知识校验 → 调用工具（失败重试 {r.tool_retry} 次）。未命中、澄清/追问超限或工具失败时，执行空间兜底：<b>{faLabel}</b></div>
-      <div className="muted">保存后配置版本 +1，Bot 拉取 runtime-config 中的 <span className="mono">recognition.fallback</span> 与每条意图的 <span className="mono">handling</span> 生效。</div></div>
+    <div className="card"><h3>使用方应执行的流程</h3><div className="muted" style={{ lineHeight: 1.9 }}>使用方应按：识别 → 阈值判定（≥ 阈值命中该意图，按该意图的处理方式执行；否则澄清，最多 {r.max_clarify} 次）→ 若处理方式为「工具与知识流程」：槽位追问（每个必填槽位最多 {r.max_slot_ask} 次）→ 知识校验 → 调用工具（失败重试 {r.tool_retry} 次）。未命中、澄清/追问超限或工具失败时，执行空间兜底：<b>{faLabel}</b></div>
+      <div className="muted">保存有改动时配置版本 +1。使用方下次拉取到新版本后，只有按 <span className="mono">recognition</span> 与各意图的 <span className="mono">handling</span> 执行，这些设置才会在对话中起作用。完整规则见「使用方接入指南」。</div></div>
     <TaxonomyCard />
   </>
 }
