@@ -280,8 +280,8 @@ async def patch_intent(code: str, request: Request, ctx: KeyCtx = Depends(api_ke
         errs = []
         if "name" in payload and not str(payload.get("name") or "").strip():
             errs.append("名称不能为空")
-        if "description" in payload and len(str(payload.get("description") or "").strip()) < 15:
-            errs.append("意图描述至少 15 个字")
+        if "description" in payload and not str(payload.get("description") or "").strip():
+            errs.append("意图描述不能为空")
         if "examples" in payload and (not isinstance(payload["examples"], list) or
                                       len([x for x in payload["examples"] if str(x).strip()]) < 3):
             errs.append("例句至少 3 条")
@@ -302,6 +302,18 @@ async def patch_intent(code: str, request: Request, ctx: KeyCtx = Depends(api_ke
         db.flush()
         return 200, intent_svc.api_detail(it)
     return idempotent(request, db, ctx, payload, run)
+
+
+@router.delete("/intents/{code}", status_code=204)
+def delete_intent(code: str, request: Request, ctx: KeyCtx = Depends(api_key(W_INT)),
+                  db: Session = Depends(get_db)):
+    sp = resolve_space(request, db, ctx)
+
+    def run():
+        it = intent_svc.get(db, code, sp.id)
+        intent_svc.delete(db, it, ctx.actor)
+        return 204, None
+    return idempotent(request, db, ctx, {"delete": code, "space": sp.id}, run)
 
 
 @router.post("/intents:batchUpsert")

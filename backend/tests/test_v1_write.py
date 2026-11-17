@@ -60,9 +60,9 @@ def test_batch_upsert_create_merge_conflicts(linxia):
     ]
     r = linxia.post("/api/v1/intents:batchUpsert", json={"mode": "merge", "intents": [NEW] + bad})
     b = check(r)
-    assert b["created"] == 2 and b["new_slots"] == ["new_slot_x"]
+    assert b["created"] == 3 and b["new_slots"] == ["new_slot_x"]
     reasons = {c["code"]: c["reason"] for c in b["conflicts"]}
-    assert reasons["B.STOCK.X1"] == "DESCRIPTION_TOO_SHORT"
+    assert "B.STOCK.X1" not in reasons  # 短描述可以创建草稿
     assert reasons["M.STOCK.X2"] in ("INVALID_CODE", "CODE_IN_OTHER_SPACE")
     assert reasons["B.NOPE.X3"] == "UNKNOWN_CATEGORY"
     assert reasons["B.STOCK.X4"] == "UNKNOWN_CATEGORY"
@@ -172,3 +172,25 @@ def test_rate_limit(linxia, monkeypatch):
     assert codes[:3] == [200, 200, 200] and codes[3] == 429
     r = linxia.get("/api/v1/spaces")
     assert r.headers.get("Retry-After") and check(r)["code"] == "RATE_LIMITED"
+
+
+def test_patch_short_description_ok(linxia):
+    r = linxia.patch("/api/v1/intents/B.REL.GREETING", json={"description": "问候开场"})
+    assert r.status_code == 200 and check(r)["description"] == "问候开场"
+    r = linxia.patch("/api/v1/intents/B.REL.GREETING", json={"description": "  "})
+    assert r.status_code == 422 and "意图描述不能为空" in str(r.json())
+
+
+def test_v1_delete_only_disabled(linxia):
+    body = {**NEW, "code": "B.STOCK.DELV1", "name": "待删开放接口", "description": "短"}
+    b = check(linxia.post("/api/v1/intents:batchUpsert", json={"mode": "merge", "intents": [body]}))
+    assert b["created"] == 1
+    r = linxia.delete("/api/v1/intents/B.STOCK.DELV1")
+    assert r.status_code == 409 and check(r)["code"] == "INTENT_NOT_DISABLED"
+    assert check(linxia.patch("/api/v1/intents/B.STOCK.DELV1", json={"status": "停用"}))["status"] == "停用"
+    r = linxia.delete("/api/v1/intents/B.STOCK.DELV1")
+    assert r.status_code == 204
+    assert linxia.get("/api/v1/intents/B.STOCK.DELV1").status_code == 404
+    r = linxia.delete("/api/v1/intents/B.REL.GREETING")
+    assert r.status_code == 409 and check(r)["code"] == "INTENT_NOT_DISABLED"
+

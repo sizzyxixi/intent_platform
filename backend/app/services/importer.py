@@ -265,8 +265,6 @@ def judge(db: Session, sp: Space, items: list[dict], api: bool = False) -> list[
         if x["name"] and dn and dn != x["code"]:
             issue("DUPLICATE_NAME", f"与已有意图 {dn} 同名")
         if api:
-            if x["description"] and len(x["description"]) < 15:
-                issue("DESCRIPTION_TOO_SHORT", f"意图描述至少 15 个字（当前 {len(x['description'])}）")
             if x.get("examples") and len(x["examples"]) < 3:
                 issue("TOO_FEW_EXAMPLES", f"例句至少 3 条（当前 {len(x['examples'])}）")
             for s in mapped:

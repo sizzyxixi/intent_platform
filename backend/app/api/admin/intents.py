@@ -188,6 +188,13 @@ async def set_status(code: str, request: Request, actor=Depends(EDIT), db: Sessi
     return _detail(db, it)
 
 
+@router.delete("/intents/{code}")
+def delete_intent(code: str, actor=Depends(EDIT), db: Session = Depends(get_db)):
+    intent_svc.delete(db, intent_svc.get(db, code), actor)
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/intents/{code}/validate")
 async def validate_draft(code: str, request: Request, actor=Depends(VIEW), db: Session = Depends(get_db)):
     """校验编辑中的草稿（不保存）。"""

@@ -91,8 +91,6 @@ def validate(it: dict, idx: RefIndex) -> list[str]:
     desc = (it.get("description") or "").strip()
     if not desc:
         e.append("意图描述不能为空")
-    elif len(desc) < 15:
-        e.append(f"意图描述至少 15 个字（当前 {len(desc)} 个字），请写清用户想做什么、什么算、什么不算")
     ex = [x for x in (it.get("examples") or []) if str(x).strip()]
     if len(ex) < 3:
         e.append(f"例句至少 3 条（当前 {len(ex)} 条）")

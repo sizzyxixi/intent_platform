@@ -136,6 +136,14 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
       onSaved(); reloadSpaces(); onClose()
     } catch (e: any) { fail(e) }
   }
+  const remove = async () => {
+    if (!window.confirm(`确认删除意图「${d.code} ${d.name}」？删除后不可恢复。`)) return
+    try {
+      await api.del(`/intents/${code}`)
+      toast(`已删除 ${code}`)
+      onSaved(); reloadSpaces(); onClose()
+    } catch (e: any) { fail(e) }
+  }
   const bindOf = (t: any): Bind => {
     const map: Bind['param_map'] = {}
     if (t.type !== 'skill') (t.params || []).forEach((p: any) => {
@@ -171,6 +179,7 @@ export default function IntentEditor({ code, onClose, onSaved }: { code: string;
     <span className="muted" style={{ float: 'left', lineHeight: '28px' }}>状态 <select id="eSt" value={E.status} disabled={ro} onChange={e => set('status', e.target.value)}>
       {['草稿', '启用', '停用'].map(s => <option key={s}>{s}</option>)}</select>　设为「启用」时会做必填校验</span>
     <Btn onClick={onClose}>取消</Btn> <Btn id="eCheck" onClick={check}>校验</Btn> {canEdit && <Btn p id="eSave" onClick={save}>保存</Btn>}
+    {canEdit && d.status === '停用' && <Btn d id="eDel" onClick={remove}>删除</Btn>}
   </>
   return <>
     <Drawer testId="intentEditor" onClose={onClose} foot={foot}

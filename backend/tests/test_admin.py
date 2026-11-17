@@ -100,6 +100,40 @@ def test_create_edit_enable(admin):
     assert r.json()["status"] == "停用"
 
 
+def test_short_description_can_enable(admin):
+    r = admin.post("/api/admin/spaces/cs/intents", json={"code": "B.STOCK.SHORTD", "name": "短描述可启用",
+                                                         "category_path": ["STOCK", "现货"]})
+    assert r.status_code == 201
+    body = {"description": "短描述", "examples": ["没货能先拍吗", "可以预定吗", "先下单等补货可以吗"],
+            "slots": [{"name": "sku", "required": True, "ask": ""}],
+            "kb_refs": [{"kb_id": "kb_aq", "doc_id": "A1", "chunk_id": "Q4", "usage": "reference"}],
+            "tools": [{"tool": "query_stock", "param_map": {"sku": {"source": "槽位", "value": "sku"}}}],
+            "status": "启用"}
+    r = admin.put("/api/admin/intents/B.STOCK.SHORTD", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "启用" and r.json()["description"] == "短描述"
+    r = admin.put("/api/admin/intents/B.STOCK.SHORTD", json={"description": "", "status": "启用"})
+    assert r.status_code == 422 and "意图描述不能为空" in str(r.json())
+    admin.post("/api/admin/intents/B.STOCK.SHORTD/status", json={"status": "停用"})
+
+
+def test_delete_disabled_intent(admin):
+    r = admin.post("/api/admin/spaces/cs/intents", json={"code": "B.STOCK.DELME", "name": "待删意图",
+                                                         "category_path": ["STOCK", "现货"]})
+    assert r.status_code == 201 and r.json()["status"] == "草稿"
+    r = admin.delete("/api/admin/intents/B.STOCK.DELME")
+    assert r.status_code == 409 and r.json()["code"] == "INTENT_NOT_DISABLED"
+    r = admin.post("/api/admin/intents/B.STOCK.DELME/status", json={"status": "停用"})
+    assert r.json()["status"] == "停用"
+    d = admin.get("/api/admin/spaces/cs/intents?page_size=50").json()
+    assert d["total"] >= 1 and len(d["items"]) <= 50
+    r = admin.delete("/api/admin/intents/B.STOCK.DELME")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert admin.get("/api/admin/intents/B.STOCK.DELME").status_code == 404
+    r = admin.delete("/api/admin/intents/B.REL.GREETING")
+    assert r.status_code == 409 and r.json()["code"] == "INTENT_NOT_DISABLED"
+
+
 def test_single_sentence(admin):
     r = admin.post("/api/admin/spaces/cs/test", json={"text": "有现货吗"}).json()
     assert r["verdict"] == "hit" and r["hit"]["code"] == "B.STOCK.AVAIL" and r["simulated"]

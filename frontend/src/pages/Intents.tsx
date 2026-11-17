@@ -35,16 +35,35 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
   const [f, setF] = useState({ category: '', q: '', status: '' })
   const [qIn, setQIn] = useState('')
   const [stIn, setStIn] = useState('')
+  const SIZE_KEY = 'ip_intent_page_size'
+  const SIZE_OPTS = [20, 50, 100]
   const [page, setPage] = useState(1)
+  const [size, setSize] = useState(() => {
+    const n = Number(localStorage.getItem(SIZE_KEY))
+    return SIZE_OPTS.includes(n) ? n : 20
+  })
   const [n, setN] = useState(0)
   const [newOpen, setNewOpen] = useState(false)
   const [imOpen, setImOpen] = useState(false)
   const [actionErr, setActionErr] = useState<string[]>()
-  const size = 100
   const [tax] = useAsync<Tax>(() => api.get(`/spaces/${space.id}/taxonomy`), [space.id, ver, n])
   const [data] = useAsync(() => api.get(`/spaces/${space.id}/intents` + qs({ ...f, page, page_size: size })),
-    [space.id, f.category, f.q, f.status, page, ver, n])
+    [space.id, f.category, f.q, f.status, page, size, ver, n])
   const reload = () => { setN(x => x + 1); reloadSpaces() }
+  const changeSize = (s: number) => { localStorage.setItem(SIZE_KEY, String(s)); setSize(s); setPage(1) }
+  const remove = async (c: { code: string; name: string }) => {
+    if (!window.confirm(`确认删除意图「${c.code} ${c.name}」？删除后不可恢复。`)) return
+    try {
+      await api.del(`/intents/${c.code}`)
+      setActionErr(undefined)
+      toast(`已删除 ${c.code}`)
+      reload()
+    } catch (e: any) {
+      const lines = errLines(e)
+      setActionErr(lines)
+      toast(lines.join('；'))
+    }
+  }
   const quick = async (code: string, status: string) => {
     try {
       await api.post(`/intents/${code}/status`, { status })
@@ -77,7 +96,7 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
         {canEdit && <Btn id="imOpen" onClick={() => setImOpen(true)}>导入意图</Btn>}
         {canEdit && <Btn p id="newIntent" onClick={() => setNewOpen(true)}>＋ 新建意图</Btn>}
       </div></div>
-      <div className="card tblwrap" style={{ padding: 0 }}><table id="intentTbl" className="fixed" style={{ minWidth: 760 }}><colgroup><col style={{ width: 150 }} />{catCols.map(n => <col key={n} style={{ width: 76 }} />)}<col /><col style={{ width: 44 }} /><col style={{ width: 44 }} /><col style={{ width: 200 }} /><col style={{ width: 60 }} /><col style={{ width: 104 }} /></colgroup><thead><tr><th>编码</th>{catCols.map(n => <th key={n}>{n}</th>)}<th>{leafName}</th><th>例句</th><th>知识</th><th>工具</th><th>状态</th><th>操作</th></tr></thead>
+      <div className="card tblwrap" style={{ padding: 0 }}><table id="intentTbl" className="fixed" style={{ minWidth: 760 }}><colgroup><col style={{ width: 150 }} />{catCols.map(n => <col key={n} style={{ width: 76 }} />)}<col /><col style={{ width: 44 }} /><col style={{ width: 44 }} /><col style={{ width: 200 }} /><col style={{ width: 60 }} /><col style={{ width: 168 }} /></colgroup><thead><tr><th>编码</th>{catCols.map(n => <th key={n}>{n}</th>)}<th>{leafName}</th><th>例句</th><th>知识</th><th>工具</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>{!data ? <tr><td colSpan={8 + catCols.length} className="loading">加载中…</td></tr> : data.items.length ? data.items.map((c: any) => <tr key={c.code}>
           <td className="mono">{c.code}</td>{catCols.map((n, i) => <td key={n} className="muted" title={c.category_path[i]?.description || undefined}>{c.category_path[i]?.name || '—'}</td>)}
           <td><a onClick={() => onEdit(c.code)}>{c.name}</a>{c.handling && c.handling.mode && c.handling.mode !== 'tool_flow' ? <div className="muted">{c.handling.mode_label || c.handling.mode}</div> : null}<div className="muted clamp2" title={c.description}>{c.description || ''}</div></td>
@@ -85,9 +104,10 @@ function IntentList({ onEdit, ver }: { onEdit: (c: string) => void; ver: number 
           <td>{c.tools.length ? <div className="mono clamp3" style={{ fontSize: 11 }} title={c.tools.join('\n')}>{c.tools.map((t: string) => <div key={t}>{t}</div>)}</div> : <span className="muted">0</span>}</td>
           <td><Badge c={ST_C[c.status]}>{c.status}</Badge></td>
           <td style={{ whiteSpace: 'nowrap' }}><Btn s onClick={() => onEdit(c.code)}>{canEdit ? '编辑' : '查看'}</Btn>
-            {canEdit && (c.status === '启用' ? <Btn s onClick={() => quick(c.code, '停用')}>停用</Btn> : <Btn s onClick={() => quick(c.code, '启用')}>启用</Btn>)}</td>
+            {canEdit && (c.status === '启用' ? <Btn s onClick={() => quick(c.code, '停用')}>停用</Btn> : <Btn s onClick={() => quick(c.code, '启用')}>启用</Btn>)}
+            {canEdit && c.status === '停用' && <Btn s d onClick={() => remove(c)}>删除</Btn>}</td>
         </tr>) : <tr><td colSpan={8 + catCols.length} className="muted" style={{ textAlign: 'center', padding: 30 }}>没有符合条件的意图</td></tr>}</tbody></table>
-        {data && <Pager page={page} total={data.total} size={size} onPage={setPage} />}
+        {data && <Pager page={page} total={data.total} size={size} onPage={setPage} onSize={changeSize} sizes={SIZE_OPTS} />}
       </div>
     </div>
     {newOpen && tax && <NewIntent tax={tax} root={f.category} onClose={() => setNewOpen(false)} onDone={code => { setNewOpen(false); reload(); onEdit(code) }} />}

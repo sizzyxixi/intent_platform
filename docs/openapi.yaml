@@ -707,6 +707,28 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+    delete:
+      tags:
+      - 意图
+      operationId: deleteIntent
+      summary: 硬删除已停用的意图
+      description: '只能删除状态为「停用」的意图，删除后不可恢复。草稿和启用中的意图会返回 409 INTENT_NOT_DISABLED。意图日志一并删除。
+        '
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: 已删除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /api/v1/intents:batchUpsert:
     post:
       tags:
@@ -2708,7 +2730,7 @@ components:
         description:
           type: string
           minLength: 15
-          description: 意图描述。这段描述会被大模型分类和语义匹配使用，至少 15 个字。请写清：用户想做什么；什么情况算这个意图；什么情况不算（容易和哪个意图混淆）。示例：用户想为商品生成符合平台规范的主图；"做主图""首图"算；只要换白底不算（→ M.DESIGN.WHITE_BG）
+          description: 意图描述（必填，不能为空）。这段描述会被大模型分类和语义匹配使用。请写清：用户想做什么；什么情况算这个意图；什么情况不算（容易和哪个意图混淆）。示例：用户想为商品生成符合平台规范的主图；"做主图""首图"算；只要换白底不算（→ M.DESIGN.WHITE_BG）
         examples:
           type: array
           minItems: 3
@@ -2821,7 +2843,6 @@ components:
                 enum:
                 - INVALID_CODE
                 - MISSING_FIELD
-                - DESCRIPTION_TOO_SHORT
                 - UNKNOWN_CATEGORY
                 - DUPLICATE_IN_BATCH
                 - DUPLICATE_NAME

@@ -93,7 +93,7 @@ def test_batch_apply_all_or_nothing(full_key):
         {"code": "ROLLB", "name": "回滚桶", "parent_code": "ROLLA", "depth": 2},
     ]
     bad_intent = {"code": "B.ROLLA.BAD", "name": "会失败", "category_path": ["ROLLA", "ROLLB"],
-                  "description": "短", "examples": ["一", "二", "三"]}
+                  "description": "这条意图用过少的例句来触发整批失败回滚", "examples": ["一"]}
     r = full_key.post("/api/v1/batchUpsert", json={"nodes": good_nodes, "intents": [bad_intent]}, space="cs")
     assert r.status_code == 422 and r.json()["code"] == "BATCH_FAILED"
     tax = full_key.get("/api/v1/taxonomy", space="cs").json()

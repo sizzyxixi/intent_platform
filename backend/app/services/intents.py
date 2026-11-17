@@ -295,10 +295,7 @@ def update(db: Session, it: Intent, data: dict, actor: Actor) -> tuple[Intent, l
         space_svc.bump_versions(db, {it.space_id})
     audit.record(db, actor, "intent.update", "intent", it.code, msg, it.space_id,
                  {"changed": changed, "status": [before["status"], status]})
-    warnings = []
-    if len(new["description"]) < 15:
-        warnings.append("意图描述少于 15 个字，启用前需补全")
-    return it, warnings
+    return it, []
 
 
 
@@ -368,6 +365,19 @@ def unbind_knowledge(db: Session, it: Intent, ref: dict, actor: Actor) -> Intent
         return it
     it, _ = update(db, it, {"kb_refs": nxt}, actor)
     return it
+
+
+def delete(db: Session, it: Intent, actor: Actor) -> dict:
+    """硬删除已停用意图（意图日志随 FK CASCADE 删除）。草稿和启用不可删。不升空间版本。"""
+    if it.status != "停用":
+        raise conflict("只能删除已停用的意图，请先停用后再删除", "INTENT_NOT_DISABLED")
+    snap = {"code": it.code, "name": it.name, "status": it.status, "space_id": it.space_id}
+    audit.record(db, actor, "intent.delete", "intent", it.code,
+                 f"删除意图 {it.code} {it.name}", it.space_id,
+                 {"name": it.name, "status": it.status})
+    db.delete(it)
+    db.flush()
+    return snap
 
 
 def set_status(db: Session, it: Intent, status: str, actor: Actor) -> Intent:
